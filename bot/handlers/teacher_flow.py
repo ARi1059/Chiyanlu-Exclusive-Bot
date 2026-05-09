@@ -8,6 +8,7 @@ from bot.database import (
     add_teacher,
     update_teacher,
     remove_teacher,
+    enable_teacher,
     get_teacher,
     get_all_teachers,
 )
@@ -18,6 +19,8 @@ from bot.keyboards.admin_kb import (
     skip_cancel_kb,
     confirm_cancel_kb,
     delete_confirm_kb,
+    enable_confirm_kb,
+    teacher_enable_list_kb,
     teacher_list_kb,
     edit_field_kb,
 )
@@ -494,6 +497,65 @@ async def cb_teacher_confirm_delete(callback: types.CallbackQuery):
         await callback.message.edit_text(f"✅ 老师「{name}」已停用")
     else:
         await callback.message.edit_text("⚠️ 停用失败")
+
+    await callback.message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
+    await callback.answer()
+
+
+# ============ 启用老师 ============
+
+
+@router.callback_query(F.data == "teacher:enable")
+@admin_required
+async def cb_teacher_enable(callback: types.CallbackQuery, state: FSMContext):
+    """启用老师 - 展示已停用老师列表"""
+    await state.clear()
+    teachers = await get_all_teachers(active_only=False)
+    inactive_teachers = [t for t in teachers if not t["is_active"]]
+    if not inactive_teachers:
+        await callback.answer("当前没有已停用的老师", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "✅ 选择要重新启用的老师：",
+        reply_markup=teacher_enable_list_kb(inactive_teachers),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("teacher:enable_select:"))
+@admin_required
+async def cb_teacher_selected_for_enable(callback: types.CallbackQuery):
+    """选择老师后展示启用确认"""
+    teacher_id = int(callback.data.split(":")[2])
+    teacher = await get_teacher(teacher_id)
+    if not teacher:
+        await callback.answer("老师不存在", show_alert=True)
+        return
+    if teacher["is_active"]:
+        await callback.answer("该老师已经是启用状态", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"确认重新启用老师「{teacher['display_name']}」？\n\n"
+        "启用后该老师可正常签到，并会出现在发布和关键词查询中。",
+        reply_markup=enable_confirm_kb(teacher_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("teacher:confirm_enable:"))
+@admin_required
+async def cb_teacher_confirm_enable(callback: types.CallbackQuery):
+    """确认启用老师"""
+    teacher_id = int(callback.data.split(":")[2])
+    teacher = await get_teacher(teacher_id)
+    success = await enable_teacher(teacher_id)
+
+    if success:
+        name = teacher["display_name"] if teacher else str(teacher_id)
+        await callback.message.edit_text(f"✅ 老师「{name}」已启用")
+    else:
+        await callback.message.edit_text("⚠️ 启用失败")
 
     await callback.message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
     await callback.answer()

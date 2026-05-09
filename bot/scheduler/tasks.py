@@ -54,29 +54,12 @@ async def reload_daily_publish() -> str | None:
     return await schedule_daily_publish(_scheduler, _bot)
 
 
-async def publish_daily_checkin(bot: Bot):
-    """每日定时发布签到汇总"""
-    now = datetime.now(tz)
-    today_str = now.strftime("%Y-%m-%d")
-
-    # 先删除前一天的消息
-    await _delete_previous_messages(bot)
-
-    # 查询当日已签到老师
-    teachers = await get_checked_in_teachers(today_str)
+async def build_daily_checkin_payload(date_str: str) -> tuple[str, InlineKeyboardMarkup] | None:
+    """构建每日签到发布内容，返回文本和按钮"""
+    teachers = await get_checked_in_teachers(date_str)
     if not teachers:
-        logger.info(f"[{today_str}] 无老师签到，跳过发布")
-        return
+        return None
 
-    # 获取发布频道
-    channel_id = await get_config("publish_channel_id")
-    if not channel_id:
-        logger.warning("未设置发布频道，跳过发布")
-        return
-
-    channel_id = int(channel_id)
-
-    # 生成 Inline Keyboard，每个老师一个按钮
     buttons = []
     row = []
     for t in teachers:
@@ -90,19 +73,45 @@ async def publish_daily_checkin(bot: Bot):
         buttons.append(row)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    text = f"📅 {date_str} 开课老师 {len(teachers)}位"
+    return text, keyboard
 
-    # 发送消息
-    text = f"📅 {today_str} 开课老师 {len(teachers)}位"
+
+async def send_daily_checkin(bot: Bot, channel_id: int, date_str: str):
+    """发送指定日期签到汇总并保存发送记录"""
+    payload = await build_daily_checkin_payload(date_str)
+    if payload is None:
+        logger.info(f"[{date_str}] 无老师签到，跳过发布")
+        return None
+
+    text, keyboard = payload
+    msg = await bot.send_message(
+        chat_id=channel_id,
+        text=text,
+        reply_markup=keyboard,
+    )
+    await save_sent_message(channel_id, msg.message_id, date_str)
+    return msg
+
+
+async def publish_daily_checkin(bot: Bot):
+    """每日定时发布签到汇总"""
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+
+    # 先删除前一天的消息
+    await _delete_previous_messages(bot)
+
+    # 获取发布频道
+    channel_id = await get_config("publish_channel_id")
+    if not channel_id:
+        logger.warning("未设置发布频道，跳过发布")
+        return
 
     try:
-        msg = await bot.send_message(
-            chat_id=channel_id,
-            text=text,
-            reply_markup=keyboard,
-        )
-        # 保存消息记录，用于次日删除
-        await save_sent_message(channel_id, msg.message_id, today_str)
-        logger.info(f"[{today_str}] 已发布签到汇总，{len(teachers)} 位老师")
+        msg = await send_daily_checkin(bot, int(channel_id), today_str)
+        if msg:
+            logger.info(f"[{today_str}] 已发布签到汇总")
     except Exception as e:
         logger.error(f"发布签到汇总失败: {e}")
 

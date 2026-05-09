@@ -24,7 +24,10 @@ def teacher_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ 添加老师", callback_data="teacher:add")],
         [InlineKeyboardButton(text="✏️ 编辑老师", callback_data="teacher:edit")],
-        [InlineKeyboardButton(text="❌ 停用老师", callback_data="teacher:delete")],
+        [
+            InlineKeyboardButton(text="停用老师", callback_data="teacher:delete"),
+            InlineKeyboardButton(text="启用老师", callback_data="teacher:enable"),
+        ],
         [InlineKeyboardButton(text="📋 老师列表", callback_data="teacher:list")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
@@ -59,6 +62,12 @@ def channel_menu_kb() -> InlineKeyboardMarkup:
 def system_menu_kb() -> InlineKeyboardMarkup:
     """系统设置子面板"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="系统状态检查", callback_data="system:status")],
+        [
+            InlineKeyboardButton(text="发布预览", callback_data="publish:preview"),
+            InlineKeyboardButton(text="手动发布", callback_data="publish:manual"),
+        ],
+        [InlineKeyboardButton(text="今日签到统计", callback_data="checkin:stats")],
         [InlineKeyboardButton(text="⏰ 修改发布时间", callback_data="system:publish_time")],
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
@@ -102,6 +111,30 @@ def delete_confirm_kb(teacher_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔙 取消", callback_data="teacher:delete"),
         ],
     ])
+
+
+def enable_confirm_kb(teacher_id: int) -> InlineKeyboardMarkup:
+    """启用确认按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="确认启用", callback_data=f"teacher:confirm_enable:{teacher_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data="teacher:enable"),
+        ],
+    ])
+
+
+def teacher_enable_list_kb(teachers: list[dict]) -> InlineKeyboardMarkup:
+    """停用老师列表按钮（用于启用）"""
+    keyboard = []
+    for t in teachers:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{t['display_name']} (@{t['username']})",
+                callback_data=f"teacher:enable_select:{t['user_id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="menu:teacher")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def teacher_list_kb(teachers: list[dict]) -> InlineKeyboardMarkup:

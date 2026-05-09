@@ -298,6 +298,71 @@ async def get_checked_in_teachers(date_str: str) -> list[dict]:
         await db.close()
 
 
+async def get_unchecked_teachers(date_str: str) -> list[dict]:
+    """获取指定日期未签到的启用老师"""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT t.* FROM teachers t
+            WHERE t.is_active = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM checkins c
+                  WHERE c.teacher_id = t.user_id AND c.checkin_date = ?
+              )
+            ORDER BY t.created_at""",
+            (date_str,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_teacher_counts() -> dict:
+    """获取老师数量统计"""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) AS inactive
+            FROM teachers"""
+        )
+        row = await cursor.fetchone()
+        return {
+            "total": row["total"] or 0,
+            "active": row["active"] or 0,
+            "inactive": row["inactive"] or 0,
+        }
+    finally:
+        await db.close()
+
+
+async def get_checkin_stats(date_str: str) -> dict:
+    """获取指定日期签到统计"""
+    checked_in = await get_checked_in_teachers(date_str)
+    unchecked = await get_unchecked_teachers(date_str)
+    teacher_counts = await get_teacher_counts()
+    active_total = teacher_counts["active"]
+    checked_count = len(checked_in)
+    rate = round((checked_count / active_total) * 100, 1) if active_total else 0
+    return {
+        "date": date_str,
+        "active_total": active_total,
+        "checked_count": checked_count,
+        "unchecked_count": len(unchecked),
+        "rate": rate,
+        "checked_in": checked_in,
+        "unchecked": unchecked,
+    }
+
+
+async def enable_teacher(user_id: int) -> bool:
+    """启用老师"""
+    return await update_teacher(user_id, "is_active", 1)
+
+
 # ============ Config CRUD ============
 
 async def set_config(key: str, value: str):

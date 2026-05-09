@@ -1,6 +1,8 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from datetime import datetime
+from pytz import timezone
 
 from bot.config import config
 from bot.database import (
@@ -10,6 +12,9 @@ from bot.database import (
     get_config,
     set_config,
     get_all_teachers,
+    get_checkin_stats,
+    get_teacher_counts,
+    get_sent_messages,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
@@ -26,9 +31,27 @@ from bot.states.teacher_states import (
     SystemSettingStates,
 )
 from bot.utils.permissions import admin_required, super_admin_required
-from bot.scheduler.tasks import reload_daily_publish
+from bot.scheduler.tasks import (
+    reload_daily_publish,
+    build_daily_checkin_payload,
+    send_daily_checkin,
+)
 
 router = Router(name="admin_panel")
+
+
+def _today_str() -> str:
+    """获取当前时区日期字符串"""
+    return datetime.now(timezone(config.timezone)).strftime("%Y-%m-%d")
+
+
+def _format_teacher_names(teachers: list[dict], limit: int = 20) -> str:
+    """格式化老师名称列表"""
+    if not teachers:
+        return "无"
+    names = [t["display_name"] for t in teachers[:limit]]
+    suffix = f" 等 {len(teachers)} 位" if len(teachers) > limit else ""
+    return "、".join(names) + suffix
 
 
 # ============ 主菜单 ============
@@ -253,6 +276,119 @@ async def cb_channel_view(callback: types.CallbackQuery):
 
 
 # ============ 系统设置 ============
+
+
+@router.callback_query(F.data == "system:status")
+@admin_required
+async def cb_system_status(callback: types.CallbackQuery):
+    """系统状态检查"""
+    today = _today_str()
+    publish_id = await get_config("publish_channel_id")
+    group_ids = await get_config("response_group_ids")
+    publish_time = await get_config("publish_time") or config.publish_time
+    cooldown = await get_config("cooldown_seconds") or str(config.cooldown_seconds)
+    teacher_counts = await get_teacher_counts()
+    stats = await get_checkin_stats(today)
+    sent_messages = await get_sent_messages(today)
+
+    lines = [
+        "系统状态检查",
+        "━━━━━━━━━━━━━━━",
+        f"📌 发布频道: {'已设置 ' + publish_id if publish_id else '未设置'}",
+        f"💬 响应群组: {'已设置 ' + group_ids if group_ids else '未设置'}",
+        f"⏰ 发布时间: {publish_time}",
+        f"⏳ 冷却时间: {cooldown} 秒",
+        f"👩‍🏫 老师总数: {teacher_counts['total']}",
+        f"✅ 启用老师: {teacher_counts['active']}",
+        f"❌ 停用老师: {teacher_counts['inactive']}",
+        f"📈 今日签到: {stats['checked_count']}/{stats['active_total']} ({stats['rate']}%)",
+        f"🚀 今日发布记录: {len(sent_messages)} 条",
+        "━━━━━━━━━━━━━━━",
+    ]
+
+    warnings = []
+    if not publish_id:
+        warnings.append("未设置发布频道，定时发布会跳过")
+    if not group_ids:
+        warnings.append("未设置响应群组，关键词响应不会生效")
+    if teacher_counts["active"] == 0:
+        warnings.append("当前没有启用老师")
+
+    if warnings:
+        lines.append("⚠️ 需要处理：")
+        lines.extend(f"- {item}" for item in warnings)
+    else:
+        lines.append("✅ 基础配置正常")
+
+    await callback.message.edit_text("\n".join(lines), reply_markup=system_menu_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "publish:preview")
+@admin_required
+async def cb_publish_preview(callback: types.CallbackQuery):
+    """预览今日发布内容"""
+    today = _today_str()
+    payload = await build_daily_checkin_payload(today)
+    if payload is None:
+        await callback.answer("今日暂无老师签到", show_alert=True)
+        return
+
+    text, keyboard = payload
+    await callback.message.answer(f"发布预览\n\n{text}", reply_markup=keyboard)
+    await callback.answer("已发送预览")
+
+
+@router.callback_query(F.data == "publish:manual")
+@admin_required
+async def cb_publish_manual(callback: types.CallbackQuery):
+    """手动发布今日签到汇总"""
+    today = _today_str()
+    channel_id = await get_config("publish_channel_id")
+    if not channel_id:
+        await callback.answer("未设置发布频道", show_alert=True)
+        return
+
+    payload = await build_daily_checkin_payload(today)
+    if payload is None:
+        await callback.answer("今日暂无老师签到", show_alert=True)
+        return
+
+    try:
+        msg = await send_daily_checkin(callback.bot, int(channel_id), today)
+    except Exception as e:
+        await callback.answer("发布失败，请查看日志", show_alert=True)
+        await callback.message.answer(f"⚠️ 手动发布失败：{e}")
+        return
+
+    if msg:
+        await callback.answer("已发布", show_alert=True)
+        await callback.message.answer(
+            f"✅ 已手动发布 {today} 签到汇总到频道 {channel_id}"
+        )
+    else:
+        await callback.answer("今日暂无老师签到", show_alert=True)
+
+
+@router.callback_query(F.data == "checkin:stats")
+@admin_required
+async def cb_checkin_stats(callback: types.CallbackQuery):
+    """今日签到统计"""
+    today = _today_str()
+    stats = await get_checkin_stats(today)
+    lines = [
+        f"{today} 签到统计",
+        "━━━━━━━━━━━━━━━",
+        f"启用老师: {stats['active_total']} 位",
+        f"已签到: {stats['checked_count']} 位",
+        f"未签到: {stats['unchecked_count']} 位",
+        f"签到率: {stats['rate']}%",
+        "━━━━━━━━━━━━━━━",
+        f"✅ 已签到：{_format_teacher_names(stats['checked_in'])}",
+        f"❌ 未签到：{_format_teacher_names(stats['unchecked'])}",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=system_menu_kb())
+    await callback.answer()
 
 
 @router.callback_query(F.data == "system:publish_time")
