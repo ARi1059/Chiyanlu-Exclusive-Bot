@@ -62,6 +62,12 @@ async def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        await db.execute(
+            """INSERT INTO admins (user_id, username, is_super)
+            VALUES (?, NULL, 1)
+            ON CONFLICT(user_id) DO UPDATE SET is_super = 1""",
+            (config.super_admin_id,),
+        )
         await db.commit()
     finally:
         await db.close()
@@ -174,10 +180,10 @@ async def update_teacher(user_id: int, field: str, value) -> bool:
 
 
 async def remove_teacher(user_id: int) -> bool:
-    """删除老师"""
+    """停用老师（软删除），保留历史签到记录"""
     db = await get_db()
     try:
-        await db.execute("DELETE FROM teachers WHERE user_id = ?", (user_id,))
+        await db.execute("UPDATE teachers SET is_active = 0 WHERE user_id = ?", (user_id,))
         await db.commit()
         return db.total_changes > 0
     finally:

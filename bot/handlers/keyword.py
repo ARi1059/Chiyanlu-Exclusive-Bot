@@ -1,5 +1,6 @@
 import json
 import time
+from html import escape
 from aiogram import Router, types
 from aiogram.enums import ParseMode
 
@@ -119,7 +120,11 @@ async def _send_teacher_list(message: types.Message, teachers: list[dict]):
     """模式 B：发送超链接列表"""
     lines = [f"🔍 找到 {len(teachers)} 位相关老师：\n"]
     for t in teachers:
-        line = f"<a href=\"{t['button_url']}\">{t['display_name']} - {t['region']} - {t['price']}</a>"
+        url = escape(t["button_url"], quote=True)
+        display_name = escape(t["display_name"])
+        region = escape(t["region"])
+        price = escape(t["price"])
+        line = f"<a href=\"{url}\">{display_name} - {region} - {price}</a>"
         lines.append(line)
 
     await message.answer(

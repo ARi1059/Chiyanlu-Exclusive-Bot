@@ -93,6 +93,15 @@ async def on_teacher_user_id(message: types.Message, state: FSMContext):
         return
 
     user_id = int(text)
+    existing_teacher = await get_teacher(user_id)
+    if existing_teacher:
+        status = "启用中" if existing_teacher["is_active"] else "已停用"
+        await message.reply(
+            f"⚠️ 该老师 ID 已存在：{existing_teacher['display_name']}（{status}）\n"
+            "请重新输入其他 Telegram 数字 ID，或点击「取消」。"
+        )
+        return
+
     await state.update_data(user_id=user_id)
     await state.set_state(AddTeacherStates.waiting_username)
     await message.answer(
@@ -234,7 +243,7 @@ async def on_teacher_button_url(message: types.Message, state: FSMContext):
     """步骤8: 接收按钮链接"""
     url = message.text.strip()
     if not url.startswith(("http://", "https://", "tg://")):
-        await message.reply("❌ 请输入有效的 URL（以 http:// 或 https:// 开头）")
+        await message.reply("❌ 请输入有效的 URL（以 http://、https:// 或 tg:// 开头）")
         return
 
     await state.update_data(button_url=url)
@@ -414,7 +423,7 @@ async def on_edit_value(message: types.Message, state: FSMContext):
         value = json.dumps(tags, ensure_ascii=False)
     elif field == "button_url":
         if not text.startswith(("http://", "https://", "tg://")):
-            await message.reply("❌ 请输入有效的 URL")
+            await message.reply("❌ 请输入有效的 URL（以 http://、https:// 或 tg:// 开头）")
             return
         value = text
     else:
@@ -430,20 +439,20 @@ async def on_edit_value(message: types.Message, state: FSMContext):
     await message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
 
 
-# ============ 删除老师 ============
+# ============ 停用老师 ============
 
 
 @router.callback_query(F.data == "teacher:delete")
 @admin_required
 async def cb_teacher_delete(callback: types.CallbackQuery, state: FSMContext):
-    """删除老师 - 展示列表"""
+    """停用老师 - 展示列表"""
     await state.clear()
     teachers = await get_all_teachers(active_only=False)
     if not teachers:
         await callback.answer("当前没有老师", show_alert=True)
         return
     await callback.message.edit_text(
-        "❌ 选择要删除的老师：",
+        "❌ 选择要停用的老师：",
         reply_markup=teacher_list_kb(teachers),
     )
     await callback.answer()
@@ -452,9 +461,9 @@ async def cb_teacher_delete(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("teacher:select:"))
 @admin_required
 async def cb_teacher_selected_for_delete(callback: types.CallbackQuery, state: FSMContext):
-    """选择老师后展示删除确认"""
+    """选择老师后展示停用确认"""
     current_state = await state.get_state()
-    # 如果不在编辑状态，则为删除操作
+    # 如果不在编辑状态，则为停用操作
     if current_state and current_state.startswith("EditTeacher"):
         return
 
@@ -465,8 +474,8 @@ async def cb_teacher_selected_for_delete(callback: types.CallbackQuery, state: F
         return
 
     await callback.message.edit_text(
-        f"⚠️ 确认删除老师「{teacher['display_name']}」？\n\n"
-        "此操作不可恢复！",
+        f"⚠️ 确认停用老师「{teacher['display_name']}」？\n\n"
+        "停用后该老师不会出现在签到发布和关键词查询中，历史签到记录会保留。",
         reply_markup=delete_confirm_kb(teacher_id),
     )
     await callback.answer()
@@ -475,16 +484,16 @@ async def cb_teacher_selected_for_delete(callback: types.CallbackQuery, state: F
 @router.callback_query(F.data.startswith("teacher:confirm_delete:"))
 @admin_required
 async def cb_teacher_confirm_delete(callback: types.CallbackQuery):
-    """确认删除老师"""
+    """确认停用老师"""
     teacher_id = int(callback.data.split(":")[2])
     teacher = await get_teacher(teacher_id)
     success = await remove_teacher(teacher_id)
 
     if success:
         name = teacher["display_name"] if teacher else str(teacher_id)
-        await callback.message.edit_text(f"✅ 老师「{name}」已删除")
+        await callback.message.edit_text(f"✅ 老师「{name}」已停用")
     else:
-        await callback.message.edit_text("⚠️ 删除失败")
+        await callback.message.edit_text("⚠️ 停用失败")
 
     await callback.message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
     await callback.answer()

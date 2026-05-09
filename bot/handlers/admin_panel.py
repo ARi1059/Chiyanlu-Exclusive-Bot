@@ -26,6 +26,7 @@ from bot.states.teacher_states import (
     SystemSettingStates,
 )
 from bot.utils.permissions import admin_required, super_admin_required
+from bot.scheduler.tasks import reload_daily_publish
 
 router = Router(name="admin_panel")
 
@@ -301,7 +302,11 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
             await message.reply("❌ 时间无效，小时 0-23，分钟 0-59")
             return
         await set_config("publish_time", text)
-        await message.answer(f"✅ 发布时间已修改为: {text}")
+        reloaded_time = await reload_daily_publish()
+        if reloaded_time:
+            await message.answer(f"✅ 发布时间已修改为: {text}\n定时任务已重载")
+        else:
+            await message.answer(f"✅ 发布时间已修改为: {text}\n⚠️ 定时任务将在重启后生效")
 
     elif setting == "cooldown_seconds":
         if not text.isdigit() or int(text) < 0:

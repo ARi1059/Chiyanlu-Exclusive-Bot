@@ -4,7 +4,7 @@ from aiogram import Router, types, F
 from pytz import timezone
 
 from bot.config import config
-from bot.database import get_teacher, is_checked_in, checkin_teacher
+from bot.database import get_teacher, is_checked_in, checkin_teacher, get_config
 
 router = Router(name="teacher_checkin")
 
@@ -35,11 +35,12 @@ async def on_checkin(message: types.Message):
     now = datetime.now(tz)
     today_str = now.strftime("%Y-%m-%d")
 
-    # 检查签到时间窗口：00:00 - 14:00
-    hour, minute = map(int, config.publish_time.split(":"))
+    # 检查签到时间窗口：00:00 - 发布时间
+    publish_time = await get_config("publish_time") or config.publish_time
+    hour, minute = map(int, publish_time.split(":"))
     if now.hour > hour or (now.hour == hour and now.minute >= minute):
         await message.reply(
-            f"⏰ 今日签到已截止（截止时间 {config.publish_time}）\n"
+            f"⏰ 今日签到已截止（截止时间 {publish_time}）\n"
             "请明天再来签到"
         )
         return

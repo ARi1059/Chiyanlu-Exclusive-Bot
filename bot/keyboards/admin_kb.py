@@ -24,7 +24,7 @@ def teacher_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ 添加老师", callback_data="teacher:add")],
         [InlineKeyboardButton(text="✏️ 编辑老师", callback_data="teacher:edit")],
-        [InlineKeyboardButton(text="❌ 删除老师", callback_data="teacher:delete")],
+        [InlineKeyboardButton(text="❌ 停用老师", callback_data="teacher:delete")],
         [InlineKeyboardButton(text="📋 老师列表", callback_data="teacher:list")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
@@ -95,10 +95,10 @@ def confirm_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def delete_confirm_kb(teacher_id: int) -> InlineKeyboardMarkup:
-    """删除确认按钮"""
+    """停用确认按钮"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="⚠️ 确认删除", callback_data=f"teacher:confirm_delete:{teacher_id}"),
+            InlineKeyboardButton(text="⚠️ 确认停用", callback_data=f"teacher:confirm_delete:{teacher_id}"),
             InlineKeyboardButton(text="🔙 取消", callback_data="teacher:delete"),
         ],
     ])

@@ -16,7 +16,42 @@ from bot.database import (
 
 logger = logging.getLogger(__name__)
 
+_scheduler = None
+_bot: Bot | None = None
+
 tz = timezone(config.timezone)
+
+
+async def get_publish_time() -> str:
+    """获取当前发布时间配置"""
+    return await get_config("publish_time") or config.publish_time
+
+
+async def schedule_daily_publish(scheduler, bot: Bot) -> str:
+    """配置或重载每日签到汇总定时任务，返回生效的发布时间"""
+    global _scheduler, _bot
+    _scheduler = scheduler
+    _bot = bot
+
+    publish_time = await get_publish_time()
+    hour, minute = map(int, publish_time.split(":"))
+    scheduler.add_job(
+        publish_daily_checkin,
+        "cron",
+        hour=hour,
+        minute=minute,
+        args=[bot],
+        id="daily_publish",
+        replace_existing=True,
+    )
+    return publish_time
+
+
+async def reload_daily_publish() -> str | None:
+    """重载已注册的每日签到汇总定时任务"""
+    if _scheduler is None or _bot is None:
+        return None
+    return await schedule_daily_publish(_scheduler, _bot)
 
 
 async def publish_daily_checkin(bot: Bot):
