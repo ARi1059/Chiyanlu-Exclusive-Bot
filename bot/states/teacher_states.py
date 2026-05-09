@@ -34,3 +34,8 @@ class SetChannelStates(StatesGroup):
 class SetGroupStates(StatesGroup):
     """设置响应群组状态"""
     waiting_group_id = State()
+
+
+class SystemSettingStates(StatesGroup):
+    """系统设置状态"""
+    waiting_value = State()
