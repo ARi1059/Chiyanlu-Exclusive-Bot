@@ -50,7 +50,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
 def channel_menu_kb() -> InlineKeyboardMarkup:
     """频道设置子面板"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📌 设置发布频道", callback_data="channel:set_publish")],
+        [InlineKeyboardButton(text="📌 设置发布目标", callback_data="channel:set_publish")],
         [InlineKeyboardButton(text="💬 设置响应群组", callback_data="channel:set_response")],
         [InlineKeyboardButton(text="📋 查看当前设置", callback_data="channel:view")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],

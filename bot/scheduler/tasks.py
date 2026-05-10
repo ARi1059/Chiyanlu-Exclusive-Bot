@@ -25,6 +25,20 @@ _bot: Optional[Bot] = None
 tz = timezone(config.timezone)
 
 
+def parse_publish_chat_ids(raw: Optional[str]) -> list[int]:
+    """解析发布目标 ID，兼容单个 ID 和逗号分隔的多个 ID"""
+    if not raw:
+        return []
+
+    chat_ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        chat_ids.append(int(part))
+    return chat_ids
+
+
 async def get_publish_time() -> str:
     """获取当前发布时间配置"""
     return await get_config("publish_time") or config.publish_time
@@ -87,7 +101,7 @@ async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, Inli
     return text, keyboard
 
 
-async def send_daily_checkin(bot: Bot, channel_id: int, date_str: str):
+async def send_daily_checkin(bot: Bot, chat_id: int, date_str: str):
     """发送指定日期签到汇总并保存发送记录"""
     payload = await build_daily_checkin_payload(date_str)
     if payload is None:
@@ -96,11 +110,11 @@ async def send_daily_checkin(bot: Bot, channel_id: int, date_str: str):
 
     text, keyboard = payload
     msg = await bot.send_message(
-        chat_id=channel_id,
+        chat_id=chat_id,
         text=text,
         reply_markup=keyboard,
     )
-    await save_sent_message(channel_id, msg.message_id, date_str)
+    await save_sent_message(chat_id, msg.message_id, date_str)
     return msg
 
 
@@ -112,18 +126,25 @@ async def publish_daily_checkin(bot: Bot):
     # 先删除前一天的消息
     await _delete_previous_messages(bot)
 
-    # 获取发布频道
-    channel_id = await get_config("publish_channel_id")
-    if not channel_id:
-        logger.warning("未设置发布频道，跳过发布")
+    # 获取发布目标（频道或群组）
+    raw_chat_ids = await get_config("publish_channel_id")
+    try:
+        chat_ids = parse_publish_chat_ids(raw_chat_ids)
+    except ValueError:
+        logger.error("发布目标配置无效: %s", raw_chat_ids)
         return
 
-    try:
-        msg = await send_daily_checkin(bot, int(channel_id), today_str)
-        if msg:
-            logger.info(f"[{today_str}] 已发布签到汇总")
-    except Exception as e:
-        logger.error(f"发布签到汇总失败: {e}")
+    if not chat_ids:
+        logger.warning("未设置发布目标，跳过发布")
+        return
+
+    for chat_id in chat_ids:
+        try:
+            msg = await send_daily_checkin(bot, chat_id, today_str)
+            if msg:
+                logger.info(f"[{today_str}] 已发布签到汇总到 {chat_id}")
+        except Exception as e:
+            logger.error(f"发布签到汇总失败 chat={chat_id}: {e}")
 
 
 async def _delete_previous_messages(bot: Bot):

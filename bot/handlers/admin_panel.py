@@ -36,6 +36,7 @@ from bot.scheduler.tasks import (
     reload_daily_publish,
     build_daily_checkin_payload,
     send_daily_checkin,
+    parse_publish_chat_ids,
 )
 
 router = Router(name="admin_panel")
@@ -53,6 +54,18 @@ def _format_teacher_names(teachers: list[dict], limit: int = 20) -> str:
     names = [t["display_name"] for t in teachers[:limit]]
     suffix = f" 等 {len(teachers)} 位" if len(teachers) > limit else ""
     return "、".join(names) + suffix
+
+
+def _format_publish_result(success: list[int], failed: list[tuple[int, str]]) -> str:
+    """格式化多目标发布结果"""
+    lines = [f"成功: {len(success)} 个目标"]
+    if success:
+        lines.append("已发送: " + ", ".join(str(chat_id) for chat_id in success))
+    if failed:
+        lines.append(f"失败: {len(failed)} 个目标")
+        for chat_id, error in failed:
+            lines.append(f"- {chat_id}: {error}")
+    return "\n".join(lines)
 
 
 # ============ 主菜单 ============
@@ -201,11 +214,12 @@ async def cb_admin_list(callback: types.CallbackQuery):
 @router.callback_query(F.data == "channel:set_publish")
 @admin_required
 async def cb_set_publish_channel(callback: types.CallbackQuery, state: FSMContext):
-    """设置发布频道"""
+    """设置发布目标"""
     await state.set_state(SetChannelStates.waiting_channel_id)
     await callback.message.edit_text(
-        "📌 请输入发布频道的 Chat ID（数字，通常为负数）：\n\n"
-        "提示：将 @RawDataBot 添加到频道，转发一条消息即可获取 ID",
+        "📌 请输入发布目标 Chat ID（频道或群组，数字，通常为负数）：\n\n"
+        "支持多个目标，用逗号分隔。例如：-100123456,-100789012\n"
+        "提示：频道/群组都需要先添加 Bot，并授予发送消息权限",
     )
     await callback.answer()
 
@@ -213,16 +227,20 @@ async def cb_set_publish_channel(callback: types.CallbackQuery, state: FSMContex
 @router.message(SetChannelStates.waiting_channel_id)
 @admin_required
 async def on_publish_channel_id(message: types.Message, state: FSMContext):
-    """接收发布频道 ID"""
+    """接收发布目标 ID"""
     text = message.text.strip()
     try:
-        channel_id = int(text)
+        chat_ids = parse_publish_chat_ids(text)
     except ValueError:
-        await message.reply("❌ 请输入有效的数字 ID")
+        await message.reply("❌ 请输入有效的数字 ID，多个用逗号分隔")
         return
 
-    await set_config("publish_channel_id", str(channel_id))
-    await message.answer(f"✅ 发布频道已设置为: {channel_id}")
+    if not chat_ids:
+        await message.reply("❌ 请至少输入一个发布目标 ID")
+        return
+
+    await set_config("publish_channel_id", ",".join(str(chat_id) for chat_id in chat_ids))
+    await message.answer(f"✅ 发布目标已设置为: {chat_ids}")
     await state.clear()
     await message.answer("🔧 痴颜录管理面板", reply_markup=main_menu_kb())
 
@@ -266,7 +284,7 @@ async def cb_channel_view(callback: types.CallbackQuery):
     group_ids = await get_config("response_group_ids")
 
     lines = ["📋 当前设置：\n"]
-    lines.append(f"📌 发布频道: {publish_id or '未设置'}")
+    lines.append(f"📌 发布目标: {publish_id or '未设置'}")
     lines.append(f"💬 响应群组: {group_ids or '未设置'}")
 
     await callback.message.edit_text(
@@ -295,7 +313,7 @@ async def cb_system_status(callback: types.CallbackQuery):
     lines = [
         "系统状态检查",
         "━━━━━━━━━━━━━━━",
-        f"📌 发布频道: {'已设置 ' + publish_id if publish_id else '未设置'}",
+        f"📌 发布目标: {'已设置 ' + publish_id if publish_id else '未设置'}",
         f"💬 响应群组: {'已设置 ' + group_ids if group_ids else '未设置'}",
         f"⏰ 发布时间: {publish_time}",
         f"⏳ 冷却时间: {cooldown} 秒",
@@ -309,7 +327,7 @@ async def cb_system_status(callback: types.CallbackQuery):
 
     warnings = []
     if not publish_id:
-        warnings.append("未设置发布频道，定时发布会跳过")
+        warnings.append("未设置发布目标，定时发布会跳过")
     if not group_ids:
         warnings.append("未设置响应群组，关键词响应不会生效")
     if teacher_counts["active"] == 0:
@@ -345,9 +363,15 @@ async def cb_publish_preview(callback: types.CallbackQuery):
 async def cb_publish_manual(callback: types.CallbackQuery):
     """手动发布今日签到汇总"""
     today = _today_str()
-    channel_id = await get_config("publish_channel_id")
-    if not channel_id:
-        await callback.answer("未设置发布频道", show_alert=True)
+    raw_chat_ids = await get_config("publish_channel_id")
+    try:
+        chat_ids = parse_publish_chat_ids(raw_chat_ids)
+    except ValueError:
+        await callback.answer("发布目标配置无效", show_alert=True)
+        return
+
+    if not chat_ids:
+        await callback.answer("未设置发布目标", show_alert=True)
         return
 
     payload = await build_daily_checkin_payload(today)
@@ -355,30 +379,42 @@ async def cb_publish_manual(callback: types.CallbackQuery):
         await callback.answer("今日暂无老师签到", show_alert=True)
         return
 
-    try:
-        msg = await send_daily_checkin(callback.bot, int(channel_id), today)
-    except Exception as e:
-        await callback.answer("发布失败，请查看日志", show_alert=True)
-        await callback.message.answer(f"⚠️ 手动发布失败：{e}")
-        return
+    success = []
+    failed = []
+    for chat_id in chat_ids:
+        try:
+            msg = await send_daily_checkin(callback.bot, chat_id, today)
+            if msg:
+                success.append(chat_id)
+            else:
+                failed.append((chat_id, "今日暂无老师签到"))
+        except Exception as e:
+            failed.append((chat_id, str(e)))
 
-    if msg:
+    if success:
         await callback.answer("已发布", show_alert=True)
-        await callback.message.answer(
-            f"✅ 已手动发布 {today} 签到汇总到频道 {channel_id}"
-        )
     else:
-        await callback.answer("今日暂无老师签到", show_alert=True)
+        await callback.answer("发布失败，请查看详情", show_alert=True)
+
+    await callback.message.answer(
+        f"手动发布 {today} 签到汇总完成\n" + _format_publish_result(success, failed)
+    )
 
 
 @router.callback_query(F.data == "test:checkin_publish")
 @admin_required
 async def cb_test_checkin_publish(callback: types.CallbackQuery):
-    """测试签到记录和频道发送"""
+    """测试签到记录和多目标发送"""
     today = _today_str()
-    channel_id = await get_config("publish_channel_id")
-    if not channel_id:
-        await callback.answer("未设置发布频道", show_alert=True)
+    raw_chat_ids = await get_config("publish_channel_id")
+    try:
+        chat_ids = parse_publish_chat_ids(raw_chat_ids)
+    except ValueError:
+        await callback.answer("发布目标配置无效", show_alert=True)
+        return
+
+    if not chat_ids:
+        await callback.answer("未设置发布目标", show_alert=True)
         return
 
     teachers = await get_all_teachers(active_only=True)
@@ -397,27 +433,30 @@ async def cb_test_checkin_publish(callback: types.CallbackQuery):
         )
         return
 
-    try:
-        msg = await send_daily_checkin(callback.bot, int(channel_id), today)
-    except Exception as e:
-        await callback.answer("测试发送失败", show_alert=True)
-        await callback.message.answer(f"测试失败：频道发送失败。\n错误：{e}")
-        return
-
-    if not msg:
-        await callback.answer("测试发送失败", show_alert=True)
-        await callback.message.answer("测试失败：未生成频道消息，请检查今日签到和老师链接。")
-        return
+    success = []
+    failed = []
+    for chat_id in chat_ids:
+        try:
+            msg = await send_daily_checkin(callback.bot, chat_id, today)
+            if msg:
+                success.append(chat_id)
+            else:
+                failed.append((chat_id, "未生成频道/群组消息"))
+        except Exception as e:
+            failed.append((chat_id, str(e)))
 
     checkin_status = "新增签到" if checkin_created else "今日已签到，复用现有记录"
-    await callback.answer("测试完成", show_alert=True)
+    if success:
+        await callback.answer("测试完成", show_alert=True)
+    else:
+        await callback.answer("测试发送失败", show_alert=True)
+
     await callback.message.answer(
         "测试完成\n"
         f"日期：{today}\n"
         f"测试老师：{teacher['display_name']} (ID: {teacher['user_id']})\n"
         f"签到状态：{checkin_status}\n"
-        f"发送频道：{channel_id}\n"
-        f"频道消息 ID：{msg.message_id}"
+        + _format_publish_result(success, failed)
     )
 
 
