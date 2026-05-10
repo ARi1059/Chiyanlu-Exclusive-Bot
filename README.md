@@ -113,7 +113,9 @@ Chiyanlu-Exclusive-Bot/
 ├── data/                       # SQLite 数据库目录，运行时自动创建
 ├── .env.example                # 环境变量示例
 ├── requirements.txt            # Python 依赖
-└── DESIGN.md                   # 设计需求文档
+└── docs/
+    ├── DESIGN.md               # 设计需求文档
+    └── DEPLOYMENT.md           # 部署文档
 ```
 
 ## 环境变量
@@ -337,4 +339,4 @@ journalctl -u chiyanlu-bot -f
 
 ## 相关文档
 
-更多产品设计和功能细节可查看 [DESIGN.md](DESIGN.md)。
+更多产品设计和功能细节可查看 [docs/DESIGN.md](docs/DESIGN.md)，部署细节见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
