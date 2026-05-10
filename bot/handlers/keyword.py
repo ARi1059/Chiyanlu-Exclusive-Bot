@@ -1,6 +1,7 @@
 import json
 import time
 from html import escape
+from typing import Tuple
 from aiogram import Router, types
 from aiogram.enums import ParseMode
 
@@ -10,11 +11,12 @@ from bot.database import (
     search_teachers_by_keyword,
     get_config,
 )
+from bot.utils.url import normalize_url
 
 router = Router(name="keyword")
 
 # 冷却时间记录: {(user_id, keyword): last_trigger_time}
-_cooldown_cache: dict[tuple[int, str], float] = {}
+_cooldown_cache: dict[Tuple[int, str], float] = {}
 
 
 async def _get_response_group_ids() -> list[int]:
@@ -102,9 +104,12 @@ async def _send_teacher_card(message: types.Message, teacher: dict):
     )
 
     button_text = teacher["button_text"] or teacher["display_name"]
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text=f"📩 {button_text}", url=teacher["button_url"])]
-    ])
+    button_url = normalize_url(teacher["button_url"])
+    keyboard = None
+    if button_url:
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text=f"📩 {button_text}", url=button_url)]
+        ])
 
     if teacher["photo_file_id"]:
         await message.answer_photo(
@@ -120,12 +125,18 @@ async def _send_teacher_list(message: types.Message, teachers: list[dict]):
     """模式 B：发送超链接列表"""
     lines = [f"🔍 找到 {len(teachers)} 位相关老师：\n"]
     for t in teachers:
-        url = escape(t["button_url"], quote=True)
+        button_url = normalize_url(t["button_url"])
+        if not button_url:
+            continue
+        url = escape(button_url, quote=True)
         display_name = escape(t["display_name"])
         region = escape(t["region"])
         price = escape(t["price"])
         line = f"<a href=\"{url}\">{display_name} - {region} - {price}</a>"
         lines.append(line)
+
+    if len(lines) == 1:
+        return
 
     await message.answer(
         "\n".join(lines),

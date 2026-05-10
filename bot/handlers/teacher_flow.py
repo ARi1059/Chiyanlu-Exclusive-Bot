@@ -26,6 +26,7 @@ from bot.keyboards.admin_kb import (
 )
 from bot.states.teacher_states import AddTeacherStates, EditTeacherStates
 from bot.utils.permissions import admin_required
+from bot.utils.url import normalize_url
 
 router = Router(name="teacher_flow")
 
@@ -244,9 +245,9 @@ async def cb_skip_photo(callback: types.CallbackQuery, state: FSMContext):
 @admin_required
 async def on_teacher_button_url(message: types.Message, state: FSMContext):
     """步骤8: 接收按钮链接"""
-    url = message.text.strip()
-    if not url.startswith(("http://", "https://", "tg://")):
-        await message.reply("❌ 请输入有效的 URL（以 http://、https:// 或 tg:// 开头）")
+    url = normalize_url(message.text)
+    if not url:
+        await message.reply("❌ 请输入有效的 URL（以 http://、https:// 或 tg:// 开头，且链接中不能包含空格）")
         return
 
     await state.update_data(button_url=url)
@@ -425,10 +426,10 @@ async def on_edit_value(message: types.Message, state: FSMContext):
         tags = [t.strip() for t in re.split(r"[,，\s]+", text) if t.strip()]
         value = json.dumps(tags, ensure_ascii=False)
     elif field == "button_url":
-        if not text.startswith(("http://", "https://", "tg://")):
-            await message.reply("❌ 请输入有效的 URL（以 http://、https:// 或 tg:// 开头）")
+        value = normalize_url(text)
+        if not value:
+            await message.reply("❌ 请输入有效的 URL（以 http://、https:// 或 tg:// 开头，且链接中不能包含空格）")
             return
-        value = text
     else:
         value = text
 

@@ -15,6 +15,7 @@ from bot.database import (
     get_sent_messages,
     delete_sent_messages,
 )
+from bot.utils.url import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +66,21 @@ async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, Inli
     buttons = []
     row = []
     for t in teachers:
+        button_url = normalize_url(t["button_url"])
+        if not button_url:
+            logger.warning("跳过无效老师链接: %s (%s)", t["display_name"], t["button_url"])
+            continue
         button_text = t["button_text"] or t["display_name"]
-        row.append(InlineKeyboardButton(text=button_text, url=t["button_url"]))
+        row.append(InlineKeyboardButton(text=button_text, url=button_url))
         # 每行最多 3 个按钮
         if len(row) == 3:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
+
+    if not buttons:
+        return None
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     text = f"📅 {date_str} 开课老师 {len(teachers)}位"
