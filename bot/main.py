@@ -12,7 +12,7 @@ from bot.handlers.admin_panel import router as admin_panel_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
 from bot.handlers.keyword import router as keyword_router
-from bot.scheduler.tasks import schedule_daily_publish
+from bot.scheduler.tasks import schedule_daily_publish, schedule_checkin_reminder
 
 # 日志配置
 logging.basicConfig(
@@ -36,8 +36,11 @@ async def on_startup():
 
     # 配置定时任务
     publish_time = await schedule_daily_publish(scheduler, bot)
+    reminder_time = await schedule_checkin_reminder(scheduler, bot)
     scheduler.start()
-    logger.info(f"定时任务已启动，发布时间: {publish_time} ({config.timezone})")
+    logger.info(
+        f"定时任务已启动，发布时间: {publish_time}，签到提醒时间: {reminder_time} ({config.timezone})"
+    )
 
     me = await bot.get_me()
     logger.info(f"Bot 启动成功: @{me.username} (ID: {me.id})")

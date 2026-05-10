@@ -34,6 +34,7 @@ from bot.states.teacher_states import (
 from bot.utils.permissions import admin_required, super_admin_required
 from bot.scheduler.tasks import (
     reload_daily_publish,
+    reload_checkin_reminder,
     build_daily_checkin_payload,
     send_daily_checkin,
     parse_publish_chat_ids,
@@ -306,6 +307,8 @@ async def cb_system_status(callback: types.CallbackQuery):
     group_ids = await get_config("response_group_ids")
     publish_time = await get_config("publish_time") or config.publish_time
     cooldown = await get_config("cooldown_seconds") or str(config.cooldown_seconds)
+    reminder_enabled = (await get_config("checkin_reminder_enabled")) == "1"
+    reminder_time = await get_config("checkin_reminder_time") or "13:00"
     teacher_counts = await get_teacher_counts()
     stats = await get_checkin_stats(today)
     sent_messages = await get_sent_messages(today)
@@ -317,6 +320,7 @@ async def cb_system_status(callback: types.CallbackQuery):
         f"💬 响应群组: {'已设置 ' + group_ids if group_ids else '未设置'}",
         f"⏰ 发布时间: {publish_time}",
         f"⏳ 冷却时间: {cooldown} 秒",
+        f"🔔 签到提醒: {'开启' if reminder_enabled else '关闭'} ({reminder_time})",
         f"👩‍🏫 老师总数: {teacher_counts['total']}",
         f"✅ 启用老师: {teacher_counts['active']}",
         f"❌ 停用老师: {teacher_counts['inactive']}",
@@ -481,6 +485,32 @@ async def cb_checkin_stats(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "system:reminder_time")
+@admin_required
+async def cb_set_reminder_time(callback: types.CallbackQuery, state: FSMContext):
+    """修改签到提醒时间"""
+    current = await get_config("checkin_reminder_time") or "13:00"
+    await state.set_state(SystemSettingStates.waiting_value)
+    await state.set_data({"setting": "checkin_reminder_time"})
+    await callback.message.edit_text(
+        f"🔔 当前签到提醒时间: {current}\n\n"
+        "请输入新的提醒时间（格式 HH:MM，如 13:00）：",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:reminder_toggle")
+@admin_required
+async def cb_toggle_reminder(callback: types.CallbackQuery):
+    """切换签到提醒开关"""
+    enabled = (await get_config("checkin_reminder_enabled")) == "1"
+    new_value = "0" if enabled else "1"
+    await set_config("checkin_reminder_enabled", new_value)
+    status = "关闭" if enabled else "开启"
+    await callback.answer(f"签到提醒已{status}", show_alert=True)
+    await callback.message.edit_text("⚙️ 系统设置", reply_markup=system_menu_kb())
+
+
 @router.callback_query(F.data == "system:publish_time")
 @admin_required
 async def cb_set_publish_time(callback: types.CallbackQuery, state: FSMContext):
@@ -533,6 +563,22 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
             await message.answer(f"✅ 发布时间已修改为: {text}\n定时任务已重载")
         else:
             await message.answer(f"✅ 发布时间已修改为: {text}\n⚠️ 定时任务将在重启后生效")
+
+    elif setting == "checkin_reminder_time":
+        parts = text.split(":")
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            await message.reply("❌ 格式错误，请输入 HH:MM 格式（如 13:00）")
+            return
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            await message.reply("❌ 时间无效，小时 0-23，分钟 0-59")
+            return
+        await set_config("checkin_reminder_time", text)
+        reloaded_time = await reload_checkin_reminder()
+        if reloaded_time:
+            await message.answer(f"✅ 签到提醒时间已修改为: {text}\n定时任务已重载")
+        else:
+            await message.answer(f"✅ 签到提醒时间已修改为: {text}\n⚠️ 定时任务将在重启后生效")
 
     elif setting == "cooldown_seconds":
         if not text.isdigit() or int(text) < 0:

@@ -10,6 +10,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     get_checked_in_teachers,
+    get_unchecked_teachers,
     get_config,
     save_sent_message,
     get_sent_messages,
@@ -69,6 +70,88 @@ async def reload_daily_publish() -> Optional[str]:
     if _scheduler is None or _bot is None:
         return None
     return await schedule_daily_publish(_scheduler, _bot)
+
+
+async def get_checkin_reminder_time() -> str:
+    """获取签到提醒时间配置"""
+    return await get_config("checkin_reminder_time") or "13:00"
+
+
+async def is_checkin_reminder_enabled() -> bool:
+    """判断签到提醒是否启用"""
+    return (await get_config("checkin_reminder_enabled")) == "1"
+
+
+async def schedule_checkin_reminder(scheduler, bot: Bot) -> str:
+    """配置或重载老师签到提醒定时任务，返回生效的提醒时间"""
+    global _scheduler, _bot
+    _scheduler = scheduler
+    _bot = bot
+
+    reminder_time = await get_checkin_reminder_time()
+    hour, minute = map(int, reminder_time.split(":"))
+    scheduler.add_job(
+        send_checkin_reminders,
+        "cron",
+        hour=hour,
+        minute=minute,
+        args=[bot],
+        id="checkin_reminder",
+        replace_existing=True,
+    )
+    return reminder_time
+
+
+async def reload_checkin_reminder() -> Optional[str]:
+    """重载已注册的老师签到提醒定时任务"""
+    if _scheduler is None or _bot is None:
+        return None
+    return await schedule_checkin_reminder(_scheduler, _bot)
+
+
+async def send_checkin_reminders(bot: Bot):
+    """给当天未签到的启用老师发送私聊提醒"""
+    if not await is_checkin_reminder_enabled():
+        logger.info("签到提醒未启用，跳过")
+        return
+
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+    publish_time = await get_publish_time()
+    teachers = await get_unchecked_teachers(today_str)
+
+    if not teachers:
+        logger.info("[%s] 无未签到老师，跳过提醒", today_str)
+        return
+
+    success_count = 0
+    failed_count = 0
+    for teacher in teachers:
+        text = (
+            "签到提醒\n\n"
+            f"老师：{teacher['display_name']}\n"
+            f"日期：{today_str}\n"
+            f"今日还未签到，请在 {publish_time} 前私聊发送“签到”完成签到。"
+        )
+        try:
+            await bot.send_message(chat_id=teacher["user_id"], text=text)
+            success_count += 1
+            logger.info("已提醒老师签到: %s (%s)", teacher["display_name"], teacher["user_id"])
+        except Exception as e:
+            failed_count += 1
+            logger.warning(
+                "提醒老师签到失败: %s (%s): %s",
+                teacher["display_name"],
+                teacher["user_id"],
+                e,
+            )
+
+    logger.info(
+        "[%s] 签到提醒完成，成功 %s 位，失败 %s 位",
+        today_str,
+        success_count,
+        failed_count,
+    )
 
 
 async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, InlineKeyboardMarkup]]:
