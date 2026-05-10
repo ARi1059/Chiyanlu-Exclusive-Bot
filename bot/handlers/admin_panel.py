@@ -15,6 +15,7 @@ from bot.database import (
     get_checkin_stats,
     get_teacher_counts,
     get_sent_messages,
+    checkin_teacher,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
@@ -368,6 +369,56 @@ async def cb_publish_manual(callback: types.CallbackQuery):
         )
     else:
         await callback.answer("今日暂无老师签到", show_alert=True)
+
+
+@router.callback_query(F.data == "test:checkin_publish")
+@admin_required
+async def cb_test_checkin_publish(callback: types.CallbackQuery):
+    """测试签到记录和频道发送"""
+    today = _today_str()
+    channel_id = await get_config("publish_channel_id")
+    if not channel_id:
+        await callback.answer("未设置发布频道", show_alert=True)
+        return
+
+    teachers = await get_all_teachers(active_only=True)
+    if not teachers:
+        await callback.answer("当前没有启用老师", show_alert=True)
+        return
+
+    teacher = teachers[0]
+    checkin_created = await checkin_teacher(teacher["user_id"], today)
+    payload = await build_daily_checkin_payload(today)
+    if payload is None:
+        await callback.answer("没有可发送的有效签到内容", show_alert=True)
+        await callback.message.answer(
+            "测试失败：已尝试写入签到记录，但没有可发送的有效内容。\n"
+            "请检查老师按钮链接是否有效。"
+        )
+        return
+
+    try:
+        msg = await send_daily_checkin(callback.bot, int(channel_id), today)
+    except Exception as e:
+        await callback.answer("测试发送失败", show_alert=True)
+        await callback.message.answer(f"测试失败：频道发送失败。\n错误：{e}")
+        return
+
+    if not msg:
+        await callback.answer("测试发送失败", show_alert=True)
+        await callback.message.answer("测试失败：未生成频道消息，请检查今日签到和老师链接。")
+        return
+
+    checkin_status = "新增签到" if checkin_created else "今日已签到，复用现有记录"
+    await callback.answer("测试完成", show_alert=True)
+    await callback.message.answer(
+        "测试完成\n"
+        f"日期：{today}\n"
+        f"测试老师：{teacher['display_name']} (ID: {teacher['user_id']})\n"
+        f"签到状态：{checkin_status}\n"
+        f"发送频道：{channel_id}\n"
+        f"频道消息 ID：{msg.message_id}"
+    )
 
 
 @router.callback_query(F.data == "checkin:stats")
