@@ -114,7 +114,8 @@ Chiyanlu-Exclusive-Bot/
 ├── .env.example                # 环境变量示例
 ├── requirements.txt            # Python 依赖
 └── docs/
-    ├── DESIGN.md               # 设计需求文档
+    ├── DESIGN.md               # v1 设计需求文档
+    ├── FEATURES-v2.md          # v2 功能增量需求文档
     └── DEPLOYMENT.md           # 部署文档
 ```
 
@@ -339,4 +340,4 @@ journalctl -u chiyanlu-bot -f
 
 ## 相关文档
 
-更多产品设计和功能细节可查看 [docs/DESIGN.md](docs/DESIGN.md)，部署细节见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+更多产品设计和功能细节可查看 [docs/DESIGN.md](docs/DESIGN.md)（v1 原始设计），v2 功能增量需求见 [docs/FEATURES-v2.md](docs/FEATURES-v2.md)，部署细节见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
