@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime, timedelta
 
+from typing import Optional, Tuple
+
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pytz import timezone
@@ -17,7 +19,7 @@ from bot.database import (
 logger = logging.getLogger(__name__)
 
 _scheduler = None
-_bot: Bot | None = None
+_bot: Optional[Bot] = None
 
 tz = timezone(config.timezone)
 
@@ -47,14 +49,14 @@ async def schedule_daily_publish(scheduler, bot: Bot) -> str:
     return publish_time
 
 
-async def reload_daily_publish() -> str | None:
+async def reload_daily_publish() -> Optional[str]:
     """重载已注册的每日签到汇总定时任务"""
     if _scheduler is None or _bot is None:
         return None
     return await schedule_daily_publish(_scheduler, _bot)
 
 
-async def build_daily_checkin_payload(date_str: str) -> tuple[str, InlineKeyboardMarkup] | None:
+async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, InlineKeyboardMarkup]]:
     """构建每日签到发布内容，返回文本和按钮"""
     teachers = await get_checked_in_teachers(date_str)
     if not teachers:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import aiosqlite
 import os
 from bot.config import config
@@ -100,7 +102,7 @@ async def remove_admin(user_id: int) -> bool:
         await db.close()
 
 
-async def get_admin(user_id: int) -> dict | None:
+async def get_admin(user_id: int) -> Optional[dict]:
     """获取管理员信息"""
     db = await get_db()
     try:
@@ -190,7 +192,7 @@ async def remove_teacher(user_id: int) -> bool:
         await db.close()
 
 
-async def get_teacher(user_id: int) -> dict | None:
+async def get_teacher(user_id: int) -> Optional[dict]:
     """获取老师信息"""
     db = await get_db()
     try:
@@ -216,7 +218,7 @@ async def get_all_teachers(active_only: bool = True) -> list[dict]:
         await db.close()
 
 
-async def get_teacher_by_name(display_name: str) -> dict | None:
+async def get_teacher_by_name(display_name: str) -> Optional[dict]:
     """通过艺名精确查找老师"""
     db = await get_db()
     try:
@@ -378,7 +380,7 @@ async def set_config(key: str, value: str):
         await db.close()
 
 
-async def get_config(key: str) -> str | None:
+async def get_config(key: str) -> Optional[str]:
     """获取配置项"""
     db = await get_db()
     try:

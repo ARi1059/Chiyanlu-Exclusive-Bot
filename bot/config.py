@@ -1,12 +1,14 @@
 import os
 from dataclasses import dataclass
+from typing import Optional
+
 from dotenv import load_dotenv
 from pytz import timezone as pytz_timezone, UnknownTimeZoneError
 
 load_dotenv()
 
 
-def _parse_int_env(name: str, default: str | None = None, min_value: int | None = None) -> int:
+def _parse_int_env(name: str, default: Optional[str] = None, min_value: Optional[int] = None) -> int:
     """读取并校验整数环境变量"""
     raw = os.getenv(name, default)
     if raw is None or raw == "":
