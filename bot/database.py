@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import aiosqlite
@@ -289,6 +290,120 @@ async def search_teachers_by_keyword(keyword: str) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def search_teachers_smart_and(
+    tokens: list[str],
+) -> tuple[list[dict], list[str]]:
+    """智能 AND 搜索（F4，v2 §2.4.2）
+
+    规则:
+        - 同类型 OR：多个标签 / 多个地区 / 多个价格之间用 OR
+        - 跨类型 AND：标签条件、地区条件、价格条件之间用 AND
+        - 类型自动识别：扫描所有 active 老师的 tags/region/price 集合，决定每个 token 属于哪些类型
+        - 单个 token 可能同时属于多个类型（罕见，兜底处理）
+        - 完全未匹配任何类型的 token 视为 unrecognized
+        - 艺名不参与组合搜索（由调用方在更上一层做精确艺名匹配优先判断）
+
+    Args:
+        tokens: 用户输入拆分后的 token 列表（已 strip / 去重，大小写无关）
+
+    Returns:
+        (teachers, unrecognized):
+            teachers: 命中老师列表（is_active=1，按 created_at 排序）
+            unrecognized: 未识别为任何类型的原始 token，用于给用户提示
+
+    特殊情形:
+        - tokens 为空：返回 ([], [])
+        - 全部 unrecognized：返回 ([], unrecognized)
+    """
+    if not tokens:
+        return [], []
+
+    db = await get_db()
+    try:
+        # 1. 加载所有 active 老师的 region / price / tags，构造小写集合用于类型识别
+        cursor = await db.execute(
+            "SELECT region, price, tags FROM teachers WHERE is_active = 1"
+        )
+        rows = await cursor.fetchall()
+
+        regions: set[str] = set()
+        prices: set[str] = set()
+        tags_set: set[str] = set()
+        for row in rows:
+            if row["region"]:
+                regions.add(row["region"].lower())
+            if row["price"]:
+                prices.add(row["price"].lower())
+            try:
+                for t in json.loads(row["tags"] or "[]"):
+                    tags_set.add(str(t).lower())
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # 2. token 类型识别（一个 token 可命中多个类型）
+        token_tags: list[str] = []
+        token_regions: list[str] = []
+        token_prices: list[str] = []
+        unrecognized: list[str] = []
+        for raw in tokens:
+            tl = raw.lower()
+            matched = False
+            if tl in tags_set:
+                token_tags.append(tl)
+                matched = True
+            if tl in regions:
+                token_regions.append(tl)
+                matched = True
+            if tl in prices:
+                token_prices.append(tl)
+                matched = True
+            if not matched:
+                unrecognized.append(raw)
+
+        # 没有任何可识别 token，无法构造查询
+        if not (token_tags or token_regions or token_prices):
+            return [], unrecognized
+
+        # 3. 构造 SQL：同类型 OR、跨类型 AND
+        conditions: list[str] = []
+        params: list = []
+
+        if token_tags:
+            sub = []
+            for t in token_tags:
+                sub.append(
+                    "EXISTS (SELECT 1 FROM json_each(tags) "
+                    "WHERE LOWER(json_each.value) = ?)"
+                )
+                params.append(t)
+            conditions.append("(" + " OR ".join(sub) + ")")
+
+        if token_regions:
+            sub = []
+            for r in token_regions:
+                sub.append("LOWER(region) = ?")
+                params.append(r)
+            conditions.append("(" + " OR ".join(sub) + ")")
+
+        if token_prices:
+            sub = []
+            for p in token_prices:
+                sub.append("LOWER(price) = ?")
+                params.append(p)
+            conditions.append("(" + " OR ".join(sub) + ")")
+
+        query = (
+            "SELECT * FROM teachers WHERE is_active = 1 AND "
+            + " AND ".join(conditions)
+            + " ORDER BY created_at"
+        )
+        cursor = await db.execute(query, params)
+        result_rows = await cursor.fetchall()
+        return [dict(r) for r in result_rows], unrecognized
     finally:
         await db.close()
 
@@ -686,6 +801,32 @@ async def count_teacher_favoriters(teacher_id: int) -> int:
         )
         row = await cursor.fetchone()
         return row["n"] if row else 0
+    finally:
+        await db.close()
+
+
+async def list_user_favorites_signed_in(
+    user_id: int, date_str: str
+) -> list[dict]:
+    """用户的"收藏 ∩ 当天已签到"老师（用于 C1 "💝 收藏开课"子菜单）
+
+    仅返回 is_active=1 的老师，按签到时间排序。
+    """
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT t.*
+               FROM favorites f
+               INNER JOIN teachers t ON f.teacher_id = t.user_id
+               INNER JOIN checkins c ON t.user_id = c.teacher_id
+               WHERE f.user_id = ?
+                 AND c.checkin_date = ?
+                 AND t.is_active = 1
+               ORDER BY c.created_at""",
+            (user_id, date_str),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
     finally:
         await db.close()
 

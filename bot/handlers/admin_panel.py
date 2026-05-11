@@ -72,10 +72,14 @@ def _format_publish_result(success: list[int], failed: list[tuple[int, str]]) ->
 # ============ 主菜单 ============
 
 
-@router.message(Command("start", "admin"))
+@router.message(Command("admin"))
 @admin_required
 async def cmd_admin(message: types.Message, state: FSMContext):
-    """管理员发送 /start 或 /admin 显示管理面板"""
+    """管理员发送 /admin 显示管理面板
+
+    /start 命令由 start_router 统一处理并按角色分流（v2 §2.5.5）。
+    管理员从 /start 进入也会走 start_router，最终调用 main_menu_kb。
+    """
     await state.clear()
     await message.answer("🔧 痴颜录管理面板", reply_markup=main_menu_kb())
 
