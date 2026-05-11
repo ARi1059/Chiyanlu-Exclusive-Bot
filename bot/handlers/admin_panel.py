@@ -39,6 +39,7 @@ from bot.scheduler.tasks import (
     send_daily_checkin,
     parse_publish_chat_ids,
 )
+from bot.utils.notifier import send_notification_to_user
 
 router = Router(name="admin_panel")
 
@@ -466,6 +467,44 @@ async def cb_test_checkin_publish(callback: types.CallbackQuery):
         f"签到状态：{checkin_status}\n"
         + _format_publish_result(success, failed)
     )
+
+
+@router.callback_query(F.data == "test:fav_notification")
+@admin_required
+async def cb_test_fav_notification(callback: types.CallbackQuery):
+    """测试收藏通知（F2，v2 Step 4）
+
+    仅给**当前点击的管理员**发其自身的"收藏 ∩ 签到"聚合通知，便于自测
+    无副作用，不影响其他用户。
+    """
+    today = _today_str()
+    user = callback.from_user
+
+    success, n = await send_notification_to_user(
+        callback.bot,
+        user.id,
+        user.first_name,
+        user.username,
+        today,
+    )
+
+    if n == 0:
+        await callback.answer(
+            f"你的收藏老师在 {today} 没有人签到，\n无可发送内容",
+            show_alert=True,
+        )
+        return
+
+    if success:
+        await callback.answer(
+            f"✅ 测试通知已发送（含 {n} 位老师），请查收私聊",
+            show_alert=True,
+        )
+    else:
+        await callback.answer(
+            "⚠️ 推送失败：你可能未私聊过 bot，\n请先私聊 bot 发送 /start 再重试",
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == "checkin:stats")

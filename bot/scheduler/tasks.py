@@ -16,6 +16,7 @@ from bot.database import (
     get_sent_messages,
     delete_sent_messages,
 )
+from bot.utils.notifier import send_favorite_notifications
 from bot.utils.url import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -202,10 +203,42 @@ async def send_daily_checkin(bot: Bot, chat_id: int, date_str: str):
 
 
 async def publish_daily_checkin(bot: Bot):
-    """每日定时发布签到汇总"""
+    """每日定时任务（14:00）：两阶段顺序执行，互不阻断（v2 §2.2.6）
+
+    阶段 1：频道发布（v1 行为）—— 删旧消息 + 发当天签到汇总
+    阶段 2：收藏者通知（F2，v2 §2.2）—— mention 聚合 + 限速推送
+
+    两个阶段都包在 try/except 里，任一异常不影响另一个。
+    """
     now = datetime.now(tz)
     today_str = now.strftime("%Y-%m-%d")
 
+    # 阶段 1：频道发布
+    try:
+        await _publish_to_channels(bot, today_str)
+    except Exception as e:
+        logger.error("[%s] 频道发布阶段异常: %s", today_str, e)
+
+    # 阶段 2：收藏者通知
+    try:
+        result = await send_favorite_notifications(bot, today_str)
+        if result["total"] > 0:
+            logger.info(
+                "[%s] 收藏通知: %d/%d 成功，耗时 %.2fs",
+                today_str,
+                result["succeeded"],
+                result["total"],
+                result["duration_seconds"],
+            )
+    except Exception as e:
+        logger.error("[%s] 收藏通知阶段异常: %s", today_str, e)
+
+
+async def _publish_to_channels(bot: Bot, today_str: str):
+    """阶段 1：频道发布逻辑（从原 publish_daily_checkin 提取）
+
+    无目标 / 配置无效时 logger.warning 跳过，不影响阶段 2。
+    """
     # 先删除前一天的消息
     await _delete_previous_messages(bot)
 
@@ -218,7 +251,7 @@ async def publish_daily_checkin(bot: Bot):
         return
 
     if not chat_ids:
-        logger.warning("未设置发布目标，跳过发布")
+        logger.warning("未设置发布目标，跳过频道发布")
         return
 
     for chat_id in chat_ids:

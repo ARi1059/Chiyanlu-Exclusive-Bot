@@ -68,7 +68,10 @@ def system_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="手动发布", callback_data="publish:manual"),
         ],
         [InlineKeyboardButton(text="今日签到统计", callback_data="checkin:stats")],
-        [InlineKeyboardButton(text="测试签到发布", callback_data="test:checkin_publish")],
+        [
+            InlineKeyboardButton(text="测试签到发布", callback_data="test:checkin_publish"),
+            InlineKeyboardButton(text="🧪 测试收藏通知", callback_data="test:fav_notification"),
+        ],
         [
             InlineKeyboardButton(text="签到提醒时间", callback_data="system:reminder_time"),
             InlineKeyboardButton(text="签到提醒开关", callback_data="system:reminder_toggle"),
