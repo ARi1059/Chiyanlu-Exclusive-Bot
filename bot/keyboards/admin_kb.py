@@ -3,8 +3,15 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ============ 主菜单 ============
 
-def main_menu_kb() -> InlineKeyboardMarkup:
-    """管理员主菜单面板"""
+def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
+    """管理员主菜单面板
+
+    Args:
+        pending_count: 待审核数量；> 0 时在"待审核"按钮文本上显示徽标
+    """
+    review_label = (
+        f"📝 待审核 ({pending_count})" if pending_count > 0 else "📝 待审核"
+    )
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="menu:teacher"),
@@ -14,6 +21,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📢 频道设置", callback_data="menu:channel"),
             InlineKeyboardButton(text="⚙️ 系统设置", callback_data="menu:system"),
         ],
+        [InlineKeyboardButton(text=review_label, callback_data="review:enter")],
     ])
 
 
@@ -190,3 +198,52 @@ def admin_remove_kb(admins: list[dict]) -> InlineKeyboardMarkup:
         ])
     keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="menu:admin")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+# ============ 审核中心（F3） ============
+
+def review_action_kb(
+    request_id: int,
+    *,
+    has_prev: bool,
+    has_next: bool,
+) -> InlineKeyboardMarkup:
+    """单条审核请求的操作面板:通过 / 驳回 / 上下条 / 返回主菜单"""
+    nav: list[InlineKeyboardButton] = []
+    if has_prev:
+        nav.append(
+            InlineKeyboardButton(text="⬅️ 上一条", callback_data=f"review:nav:prev:{request_id}")
+        )
+    if has_next:
+        nav.append(
+            InlineKeyboardButton(text="➡️ 下一条", callback_data=f"review:nav:next:{request_id}")
+        )
+
+    rows = [
+        [
+            InlineKeyboardButton(text="✅ 通过", callback_data=f"review:approve:{request_id}"),
+            InlineKeyboardButton(text="❌ 驳回", callback_data=f"review:reject:{request_id}"),
+        ],
+    ]
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def review_reject_choice_kb(request_id: int) -> InlineKeyboardMarkup:
+    """点"驳回"后:是否填写原因"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📝 填写原因", callback_data=f"review:reject_reason:{request_id}"),
+            InlineKeyboardButton(text="⏭️ 跳过原因", callback_data=f"review:reject_skip:{request_id}"),
+        ],
+        [InlineKeyboardButton(text="🔙 取消", callback_data=f"review:show:{request_id}")],
+    ])
+
+
+def review_empty_kb() -> InlineKeyboardMarkup:
+    """审核队列为空时的返回按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])

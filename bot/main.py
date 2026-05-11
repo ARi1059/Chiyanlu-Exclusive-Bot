@@ -9,10 +9,12 @@ from pytz import timezone
 from bot.config import config
 from bot.database import init_db
 from bot.handlers.admin_panel import router as admin_panel_router
+from bot.handlers.admin_review import router as admin_review_router
 from bot.handlers.favorite import router as favorite_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
+from bot.handlers.teacher_self import router as teacher_self_router
 from bot.handlers.user_panel import router as user_panel_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
@@ -62,12 +64,16 @@ async def main():
     # 注册路由
     # start_router 必须最先：/start 角色分流入口（v2 §2.5）
     dp.include_router(start_router)
-    # favorite_router：fav:* callback（卡片场景 + "我的收藏"列表），
-    # 放在 admin_panel 之前不影响管理员，但能在 keyword 之前接住群组卡片的 callback
+    # favorite_router：fav:* callback（卡片场景 + "我的收藏"列表）
     dp.include_router(favorite_router)
+    # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
+    # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
+    dp.include_router(admin_review_router)
     dp.include_router(admin_panel_router)
     dp.include_router(teacher_flow_router)
     dp.include_router(checkin_router)
+    # teacher_self_router 在 user_panel 之前：teacher_self:* callback 仅对老师角色有意义
+    dp.include_router(teacher_self_router)
     # user_panel / user_search 在 keyword 之前：
     #   - user_panel 的 callback (user:*) 不会和 keyword 冲突
     #   - user_search 的 SearchStates filter 保证只在搜索 FSM 状态下匹配

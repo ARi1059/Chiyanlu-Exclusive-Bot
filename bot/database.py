@@ -989,13 +989,35 @@ async def get_edit_request(request_id: int) -> Optional[dict]:
 
 
 async def approve_edit_request(request_id: int, reviewer_id: int) -> bool:
-    """通过修改请求
+    """通过修改请求（v2 §2.3.3 + §2.3.3a 图片字段例外）
 
-    仅改 status，不动 teachers 表（已经是新值）。
-    若 status 已经不是 pending，返回 False。
+    文字字段（5 个）approve:
+        - 不动 teachers 表（已经是新值，老师提交时立即更新）
+        - 仅 UPDATE teacher_edit_requests.status='approved'
+
+    图片字段（photo_file_id）approve:
+        - UPDATE teachers SET photo_file_id = new_value（同连接内事务）
+        - UPDATE teacher_edit_requests.status='approved'
+
+    若 status 已经不是 pending，返回 False（不重复审核）。
     """
     db = await get_db()
     try:
+        cursor = await db.execute(
+            "SELECT teacher_id, field_name, new_value, status FROM teacher_edit_requests WHERE id = ?",
+            (request_id,),
+        )
+        req = await cursor.fetchone()
+        if not req or req["status"] != "pending":
+            return False
+
+        # 图片字段例外：approve 时需要把新 file_id 写入 teachers
+        if req["field_name"] == "photo_file_id":
+            await db.execute(
+                "UPDATE teachers SET photo_file_id = ? WHERE user_id = ?",
+                (req["new_value"], req["teacher_id"]),
+            )
+
         await db.execute(
             """UPDATE teacher_edit_requests
                SET status = 'approved', reviewer_id = ?, reviewed_at = CURRENT_TIMESTAMP
@@ -1003,7 +1025,7 @@ async def approve_edit_request(request_id: int, reviewer_id: int) -> bool:
             (reviewer_id, request_id),
         )
         await db.commit()
-        return db.total_changes > 0
+        return True
     finally:
         await db.close()
 
@@ -1013,16 +1035,22 @@ async def reject_edit_request(
     reviewer_id: int,
     reason: Optional[str] = None,
 ) -> bool:
-    """驳回修改请求并回滚 teachers 字段（同连接内事务）
+    """驳回修改请求（v2 §2.3.3 + §2.3.3a 图片字段例外）
+
+    文字字段（5 个）reject:
+        - UPDATE teachers SET <field> = old_value（回滚到修改前）
+        - UPDATE teacher_edit_requests.status='rejected'
+
+    图片字段（photo_file_id）reject:
+        - 不动 teachers（teachers.photo_file_id 在 pending 期间从未变成 new_value，本来就是旧图）
+        - 仅 UPDATE teacher_edit_requests.status='rejected'
 
     流程:
         1. 取请求详情（必须是 pending）
         2. 校验 field_name 在白名单（防 SQL 注入，因 UPDATE 用 f-string 拼字段名）
-        3. UPDATE teachers SET <field> = old_value
+        3. 文字字段执行 UPDATE teachers 回滚；图片字段跳过此步
         4. UPDATE teacher_edit_requests SET status='rejected', ...
         5. commit
-
-    两个 UPDATE 在同一连接里执行；任一失败 commit 不会发生，状态保持 pending。
     """
     db = await get_db()
     try:
@@ -1036,10 +1064,14 @@ async def reject_edit_request(
         if req["field_name"] not in TEACHER_EDITABLE_FIELDS:
             # 异常：数据库里出现了白名单外的 field_name（理论上不会发生）
             return False
-        await db.execute(
-            f"UPDATE teachers SET {req['field_name']} = ? WHERE user_id = ?",
-            (req["old_value"], req["teacher_id"]),
-        )
+
+        # 图片字段例外：reject 时不需要回滚 teachers（teachers 一直是 old_value）
+        if req["field_name"] != "photo_file_id":
+            await db.execute(
+                f"UPDATE teachers SET {req['field_name']} = ? WHERE user_id = ?",
+                (req["old_value"], req["teacher_id"]),
+            )
+
         await db.execute(
             """UPDATE teacher_edit_requests
                SET status = 'rejected', reviewer_id = ?, reject_reason = ?,

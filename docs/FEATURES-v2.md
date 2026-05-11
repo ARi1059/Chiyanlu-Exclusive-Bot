@@ -276,6 +276,52 @@ bot 同时执行两个动作:
 ```
 
 > **"立即生效"的语义**:用户/搜索看到的**永远是 teachers 表当前值**,不存在"待审核版本"和"线上版本"两个并行视图。审核仅用于**事后回滚**。
+>
+> **例外:`photo_file_id`(图片)走"延后生效"——见 §2.3.3a**。
+
+#### 2.3.3a 图片字段例外:延后生效模式
+
+图片(`photo_file_id`)是**唯一**走延后生效的字段。原因:图片风控价值最大(违规风险高、视觉冲击直接),不应让未审核的内容直接对用户可见。
+
+**修改流程**:
+
+```
+老师在自助菜单点击"修改图片"
+        ↓
+上传新图片 → bot 取 file_id
+        ↓
+bot 只执行 ① ②(不执行 ③):
+   ①  ❌  不动 teachers.photo_file_id (保持旧图展示)
+   ②  ✅  INSERT INTO teacher_edit_requests
+       (field='photo_file_id', old_value=旧 file_id, new_value=新 file_id, status='pending')
+   ③  ❌  无需 UPDATE teachers
+        ↓
+通知所有管理员;同时给老师反馈:
+   "✅ 图片已提交审核,审核通过后立即生效;
+    在此期间,展示位仍使用旧图"
+```
+
+**审核动作的字段分支**:
+
+| 字段类型 | 通过(approve) | 驳回(reject) |
+|---|---|---|
+| 文字字段(5 个):display_name / region / price / tags / button_text | 不动 teachers(已是新值) | UPDATE teachers SET <field> = old_value |
+| **图片字段**:photo_file_id | **UPDATE teachers SET photo_file_id = new_value** | 不动 teachers(本来就没改) |
+
+**字段行为对照**:
+
+| 阶段 | 5 个文字字段 | photo_file_id |
+|---|---|---|
+| 老师提交修改时 teachers 表 | 立即变成 new_value | 保持 old_value |
+| pending 期间用户看到 | 新值 | 旧图 |
+| 通过后 teachers 表 | 已是 new_value(不动) | 切换为 new_value |
+| 驳回后 teachers 表 | 回滚到 old_value | 保持 old_value(已经是的旧值) |
+
+**实现含义**(连锁改动):
+
+- `approve_edit_request(request_id, reviewer_id)`:若 field_name == 'photo_file_id',额外执行 UPDATE teachers SET photo_file_id = new_value
+- `reject_edit_request(request_id, reviewer_id, reason)`:若 field_name == 'photo_file_id',跳过 teachers 回滚(本来就没改)
+- 老师"修改图片"FSM 在确认页明示:"图片将在审核通过后生效"
 
 #### 2.3.4 审核界面
 
@@ -545,8 +591,14 @@ CREATE INDEX idx_edit_requests_teacher ON teacher_edit_requests(teacher_id, crea
 **字段语义**:
 - `old_value`:**修改时刻**老师该字段的当前值(后续多次修改时,每条记录的 old_value 是它自己时刻的当前值,不是基线值)
 - `new_value`:用户提交的新值
-- 驳回时执行:`UPDATE teachers SET [field_name] = old_value WHERE user_id = teacher_id`
 - 表中数据保留(归档),不删除
+
+**审核动作对 teachers 表的影响**(v2 §2.3.3 + §2.3.3a):
+
+| field_name | approve 时 | reject 时 |
+|---|---|---|
+| 文字字段(display_name / region / price / tags / button_text) | 不动(teachers 提交时已立即更新为 new_value) | `UPDATE teachers SET <field> = old_value WHERE user_id = teacher_id` |
+| **photo_file_id**(图片例外) | `UPDATE teachers SET photo_file_id = new_value WHERE user_id = teacher_id` | 不动(teachers 提交时本来就没更新,保持旧图) |
 
 ### 3.2 现有表的修改
 
@@ -651,6 +703,7 @@ CREATE INDEX idx_edit_requests_teacher ON teacher_edit_requests(teacher_id, crea
 | 14 | `/start` 非管理员展示三块内容 | 覆盖三种最高频场景:看今天谁开课、看自己关注的、查具体老师 |
 | 15 | 停用老师仍可进入自助菜单,继续改资料 | 停用可能是"暂时下线",非永久状态;允许修改让老师能在停用期间维护资料,等管理员恢复启用 |
 | 16 | 签到入口"按钮"和"发文字"并存 | 兼顾新老用户习惯,不强制行为变更;按钮降低误操作率,文字保留兼容 |
+| 17 | **图片字段例外**:photo_file_id 单独走"延后生效",其他 5 个文字字段仍立即生效 | 图片是违规风险最高的字段(视觉冲击直接、可能不雅);不让未审核内容对用户可见。其他字段错改影响小,立即生效保留体验。带来的代价:approve/reject 函数对 photo_file_id 特殊分支处理 |
 
 ---
 

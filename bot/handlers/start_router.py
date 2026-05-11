@@ -26,6 +26,7 @@ from bot.database import (
     upsert_user,
 )
 from bot.keyboards.admin_kb import main_menu_kb
+from bot.keyboards.teacher_self_kb import teacher_main_menu_kb
 from bot.keyboards.user_kb import user_main_menu_kb
 
 router = Router(name="start_router")
@@ -126,18 +127,16 @@ async def _route_by_role(
     # 2. 老师（含停用，v2 §2.5.5 决策 15）
     teacher = await get_teacher(user_id)
     if teacher:
-        # Step 2 占位：老师私聊菜单完整实现留给 Step 5
-        # 同时签到功能仍通过 v1 的 teacher_checkin.py 处理（发送文字"签到"）
+        # Step 5：完整老师菜单（"我的资料" + "今日签到"按钮）
+        # v1 文字"签到"行为仍保留（teacher_checkin.py），两种触发方式并存
         status = "" if teacher["is_active"] else "（账号已停用）"
         text = (
             f"👤 你好，{teacher['display_name']}{status}\n\n"
-            "你的私聊功能：\n"
-            "・发送『签到』完成今日签到\n"
-            "・更多自助功能将在后续版本上线"
+            "你的私聊功能："
         )
         if extra_text:
             text = f"{extra_text}\n\n{text}"
-        await message.answer(text)
+        await message.answer(text, reply_markup=teacher_main_menu_kb())
         return
 
     # 3. 普通用户
