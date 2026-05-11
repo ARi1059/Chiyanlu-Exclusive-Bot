@@ -73,12 +73,12 @@ async def on_keyword_message(message: types.Message):
     if _check_cooldown(message.from_user.id, keyword, cooldown):
         return
 
-    # 模式 A：精准匹配老师艺名
+    # 模式 A：精准匹配老师艺名（群组场景，按钮恒为 ⭐ 收藏，v2 §2.1.3）
     teacher = await get_teacher_by_name(keyword)
     if teacher:
-        await send_teacher_card(message, teacher)
+        await send_teacher_card(message, teacher, is_group=True)
 
-    # 模式 B：精准匹配标签/地区/价格
+    # 模式 B：精准匹配标签/地区/价格（多人列表无个体收藏按钮，行为不变）
     matched = await search_teachers_by_keyword(keyword)
     # 如果模式 A 已匹配到该老师，从模式 B 结果中排除（避免重复）
     if teacher:

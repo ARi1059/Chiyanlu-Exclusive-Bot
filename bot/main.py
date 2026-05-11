@@ -9,6 +9,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import init_db
 from bot.handlers.admin_panel import router as admin_panel_router
+from bot.handlers.favorite import router as favorite_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
@@ -61,6 +62,9 @@ async def main():
     # 注册路由
     # start_router 必须最先：/start 角色分流入口（v2 §2.5）
     dp.include_router(start_router)
+    # favorite_router：fav:* callback（卡片场景 + "我的收藏"列表），
+    # 放在 admin_panel 之前不影响管理员，但能在 keyword 之前接住群组卡片的 callback
+    dp.include_router(favorite_router)
     dp.include_router(admin_panel_router)
     dp.include_router(teacher_flow_router)
     dp.include_router(checkin_router)

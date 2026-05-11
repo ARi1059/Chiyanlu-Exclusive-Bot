@@ -10,10 +10,8 @@ user:main → 返回主菜单（通用按钮）
 """
 
 from datetime import datetime
-from html import escape
 
 from aiogram import Router, types, F
-from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from pytz import timezone
 
@@ -26,6 +24,7 @@ from bot.keyboards.user_kb import (
     user_main_menu_kb,
     back_to_user_main_kb,
     search_cancel_kb,
+    my_favorites_kb,
 )
 from bot.scheduler.tasks import build_daily_checkin_payload
 from bot.states.user_states import SearchStates
@@ -107,7 +106,11 @@ async def cb_today(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "user:favorites")
 async def cb_favorites(callback: types.CallbackQuery):
-    """展示当前用户的收藏列表（Step 2 数据为空，Step 3 完整启用）"""
+    """展示当前用户的收藏列表（v2 §2.1）
+
+    keyboard 形态：每行 [老师名 · 地区 · 价格] [❌]，点击 ❌ 触发 fav:rm_from_list
+    （由 favorite.py 处理 + 刷新列表）。
+    """
     favorites = await list_user_favorites(callback.from_user.id, active_only=True)
     if not favorites:
         await callback.message.edit_text(
@@ -117,25 +120,10 @@ async def cb_favorites(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    # 以超链接列表展示（点击文字跳 button_url）
-    lines = [f"⭐ 我的收藏（{len(favorites)} 位）\n"]
-    for t in favorites:
-        url = normalize_url(t["button_url"])
-        display_name = escape(t["display_name"])
-        region = escape(t["region"])
-        price = escape(t["price"])
-        if url:
-            lines.append(
-                f'<a href="{escape(url, quote=True)}">{display_name} - {region} - {price}</a>'
-            )
-        else:
-            lines.append(f"{display_name} - {region} - {price}")
-
+    text = f"⭐ 我的收藏（{len(favorites)} 位）\n\n点击老师跳转，点击 ❌ 取消收藏"
     await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=back_to_user_main_kb(),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        text,
+        reply_markup=my_favorites_kb(favorites),
     )
     await callback.answer()
 

@@ -19,10 +19,11 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.database import (
-    is_admin,
+    add_favorite,
     get_teacher,
-    upsert_user,
+    is_admin,
     mark_user_started,
+    upsert_user,
 )
 from bot.keyboards.admin_kb import main_menu_kb
 from bot.keyboards.user_kb import user_main_menu_kb
@@ -57,13 +58,37 @@ async def cmd_start_with_arg(
     # Deep link 分支处理
     extra_text: str | None = None
     if arg == "activate":
-        # Step 3 群组收藏后的"激活通知"入口（v2 §2.1.4）
+        # 群组收藏后的"激活通知"入口（v2 §2.1.4）
         extra_text = "✅ 已激活开课通知，14:00 会收到收藏老师的开课提醒"
     elif arg.startswith("fav_"):
-        # Step 3 收藏 deep link 预留：本 Step 不处理具体收藏，给提示
-        extra_text = "⏳ 收藏功能即将上线，请稍后再试"
+        # 自动收藏指定老师并激活通知（额外功能，超出 v2 §2.1.4 但同一逻辑路径）
+        extra_text = await _handle_fav_deep_link(user_id, arg[len("fav_"):])
 
     await _route_by_role(message, user_id, extra_text=extra_text)
+
+
+async def _handle_fav_deep_link(user_id: int, raw_teacher_id: str) -> str:
+    """处理 ?start=fav_<teacher_id> deep link 自动收藏
+
+    校验老师存在且启用后写入 favorites（幂等）。无论是否新增收藏，
+    都返回给用户一条提示（避免静默）。
+
+    Returns:
+        展示给用户的额外提示文案
+    """
+    try:
+        teacher_id = int(raw_teacher_id)
+    except ValueError:
+        return "⚠️ 收藏链接无效"
+
+    teacher = await get_teacher(teacher_id)
+    if not teacher or not teacher["is_active"]:
+        return "⚠️ 该老师暂不可收藏"
+
+    inserted = await add_favorite(user_id, teacher_id)
+    if inserted:
+        return f"✅ 已收藏 {teacher['display_name']}，14:00 会收到 TA 的开课提醒"
+    return f"💡 你已经收藏过 {teacher['display_name']}"
 
 
 @router.message(CommandStart())

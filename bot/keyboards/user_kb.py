@@ -2,6 +2,8 @@
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+from bot.utils.url import normalize_url
+
 
 # ============ 用户主菜单 ============
 
@@ -29,3 +31,38 @@ def search_cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
     ])
+
+
+def my_favorites_kb(favorites: list[dict]) -> InlineKeyboardMarkup:
+    """"我的收藏"列表 keyboard（v2 §2.1 F1）
+
+    每行：[老师名 · 地区 · 价格] [❌]
+        · 老师按钮：跳转 button_url（URL 无效时退化为带警告文案的 callback no-op）
+        · ❌ 按钮：fav:rm_from_list:<teacher_id>，favorite handler 接住后取消并刷新列表
+    末尾：[🔙 返回主菜单]
+
+    Args:
+        favorites: 已收藏老师列表（含 teachers 表全部字段）
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for t in favorites:
+        url = normalize_url(t["button_url"])
+        label = f"{t['display_name']} · {t['region']} · {t['price']}"
+        if url:
+            teacher_btn = InlineKeyboardButton(text=label, url=url)
+        else:
+            # button_url 无效：用 callback no-op，告知用户链接失效
+            teacher_btn = InlineKeyboardButton(
+                text=f"⚠️ {label}（链接失效）",
+                callback_data="fav:invalid_url",
+            )
+        rm_btn = InlineKeyboardButton(
+            text="❌",
+            callback_data=f"fav:rm_from_list:{t['user_id']}",
+        )
+        rows.append([teacher_btn, rm_btn])
+
+    rows.append([
+        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

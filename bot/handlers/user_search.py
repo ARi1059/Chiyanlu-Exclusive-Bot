@@ -14,7 +14,11 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from bot.database import get_teacher_by_name, search_teachers_smart_and
+from bot.database import (
+    get_teacher_by_name,
+    is_favorited,
+    search_teachers_smart_and,
+)
 from bot.keyboards.user_kb import user_main_menu_kb, search_cancel_kb
 from bot.states.user_states import SearchStates
 from bot.utils.teacher_render import send_teacher_card, send_teacher_list
@@ -68,10 +72,13 @@ async def on_search_query(message: types.Message, state: FSMContext):
         await message.reply("请输入有效的关键词", reply_markup=search_cancel_kb())
         return
 
+    user_id = message.from_user.id
+
     # 1. 艺名精确匹配（独立路径，v2 §2.4.3）
     teacher = await get_teacher_by_name(raw)
     if teacher:
-        await send_teacher_card(message, teacher)
+        fav_state = await is_favorited(user_id, teacher["user_id"])
+        await send_teacher_card(message, teacher, is_group=False, is_favorited=fav_state)
         # 状态保持，提示可继续
         await message.answer(
             "继续输入下一个关键词，或点击下方按钮退出。",
@@ -97,9 +104,12 @@ async def on_search_query(message: types.Message, state: FSMContext):
         )
         return
 
-    # 命中：单人 → 卡片，多人 → 列表
+    # 命中：单人 → 卡片（带收藏状态），多人 → 列表（不带个体收藏按钮）
     if len(teachers) == 1:
-        await send_teacher_card(message, teachers[0])
+        fav_state = await is_favorited(user_id, teachers[0]["user_id"])
+        await send_teacher_card(
+            message, teachers[0], is_group=False, is_favorited=fav_state
+        )
     else:
         await send_teacher_list(message, teachers)
 
