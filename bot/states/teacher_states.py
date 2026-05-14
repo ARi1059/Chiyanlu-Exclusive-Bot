@@ -71,3 +71,16 @@ class TeacherDailyStatusStates(StatesGroup):
 class UserTagsQueryStates(StatesGroup):
     """管理员查标签用户 FSM（Phase 6.1）"""
     waiting_tag = State()
+
+
+class PublishTemplateStates(StatesGroup):
+    """发布模板管理 FSM（Phase 6.2）
+
+    state.data:
+        waiting_create_text: {"name": str}
+        waiting_edit_text:   {"template_id": int}
+    """
+    waiting_create_name = State()
+    waiting_create_text = State()
+    waiting_edit_text = State()
+    waiting_set_default_id = State()

@@ -10,10 +10,12 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     get_checked_in_teachers,
+    get_default_publish_template,
     get_display_time_group,
     get_sorted_teachers,
     get_unchecked_teachers,
     get_config,
+    render_publish_template,
     save_sent_message,
     get_sent_messages,
     delete_sent_messages,
@@ -166,15 +168,33 @@ _CHANNEL_GROUP_ORDER: list[tuple[str, str]] = [
 ]
 
 
+_WEEKDAY_CN: tuple[str, ...] = (
+    "周一", "周二", "周三", "周四", "周五", "周六", "周日",
+)
+
+
+def _weekday_cn(date_str: str) -> str:
+    """把 YYYY-MM-DD 转中文星期；解析失败返回空字符串"""
+    try:
+        return _WEEKDAY_CN[datetime.strptime(date_str, "%Y-%m-%d").weekday()]
+    except Exception:
+        return ""
+
+
 async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, InlineKeyboardMarkup]]:
-    """构建每日签到发布内容（Phase 3 排序 + Phase 5 按时间段分组）
+    """构建每日签到发布内容（Phase 3 排序 + Phase 5 分组 + Phase 6.2 模板）
 
     范围：当天已签到 + 启用 + daily_status != 'unavailable'
     顺序：先按统一排序规则取出，再按 5 个时间段分组，每组保留组内排序。
     频道按钮仍跳转 button_url，分组标题用 callback='noop:section' 占位按钮。
 
+    文本：Phase 6.2 接入发布模板。流程：
+        1. 计算 valid_count / weekday / city / grouped_teachers
+        2. 取默认模板；若存在则 render；若无 / 渲染失败 → 回退硬编码原文案
+    模板渲染失败仅 logger.warning，不影响发布。
+
     兼容降级：若 get_sorted_teachers 异常（旧 schema 未迁移）→ 回退原始顺序，
-    不分组（保持 v1 行为）。
+    不分组（保持 v1 行为），grouped_teachers 用简单列表格式。
     """
     try:
         teachers = await get_sorted_teachers(
@@ -202,25 +222,33 @@ async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, Inli
             grouped[key].append(t)
 
     buttons: list[list[InlineKeyboardButton]] = []
+    grouped_lines: list[str] = []
     valid_count = 0
 
-    def _flush_group(group_teachers: list[dict], header: str | None) -> None:
-        """按 3 个一行渲染老师 URL 按钮；header 非空时先放一个占位行"""
+    def _flush_group(group_teachers: list[dict], header: Optional[str]) -> None:
+        """按 3 个一行渲染老师 URL 按钮；header 非空时先放一个占位行。
+
+        同时把"有效老师"的展示文本写入 grouped_lines（用于模板 {grouped_teachers}）。
+        """
         nonlocal valid_count
-        valid: list[InlineKeyboardButton] = []
+        valid: list[dict] = []
+        valid_buttons: list[InlineKeyboardButton] = []
         for t in group_teachers:
             url = normalize_url(t["button_url"])
             if not url:
                 logger.warning("跳过无效老师链接: %s (%s)", t["display_name"], t["button_url"])
                 continue
             label = t["button_text"] or t["display_name"]
-            valid.append(InlineKeyboardButton(text=label, url=url))
+            valid.append(t)
+            valid_buttons.append(InlineKeyboardButton(text=label, url=url))
         if not valid:
             return
+
+        # —— Keyboard 部分 ——
         if header is not None:
             buttons.append([InlineKeyboardButton(text=header, callback_data="noop:section")])
         row: list[InlineKeyboardButton] = []
-        for btn in valid:
+        for btn in valid_buttons:
             row.append(btn)
             valid_count += 1
             if len(row) == 3:
@@ -229,22 +257,67 @@ async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, Inli
         if row:
             buttons.append(row)
 
+        # —— 文本部分（供模板 {grouped_teachers} 使用） ——
+        if header is not None:
+            grouped_lines.append(header)
+            for t in valid:
+                grouped_lines.append(f"- {t['display_name']}")
+            grouped_lines.append("")  # 段间空行
+        else:
+            # 无分组（回退分支）：展示更详细的一行
+            for t in valid:
+                grouped_lines.append(
+                    f"- {t['display_name']}"
+                    f"｜{t.get('region', '')}"
+                    f"｜{t.get('price', '')}"
+                )
+
     if groupable:
-        # 分组渲染：标题行 + 按钮行
+        # 分组渲染：标题行 + 按钮行 + 文本段
         for key, header in _CHANNEL_GROUP_ORDER:
             bucket = grouped[key]
             if not bucket:
                 continue
             _flush_group(bucket, header)
     else:
-        # 不分组，原始顺序
+        # 不分组，原始顺序：文本带"今日老师："开头
+        grouped_lines.append("今日老师：")
         _flush_group(teachers, header=None)
 
     if not buttons or valid_count == 0:
         return None
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"📅 {date_str} 今日开课老师 {valid_count} 位"
+    grouped_text = "\n".join(grouped_lines).rstrip()
+
+    # —— Phase 6.2：发布模板渲染 ——
+    fallback_text = f"📅 {date_str} 今日开课老师 {valid_count} 位"
+    text = fallback_text
+    try:
+        weekday = _weekday_cn(date_str)
+        try:
+            city = await get_config("city") or ""
+        except Exception:
+            city = ""
+
+        tpl = await get_default_publish_template()
+        if tpl and tpl.get("template_text"):
+            rendered = render_publish_template(
+                tpl["template_text"],
+                {
+                    "date": date_str,
+                    "count": valid_count,
+                    "grouped_teachers": grouped_text,
+                    "city": city,
+                    "weekday": weekday,
+                },
+            )
+            if rendered and rendered.strip():
+                text = rendered
+    except Exception as e:
+        logger.warning("发布模板渲染失败，回退默认文案: %s", e)
+        text = fallback_text
+
     return text, keyboard
 
 

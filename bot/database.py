@@ -193,6 +193,19 @@ async def init_db():
                 ON user_tags(tag);
             CREATE INDEX IF NOT EXISTS idx_user_tags_user
                 ON user_tags(user_id);
+
+            CREATE TABLE IF NOT EXISTS publish_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                template_text TEXT NOT NULL,
+                is_default INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_publish_templates_default
+                ON publish_templates(is_default, is_active);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -205,6 +218,8 @@ async def init_db():
         await _migrate_teacher_ranking_columns(db)
         # Phase 4 schema 增量：users 表新增 4 个来源字段
         await _migrate_user_source_columns(db)
+        # Phase 6.2：默认发布模板初始化（幂等）
+        await _ensure_default_publish_template(db)
 
         await db.commit()
     finally:
@@ -259,6 +274,34 @@ async def _migrate_user_source_columns(db: aiosqlite.Connection) -> None:
             await db.execute(f"ALTER TABLE users ADD COLUMN {col} {type_def}")
         except Exception:
             pass
+
+
+DEFAULT_PUBLISH_TEMPLATE_TEXT: str = (
+    "📅 {date} 今日开课老师 {count} 位\n\n"
+    "{grouped_teachers}\n\n"
+    "点击下方按钮查看详情。"
+)
+
+
+async def _ensure_default_publish_template(db: aiosqlite.Connection) -> None:
+    """Phase 6.2：若没有"默认且启用"的模板则插入一条（幂等，不覆盖管理员配置）"""
+    try:
+        cur = await db.execute(
+            "SELECT 1 FROM publish_templates "
+            "WHERE is_default = 1 AND is_active = 1 LIMIT 1"
+        )
+        row = await cur.fetchone()
+        if row:
+            return
+        await db.execute(
+            """INSERT INTO publish_templates
+               (name, template_text, is_default, is_active)
+               VALUES (?, ?, 1, 1)""",
+            ("默认模板", DEFAULT_PUBLISH_TEMPLATE_TEXT),
+        )
+    except Exception:
+        # init 阶段不能因为模板初始化失败而阻断 bot 启动
+        pass
 
 
 # ============ Admin CRUD ============
@@ -2281,3 +2324,215 @@ async def update_user_tags_from_teacher_action(
         )
     except Exception:
         pass
+
+
+# ============ 频道发布模板 (Phase 6.2) ============
+
+
+# 模板支持的 5 个变量；render 时 str.replace，每个变量都做安全替换
+_PUBLISH_TEMPLATE_VARS: tuple[str, ...] = (
+    "date", "count", "grouped_teachers", "city", "weekday",
+)
+
+
+def render_publish_template(template_text: str, context: dict) -> str:
+    """渲染发布模板（Phase 6.2 §四 6）
+
+    安全策略：
+        - 只对预定义的 5 个变量 {date} / {count} / {grouped_teachers} / {city} / {weekday}
+          做字符串替换
+        - 未知 {xxx} 保持字面量
+        - context 缺失 / value 为 None 时替换为空字符串
+        - 不执行任何模板代码，纯字符串替换
+        - 内部不抛异常（任何错误返回空字符串或原文）
+    """
+    if template_text is None:
+        return ""
+    text = str(template_text)
+    ctx = context or {}
+    try:
+        for key in _PUBLISH_TEMPLATE_VARS:
+            val = ctx.get(key, "")
+            if val is None:
+                val = ""
+            text = text.replace("{" + key + "}", str(val))
+        return text
+    except Exception:
+        return str(template_text or "")
+
+
+async def create_publish_template(
+    name: str,
+    template_text: str,
+    is_default: int = 0,
+) -> Optional[int]:
+    """新建发布模板（Phase 6.2 §四 1）
+
+    is_default=1 时：先把其他模板 is_default 清零，再插入新模板为默认。
+    返回新模板 id；name/template_text 为空时返回 None。
+    """
+    n = (name or "").strip()
+    body = (template_text or "").strip()
+    if not n or not body:
+        return None
+
+    db = await get_db()
+    try:
+        if int(is_default) == 1:
+            await db.execute(
+                "UPDATE publish_templates SET is_default = 0"
+            )
+        cur = await db.execute(
+            """INSERT INTO publish_templates
+               (name, template_text, is_default, is_active, created_at, updated_at)
+               VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            (n, body, 1 if int(is_default) == 1 else 0),
+        )
+        await db.commit()
+        return cur.lastrowid
+    except Exception:
+        return None
+    finally:
+        await db.close()
+
+
+async def get_default_publish_template() -> Optional[dict]:
+    """取默认模板（Phase 6.2 §四 2）
+
+    优先级：
+        1. is_default = 1 AND is_active = 1
+        2. 任意 is_active = 1（按 updated_at DESC 取最新）
+        3. None
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT * FROM publish_templates
+               WHERE is_default = 1 AND is_active = 1
+               LIMIT 1"""
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+
+        cur = await db.execute(
+            """SELECT * FROM publish_templates
+               WHERE is_active = 1
+               ORDER BY updated_at DESC
+               LIMIT 1"""
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_publish_templates(active_only: bool = True) -> list[dict]:
+    """列出发布模板（Phase 6.2 §四 3）
+
+    active_only=True 时仅返回 is_active=1。
+    按 is_default DESC, updated_at DESC 排序。
+    """
+    db = await get_db()
+    try:
+        where = "WHERE is_active = 1" if active_only else ""
+        cur = await db.execute(
+            f"""SELECT * FROM publish_templates
+                {where}
+                ORDER BY is_default DESC, updated_at DESC"""
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def set_default_publish_template(template_id: int) -> bool:
+    """设为默认模板（Phase 6.2 §四 4）
+
+    要求目标模板存在且 is_active=1。事务内：先全部清零，再置目标。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT id, is_active FROM publish_templates WHERE id = ?",
+            (template_id,),
+        )
+        row = await cur.fetchone()
+        if not row or not row["is_active"]:
+            return False
+
+        await db.execute("UPDATE publish_templates SET is_default = 0")
+        await db.execute(
+            "UPDATE publish_templates SET is_default = 1,"
+            " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (template_id,),
+        )
+        await db.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        await db.close()
+
+
+async def update_publish_template(
+    template_id: int,
+    name: Optional[str] = None,
+    template_text: Optional[str] = None,
+    is_active: Optional[int] = None,
+) -> bool:
+    """只更新传入的字段（Phase 6.2 §四 5）
+
+    全部为 None → 返回 False（不允许空更新）。
+    updated_at 始终刷新。
+    """
+    sets: list[str] = []
+    params: list = []
+    if name is not None:
+        n = str(name).strip()
+        if not n:
+            return False
+        sets.append("name = ?")
+        params.append(n)
+    if template_text is not None:
+        body = str(template_text).strip()
+        if not body:
+            return False
+        sets.append("template_text = ?")
+        params.append(body)
+    if is_active is not None:
+        sets.append("is_active = ?")
+        params.append(1 if int(is_active) else 0)
+
+    if not sets:
+        return False
+
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(template_id)
+    db = await get_db()
+    try:
+        await db.execute(
+            f"UPDATE publish_templates SET {', '.join(sets)} WHERE id = ?",
+            params,
+        )
+        await db.commit()
+        return db.total_changes > 0
+    except Exception:
+        return False
+    finally:
+        await db.close()
+
+
+async def get_publish_template(template_id: int) -> Optional[dict]:
+    """按 id 取模板（用于编辑 / 校验是否存在）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM publish_templates WHERE id = ?",
+            (template_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()

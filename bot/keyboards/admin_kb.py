@@ -34,6 +34,7 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status"),
             InlineKeyboardButton(text="🏷 用户画像", callback_data="admin:user_tags"),
         ],
+        [InlineKeyboardButton(text="📝 发布模板", callback_data="admin:publish_templates")],
     ])
 
 
@@ -79,6 +80,37 @@ def user_tags_query_result_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔙 返回看板", callback_data="admin:user_tags"),
         ],
         [InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main")],
+    ])
+
+
+# ============ 发布模板管理（Phase 6.2） ============
+
+
+def publish_templates_menu_kb() -> InlineKeyboardMarkup:
+    """发布模板管理主面板"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 模板列表", callback_data="admin:publish_templates:list")],
+        [InlineKeyboardButton(text="➕ 新建模板", callback_data="admin:publish_templates:create")],
+        [InlineKeyboardButton(text="✏️ 编辑默认模板", callback_data="admin:publish_templates:edit_default")],
+        [InlineKeyboardButton(text="✅ 设置默认模板", callback_data="admin:publish_templates:set_default")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def publish_templates_cancel_kb() -> InlineKeyboardMarkup:
+    """模板管理 FSM 输入页的取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:publish_templates")],
+    ])
+
+
+def publish_templates_list_back_kb() -> InlineKeyboardMarkup:
+    """模板列表页的返回按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔙 返回模板管理", callback_data="admin:publish_templates"),
+            InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main"),
+        ],
     ])
 
 

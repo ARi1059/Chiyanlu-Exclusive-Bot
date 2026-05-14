@@ -13,6 +13,7 @@ from bot.handlers.admin_review import router as admin_review_router
 from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
+from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
@@ -94,6 +95,10 @@ async def main():
     # admin:user_tags / admin:user_tags:query + 查询标签用户 FSM
     # UserTagsQueryStates 保证文字消息仅在 FSM 状态下被截获
     dp.include_router(user_tags_router)
+    # publish_templates_router（Phase 6.2）：
+    # admin:publish_templates / :list / :create / :edit_default / :set_default
+    # PublishTemplateStates 4 个状态保证文字消息仅在 FSM 中被截获
+    dp.include_router(publish_templates_router)
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)
