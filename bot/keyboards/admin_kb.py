@@ -26,6 +26,66 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=review_label, callback_data="review:enter"),
         ],
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
+        [
+            InlineKeyboardButton(text="🔗 推广链接", callback_data="admin:promo_links"),
+            InlineKeyboardButton(text="📈 渠道统计", callback_data="admin:source_stats"),
+        ],
+    ])
+
+
+# ============ 推广链接 / 渠道统计（Phase 4） ============
+
+
+def promo_links_menu_kb() -> InlineKeyboardMarkup:
+    """推广链接生成器主面板"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📺 频道来源", callback_data="admin:promo:channel")],
+        [InlineKeyboardButton(text="👥 群组来源", callback_data="admin:promo:group")],
+        [InlineKeyboardButton(text="👤 老师来源", callback_data="admin:promo:teacher")],
+        [InlineKeyboardButton(text="🎯 活动来源", callback_data="admin:promo:campaign")],
+        [InlineKeyboardButton(text="🎟️ 邀请来源", callback_data="admin:promo:invite")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def promo_cancel_kb() -> InlineKeyboardMarkup:
+    """推广链接 FSM 输入页的取消按钮（回 promo 主菜单）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:promo_links")],
+    ])
+
+
+def source_stats_menu_kb() -> InlineKeyboardMarkup:
+    """渠道统计主面板：按类型查看 + 查用户来源 + 返回"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📺 频道", callback_data="admin:source_stats:channel"),
+            InlineKeyboardButton(text="👥 群组", callback_data="admin:source_stats:group"),
+            InlineKeyboardButton(text="👤 老师", callback_data="admin:source_stats:teacher"),
+        ],
+        [
+            InlineKeyboardButton(text="🎯 活动", callback_data="admin:source_stats:campaign"),
+            InlineKeyboardButton(text="🎟️ 邀请", callback_data="admin:source_stats:invite"),
+        ],
+        [InlineKeyboardButton(text="🔍 查用户来源", callback_data="admin:user_source")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def source_stats_back_kb() -> InlineKeyboardMarkup:
+    """渠道统计分类页的返回按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔙 返回渠道统计", callback_data="admin:source_stats"),
+            InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main"),
+        ],
+    ])
+
+
+def source_lookup_cancel_kb() -> InlineKeyboardMarkup:
+    """用户来源查询 FSM 取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:source_stats")],
     ])
 
 

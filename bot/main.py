@@ -12,6 +12,8 @@ from bot.handlers.admin_panel import router as admin_panel_router
 from bot.handlers.admin_review import router as admin_review_router
 from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
+from bot.handlers.promo_links import router as promo_links_router
+from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_detail import router as teacher_detail_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
@@ -76,6 +78,11 @@ async def main():
     # FSM 状态 HotManageStates 保证文字消息只在该状态下被截获，
     # 与 admin_panel / teacher_self / user_search / keyword 的 message handler 不冲突
     dp.include_router(hot_teachers_router)
+    # promo_links_router / source_stats_router（Phase 4）：
+    # 推广链接生成器 + 渠道统计 + 用户来源查询
+    # PromoLinkStates / UserSourceLookupStates 保证文字消息只在对应状态下被截获
+    dp.include_router(promo_links_router)
+    dp.include_router(source_stats_router)
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)

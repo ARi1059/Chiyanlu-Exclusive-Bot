@@ -144,6 +144,25 @@ async def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_user_views_user_time
                 ON user_teacher_views(user_id, viewed_at);
+
+            CREATE TABLE IF NOT EXISTS user_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id TEXT,
+                source_name TEXT,
+                raw_payload TEXT,
+                first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, source_type, source_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_sources_user
+                ON user_sources(user_id);
+            CREATE INDEX IF NOT EXISTS idx_user_sources_type
+                ON user_sources(source_type, source_id);
+            CREATE INDEX IF NOT EXISTS idx_user_sources_last_seen
+                ON user_sources(last_seen_at);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -154,6 +173,8 @@ async def init_db():
 
         # Phase 3 schema 增量：teachers 表新增 4 个字段
         await _migrate_teacher_ranking_columns(db)
+        # Phase 4 schema 增量：users 表新增 4 个来源字段
+        await _migrate_user_source_columns(db)
 
         await db.commit()
     finally:
@@ -183,6 +204,30 @@ async def _migrate_teacher_ranking_columns(db: aiosqlite.Connection) -> None:
             await db.execute(f"ALTER TABLE teachers ADD COLUMN {col} {type_def}")
         except Exception:
             # 极端情况下 PRAGMA 与实际 schema 不一致 → 忽略 duplicate column
+            pass
+
+
+async def _migrate_user_source_columns(db: aiosqlite.Connection) -> None:
+    """Phase 4：users 表添加 first_source_type / first_source_id / last_source_type / last_source_id
+
+    PRAGMA 检测后再 ADD，幂等可重入。
+    """
+    cur = await db.execute("PRAGMA table_info(users)")
+    rows = await cur.fetchall()
+    existing = {row["name"] for row in rows}
+
+    additions: list[tuple[str, str]] = [
+        ("first_source_type", "TEXT"),
+        ("first_source_id", "TEXT"),
+        ("last_source_type", "TEXT"),
+        ("last_source_id", "TEXT"),
+    ]
+    for col, type_def in additions:
+        if col in existing:
+            continue
+        try:
+            await db.execute(f"ALTER TABLE users ADD COLUMN {col} {type_def}")
+        except Exception:
             pass
 
 
@@ -1645,6 +1690,173 @@ async def recalculate_hot_scores() -> int:
         await db.commit()
 
         cur = await db.execute("SELECT COUNT(*) AS n FROM teachers")
+        row = await cur.fetchone()
+        return int(row["n"] or 0) if row else 0
+    finally:
+        await db.close()
+
+
+# ============ 用户来源追踪 (Phase 4) ============
+
+
+async def record_user_source(
+    user_id: int,
+    source_type: str,
+    source_id: Optional[str] = None,
+    source_name: Optional[str] = None,
+    raw_payload: Optional[str] = None,
+) -> None:
+    """记录用户来源（Phase 4 §二）
+
+    行为：
+    1. UPSERT user_sources：同一 (user_id, source_type, source_id) 已存在则更新 last_seen_at
+    2. 更新 users.first_source_*（仅当 first_source_type 为空，首次写入时）
+    3. 更新 users.last_source_*（每次都更新）
+
+    source_id 为 None 时归一化为空字符串，使 UNIQUE 约束在 NULL 上也能正常工作。
+    本函数全程包在 try/except 里，任何异常都不向上抛——来源追踪不能阻断主流程。
+    """
+    sid = "" if source_id is None else str(source_id)
+    try:
+        db = await get_db()
+        try:
+            # 1. UPSERT user_sources
+            await db.execute(
+                """INSERT INTO user_sources
+                   (user_id, source_type, source_id, source_name, raw_payload,
+                    first_seen_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   ON CONFLICT(user_id, source_type, source_id) DO UPDATE SET
+                       last_seen_at = CURRENT_TIMESTAMP,
+                       source_name = COALESCE(excluded.source_name, source_name),
+                       raw_payload = COALESCE(excluded.raw_payload, raw_payload)""",
+                (user_id, source_type, sid, source_name, raw_payload),
+            )
+
+            # 2. 取当前 users.first_source_type 决定是否首次
+            cur = await db.execute(
+                "SELECT first_source_type FROM users WHERE user_id = ?",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+            existing_first = row["first_source_type"] if row else None
+
+            # 3. 写 users
+            if row is None:
+                # 用户行尚未建立（极端：start_router 没先 upsert_user 就调过来）→ 跳过
+                pass
+            elif not existing_first:
+                await db.execute(
+                    """UPDATE users SET
+                           first_source_type = ?, first_source_id = ?,
+                           last_source_type = ?, last_source_id = ?
+                       WHERE user_id = ?""",
+                    (source_type, sid, source_type, sid, user_id),
+                )
+            else:
+                await db.execute(
+                    """UPDATE users SET
+                           last_source_type = ?, last_source_id = ?
+                       WHERE user_id = ?""",
+                    (source_type, sid, user_id),
+                )
+
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception:
+        # 来源追踪静默失败，不影响 /start 主流程
+        pass
+
+
+async def get_source_stats(limit: int = 20) -> list[dict]:
+    """渠道统计：按用户数倒序返回 TOP 来源（Phase 4 §二）
+
+    返回每条:
+        source_type / source_id / source_name / user_count / last_seen_at
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT source_type, source_id,
+                   MAX(source_name) AS source_name,
+                   COUNT(DISTINCT user_id) AS user_count,
+                   MAX(last_seen_at) AS last_seen_at
+               FROM user_sources
+               GROUP BY source_type, source_id
+               ORDER BY user_count DESC, last_seen_at DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_top_sources_by_type(source_type: str, limit: int = 10) -> list[dict]:
+    """指定 source_type 的 TOP N source_id（Phase 4 §二）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT source_type, source_id,
+                   MAX(source_name) AS source_name,
+                   COUNT(DISTINCT user_id) AS user_count,
+                   MAX(last_seen_at) AS last_seen_at
+               FROM user_sources
+               WHERE source_type = ?
+               GROUP BY source_id
+               ORDER BY user_count DESC, last_seen_at DESC
+               LIMIT ?""",
+            (source_type, limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_user_source_summary(user_id: int) -> Optional[dict]:
+    """某个用户的首次 / 最近来源 + 全量来源记录（Phase 4 §二）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT first_source_type, first_source_id,
+                      last_source_type, last_source_id
+               FROM users WHERE user_id = ?""",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+
+        cur = await db.execute(
+            """SELECT source_type, source_id, source_name,
+                      first_seen_at, last_seen_at, raw_payload
+               FROM user_sources
+               WHERE user_id = ?
+               ORDER BY first_seen_at""",
+            (user_id,),
+        )
+        sources = [dict(r) for r in await cur.fetchall()]
+
+        return {
+            "user_id": user_id,
+            "first_source_type": row["first_source_type"],
+            "first_source_id": row["first_source_id"],
+            "last_source_type": row["last_source_type"],
+            "last_source_id": row["last_source_id"],
+            "sources": sources,
+        }
+    finally:
+        await db.close()
+
+
+async def count_total_source_users() -> int:
+    """来源覆盖的去重用户数（用于渠道统计页头部）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(DISTINCT user_id) AS n FROM user_sources"
+        )
         row = await cur.fetchone()
         return int(row["n"] or 0) if row else 0
     finally:

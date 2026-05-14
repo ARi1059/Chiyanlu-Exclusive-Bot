@@ -47,3 +47,16 @@ class HotManageStates(StatesGroup):
     waiting_weight_id = State()      # 修改权重：等待老师 ID
     waiting_weight_value = State()   # 修改权重：等待权重值（state.data 含 teacher_id）
     waiting_remove_id = State()      # 取消推荐：等待老师 ID
+
+
+class PromoLinkStates(StatesGroup):
+    """推广链接生成器状态（Phase 4）
+
+    state.data: {"link_type": "channel"|"group"|"teacher"|"campaign"|"invite"}
+    """
+    waiting_input = State()
+
+
+class UserSourceLookupStates(StatesGroup):
+    """管理员查用户来源状态（Phase 4）"""
+    waiting_user_id = State()
