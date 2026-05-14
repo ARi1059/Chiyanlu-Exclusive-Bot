@@ -151,9 +151,39 @@ async def init_db():
             ON CONFLICT(user_id) DO UPDATE SET is_super = 1""",
             (config.super_admin_id,),
         )
+
+        # Phase 3 schema 增量：teachers 表新增 4 个字段
+        await _migrate_teacher_ranking_columns(db)
+
         await db.commit()
     finally:
         await db.close()
+
+
+async def _migrate_teacher_ranking_columns(db: aiosqlite.Connection) -> None:
+    """Phase 3：teachers 表添加 sort_weight / hot_score / is_featured / featured_until
+
+    SQLite 不支持 ADD COLUMN IF NOT EXISTS，通过 PRAGMA table_info 检测后再 ADD。
+    历史已有列时跳过，安全可重入。
+    """
+    cur = await db.execute("PRAGMA table_info(teachers)")
+    rows = await cur.fetchall()
+    existing = {row["name"] for row in rows}
+
+    additions: list[tuple[str, str]] = [
+        ("sort_weight", "INTEGER DEFAULT 0"),
+        ("hot_score", "INTEGER DEFAULT 0"),
+        ("is_featured", "INTEGER DEFAULT 0"),
+        ("featured_until", "TEXT"),
+    ]
+    for col, type_def in additions:
+        if col in existing:
+            continue
+        try:
+            await db.execute(f"ALTER TABLE teachers ADD COLUMN {col} {type_def}")
+        except Exception:
+            # 极端情况下 PRAGMA 与实际 schema 不一致 → 忽略 duplicate column
+            pass
 
 
 # ============ Admin CRUD ============
@@ -1401,5 +1431,221 @@ async def get_top_favorited_teachers(limit: int = 10) -> list[dict]:
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+# ============ 排序 / 推荐 / 热度 (Phase 3) ============
+
+
+def is_effective_featured(teacher: dict, today_str: str) -> bool:
+    """纯函数：判断老师当前是否处于"有效推荐"状态
+
+    is_featured=1 且 featured_until 为空 / 空字符串 → 长期推荐
+    is_featured=1 且 featured_until >= today_str → 仍在推荐期内
+    其他情况 → False
+    """
+    if not teacher.get("is_featured"):
+        return False
+    fu = teacher.get("featured_until")
+    if fu is None:
+        return True
+    fu_str = str(fu).strip()
+    if not fu_str:
+        return True
+    return fu_str >= today_str
+
+
+def _today_str_local() -> str:
+    """database 内部统一的"今日"字符串（按 config.timezone）"""
+    from datetime import datetime
+    from pytz import timezone as _tz
+    return datetime.now(_tz(config.timezone)).strftime("%Y-%m-%d")
+
+
+async def get_sorted_teachers(
+    active_only: bool = True,
+    signed_in_date: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> list[dict]:
+    """按统一排序规则返回老师列表（Phase 3 §二）
+
+    排序规则（优先级高到低）：
+        1. 当前有效推荐老师（is_featured=1 且未过期）优先
+        2. sort_weight 高的优先
+        3. hot_score 高的优先
+        4. 收藏数高的优先
+        5. 今日已签到的优先
+        6. 创建时间较早的优先（稳定排序）
+
+    Args:
+        active_only: 仅启用老师
+        signed_in_date: 不为空 → 仅返回当天已签到的老师（用于频道发布）
+        limit: 限制返回条数
+
+    Returns:
+        teachers list，每条额外带 fav_count / effective_featured / signed_in_today 字段
+    """
+    today_str = _today_str_local()
+    sign_date = signed_in_date or today_str
+
+    where_clauses: list[str] = []
+    if active_only:
+        where_clauses.append("t.is_active = 1")
+    if signed_in_date is not None:
+        where_clauses.append(
+            "EXISTS (SELECT 1 FROM checkins c "
+            "WHERE c.teacher_id = t.user_id AND c.checkin_date = ?)"
+        )
+
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+    limit_sql = " LIMIT ?" if limit is not None else ""
+
+    # 参数顺序：effective_featured 比较用 today_str；signed_in_today 用 sign_date；
+    # signed_in_date 过滤（若启用）用 signed_in_date；最后 limit。
+    params: list = [today_str, sign_date]
+    if signed_in_date is not None:
+        params.append(signed_in_date)
+    if limit is not None:
+        params.append(limit)
+
+    sql = (
+        "SELECT t.*,"
+        " (SELECT COUNT(*) FROM favorites f WHERE f.teacher_id = t.user_id) AS fav_count,"
+        " CASE WHEN t.is_featured = 1"
+        "      AND (t.featured_until IS NULL"
+        "           OR TRIM(t.featured_until) = ''"
+        "           OR DATE(t.featured_until) >= DATE(?))"
+        "      THEN 1 ELSE 0 END AS effective_featured,"
+        " CASE WHEN EXISTS (SELECT 1 FROM checkins c"
+        "                   WHERE c.teacher_id = t.user_id AND c.checkin_date = ?)"
+        "      THEN 1 ELSE 0 END AS signed_in_today"
+        f" FROM teachers t WHERE {where_sql}"
+        " ORDER BY effective_featured DESC,"
+        " COALESCE(t.sort_weight, 0) DESC,"
+        " COALESCE(t.hot_score, 0) DESC,"
+        " fav_count DESC,"
+        " signed_in_today DESC,"
+        " t.created_at ASC"
+        f"{limit_sql}"
+    )
+
+    db = await get_db()
+    try:
+        cur = await db.execute(sql, params)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_hot_teachers(limit: int = 10) -> list[dict]:
+    """普通用户"热门老师"列表：按统一排序取前 N 位 active 老师
+
+    不要求今日签到（与频道发布不同），目的是给用户提供长期可见的推荐。
+    """
+    return await get_sorted_teachers(
+        active_only=True,
+        signed_in_date=None,
+        limit=limit,
+    )
+
+
+async def list_featured_teachers() -> list[dict]:
+    """列出所有 is_featured=1 的老师（含已过期），供管理员后台展示
+
+    管理员需要看到全部推荐状态以便取消 / 修改，所以这里不过滤过期。
+    用 is_effective_featured(t, today_str) 在展示时区分"有效推荐" / "已过期"。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teachers "
+            "WHERE is_featured = 1 "
+            "ORDER BY COALESCE(sort_weight, 0) DESC, created_at ASC"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def update_teacher_ranking(
+    teacher_id: int,
+    sort_weight: Optional[int] = None,
+    is_featured: Optional[int] = None,
+    featured_until: Optional[str] = None,
+) -> bool:
+    """更新老师排序 / 推荐相关字段（Phase 3 §二）
+
+    None 参数视为"不更新该字段"。若所有参数都为 None，返回 False。
+    要清空 featured_until，请显式传空字符串 ''。
+    """
+    fields: list[str] = []
+    params: list = []
+    if sort_weight is not None:
+        fields.append("sort_weight = ?")
+        params.append(sort_weight)
+    if is_featured is not None:
+        fields.append("is_featured = ?")
+        params.append(int(is_featured))
+    if featured_until is not None:
+        # 空字符串明确表示清空
+        fields.append("featured_until = ?")
+        params.append(featured_until if featured_until != "" else None)
+
+    if not fields:
+        return False
+
+    params.append(teacher_id)
+    db = await get_db()
+    try:
+        await db.execute(
+            f"UPDATE teachers SET {', '.join(fields)} WHERE user_id = ?",
+            params,
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def recalculate_hot_scores() -> int:
+    """重算所有老师的 hot_score（Phase 3 §二）
+
+    公式: hot_score = 收藏数 * 10 + 浏览数 * 3
+    （搜索命中数项暂未埋点，先不计入；后续 search_hit 事件接入后再扩展）
+
+    兼容降级：
+        - 若 user_teacher_views 表不存在 → 仅按 收藏数 * 10
+        - 若 favorites 表不存在（不可能的极端） → 全部清零
+
+    Returns:
+        受影响的老师数（即 teachers 表行数）
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('favorites', 'user_teacher_views')"
+        )
+        existing = {row["name"] for row in await cur.fetchall()}
+
+        fav_term = (
+            "(SELECT COUNT(*) FROM favorites WHERE teacher_id = teachers.user_id) * 10"
+            if "favorites" in existing else "0"
+        )
+        views_term = (
+            "+ COALESCE((SELECT COUNT(*) FROM user_teacher_views "
+            "             WHERE teacher_id = teachers.user_id), 0) * 3"
+            if "user_teacher_views" in existing else ""
+        )
+
+        await db.execute(f"UPDATE teachers SET hot_score = {fav_term} {views_term}")
+        await db.commit()
+
+        cur = await db.execute("SELECT COUNT(*) AS n FROM teachers")
+        row = await cur.fetchone()
+        return int(row["n"] or 0) if row else 0
     finally:
         await db.close()

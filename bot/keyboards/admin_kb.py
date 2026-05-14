@@ -25,6 +25,28 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
             InlineKeyboardButton(text=review_label, callback_data="review:enter"),
         ],
+        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
+    ])
+
+
+# ============ 热门推荐管理（Phase 3） ============
+
+
+def hot_manage_menu_kb() -> InlineKeyboardMarkup:
+    """热门推荐管理子面板"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ 添加推荐", callback_data="admin:hot:add")],
+        [InlineKeyboardButton(text="✏️ 修改权重", callback_data="admin:hot:weight")],
+        [InlineKeyboardButton(text="❌ 取消推荐", callback_data="admin:hot:remove")],
+        [InlineKeyboardButton(text="🔄 重算热度", callback_data="admin:hot:recalc")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def hot_manage_cancel_kb() -> InlineKeyboardMarkup:
+    """热门推荐管理流程内的取消按钮（返回 hot manage 主页）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:hot_manage")],
     ])
 
 

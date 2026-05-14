@@ -10,12 +10,13 @@ from bot.utils.url import normalize_url
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单（v2 §2.5.3 + Phase 2 新增"最近看过"）"""
+    """普通用户私聊主菜单（v2 §2.5.3 + Phase 2 最近看过 + Phase 3 热门老师）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📚 今日开课老师", callback_data="user:today")],
         [InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites")],
         [InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today")],
         [InlineKeyboardButton(text="🕘 最近看过", callback_data="user:recent")],
+        [InlineKeyboardButton(text="🔥 热门老师", callback_data="user:hot")],
         [InlineKeyboardButton(text="🔍 搜索老师", callback_data="user:search")],
     ])
 

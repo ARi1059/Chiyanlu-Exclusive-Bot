@@ -26,6 +26,7 @@ from aiogram.fsm.context import FSMContext
 from bot.database import (
     get_checked_in_teachers,
     get_teacher_by_name,
+    is_effective_featured,
     is_favorited,
     search_teachers_smart_and,
 )
@@ -115,16 +116,44 @@ async def _send_no_result(message: types.Message, unrecognized: list[str]) -> No
     )
 
 
+def _sort_search_results(teachers: list[dict], today_str: str) -> list[dict]:
+    """对搜索命中的老师按 Phase 3 统一规则排序（Python 层，避免再查 DB）
+
+    仅使用 teachers 表自带字段（不计算 fav_count / signed_in_today，
+    搜索是即时操作，简化即可）：
+        effective_featured DESC, sort_weight DESC, hot_score DESC, created_at ASC
+    """
+    def key(t: dict):
+        eff = is_effective_featured(t, today_str)
+        return (
+            0 if eff else 1,
+            -(t.get("sort_weight") or 0),
+            -(t.get("hot_score") or 0),
+            t.get("created_at") or "",
+        )
+    return sorted(teachers, key=key)
+
+
 async def _send_list(message: types.Message, teachers: list[dict]) -> None:
-    """搜索命中多位老师：列表按钮（每个 → teacher:view 详情页）"""
+    """搜索命中多位老师：列表按钮（每个 → teacher:view 详情页）
+
+    Phase 3：按统一排序规则展示；有效推荐老师名称前加 🔥 标识。
+    """
+    today = _today_str()
+    sorted_teachers = _sort_search_results(teachers, today)
+
+    def _label(t: dict) -> str:
+        prefix = "🔥 " if is_effective_featured(t, today) else ""
+        return f"{prefix}{t['display_name']} · {t['region']} · {t['price']}"
+
     text = (
-        f"🔍 找到 {len(teachers)} 位老师\n\n"
+        f"🔍 找到 {len(sorted_teachers)} 位老师\n\n"
         "点击老师查看详情。"
     )
     kb = teacher_detail_list_kb(
-        teachers,
+        sorted_teachers,
         per_row=1,
-        label_fn=lambda t: f"{t['display_name']} · {t['region']} · {t['price']}",
+        label_fn=_label,
     )
     await message.answer(text, reply_markup=kb)
 

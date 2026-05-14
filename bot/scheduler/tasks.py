@@ -10,6 +10,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     get_checked_in_teachers,
+    get_sorted_teachers,
     get_unchecked_teachers,
     get_config,
     save_sent_message,
@@ -156,8 +157,24 @@ async def send_checkin_reminders(bot: Bot):
 
 
 async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, InlineKeyboardMarkup]]:
-    """构建每日签到发布内容，返回文本和按钮"""
-    teachers = await get_checked_in_teachers(date_str)
+    """构建每日签到发布内容，返回文本和按钮（Phase 3：应用统一排序规则）
+
+    展示范围仍是"当天已签到的启用老师"，但顺序按
+    is_featured → sort_weight → hot_score → 收藏数 → 已签到 → 创建时间 排。
+    频道按钮仍跳转 button_url，不进入 teacher:view（与 user_panel 不同）。
+
+    兼容降级：若 get_sorted_teachers 异常（如旧 schema 未迁移），自动回退到
+    get_checked_in_teachers 的原始顺序。
+    """
+    try:
+        teachers = await get_sorted_teachers(
+            active_only=True,
+            signed_in_date=date_str,
+        )
+    except Exception as e:
+        logger.warning("get_sorted_teachers 失败，回退到原始顺序: %s", e)
+        teachers = await get_checked_in_teachers(date_str)
+
     if not teachers:
         return None
 

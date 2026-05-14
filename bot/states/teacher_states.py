@@ -39,3 +39,11 @@ class SetGroupStates(StatesGroup):
 class SystemSettingStates(StatesGroup):
     """系统设置状态"""
     waiting_value = State()
+
+
+class HotManageStates(StatesGroup):
+    """热门推荐管理状态（Phase 3）"""
+    waiting_feature_id = State()    # 添加推荐：等待老师 ID
+    waiting_weight_id = State()      # 修改权重：等待老师 ID
+    waiting_weight_value = State()   # 修改权重：等待权重值（state.data 含 teacher_id）
+    waiting_remove_id = State()      # 取消推荐：等待老师 ID
