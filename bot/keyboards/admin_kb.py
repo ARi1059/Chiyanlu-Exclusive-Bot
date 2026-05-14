@@ -30,6 +30,20 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔗 推广链接", callback_data="admin:promo_links"),
             InlineKeyboardButton(text="📈 渠道统计", callback_data="admin:source_stats"),
         ],
+        [InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status")],
+    ])
+
+
+# ============ 管理员今日状态总览（Phase 5） ============
+
+
+def admin_today_status_kb() -> InlineKeyboardMarkup:
+    """管理员今日开课状态总览页"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:today_status"),
+            InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main"),
+        ],
     ])
 
 

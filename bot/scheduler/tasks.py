@@ -10,6 +10,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     get_checked_in_teachers,
+    get_display_time_group,
     get_sorted_teachers,
     get_unchecked_teachers,
     get_config,
@@ -156,49 +157,94 @@ async def send_checkin_reminders(bot: Bot):
     )
 
 
+_CHANNEL_GROUP_ORDER: list[tuple[str, str]] = [
+    ("all", "🌞 全天可约"),
+    ("afternoon", "🌤 下午可约"),
+    ("evening", "🌙 晚上可约"),
+    ("other", "📝 其他时间"),
+    ("full", "🈵 今日已满"),
+]
+
+
 async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, InlineKeyboardMarkup]]:
-    """构建每日签到发布内容，返回文本和按钮（Phase 3：应用统一排序规则）
+    """构建每日签到发布内容（Phase 3 排序 + Phase 5 按时间段分组）
 
-    展示范围仍是"当天已签到的启用老师"，但顺序按
-    is_featured → sort_weight → hot_score → 收藏数 → 已签到 → 创建时间 排。
-    频道按钮仍跳转 button_url，不进入 teacher:view（与 user_panel 不同）。
+    范围：当天已签到 + 启用 + daily_status != 'unavailable'
+    顺序：先按统一排序规则取出，再按 5 个时间段分组，每组保留组内排序。
+    频道按钮仍跳转 button_url，分组标题用 callback='noop:section' 占位按钮。
 
-    兼容降级：若 get_sorted_teachers 异常（如旧 schema 未迁移），自动回退到
-    get_checked_in_teachers 的原始顺序。
+    兼容降级：若 get_sorted_teachers 异常（旧 schema 未迁移）→ 回退原始顺序，
+    不分组（保持 v1 行为）。
     """
     try:
         teachers = await get_sorted_teachers(
             active_only=True,
             signed_in_date=date_str,
+            exclude_unavailable=True,
         )
+        groupable = True
     except Exception as e:
         logger.warning("get_sorted_teachers 失败，回退到原始顺序: %s", e)
         teachers = await get_checked_in_teachers(date_str)
+        groupable = False
 
     if not teachers:
         return None
 
-    buttons = []
-    row = []
-    for t in teachers:
-        button_url = normalize_url(t["button_url"])
-        if not button_url:
-            logger.warning("跳过无效老师链接: %s (%s)", t["display_name"], t["button_url"])
-            continue
-        button_text = t["button_text"] or t["display_name"]
-        row.append(InlineKeyboardButton(text=button_text, url=button_url))
-        # 每行最多 3 个按钮
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
+    # 按时间段分桶（仅在 get_sorted_teachers 成功时启用分组）
+    grouped: dict[str, list[dict]] = {key: [] for key, _ in _CHANNEL_GROUP_ORDER}
+    if groupable:
+        for t in teachers:
+            key = get_display_time_group(t)
+            # unavailable 已经在 SQL 层 exclude 了，这里只可能命中其余 5 个键
+            if key not in grouped:
+                key = "other"
+            grouped[key].append(t)
 
-    if not buttons:
+    buttons: list[list[InlineKeyboardButton]] = []
+    valid_count = 0
+
+    def _flush_group(group_teachers: list[dict], header: str | None) -> None:
+        """按 3 个一行渲染老师 URL 按钮；header 非空时先放一个占位行"""
+        nonlocal valid_count
+        valid: list[InlineKeyboardButton] = []
+        for t in group_teachers:
+            url = normalize_url(t["button_url"])
+            if not url:
+                logger.warning("跳过无效老师链接: %s (%s)", t["display_name"], t["button_url"])
+                continue
+            label = t["button_text"] or t["display_name"]
+            valid.append(InlineKeyboardButton(text=label, url=url))
+        if not valid:
+            return
+        if header is not None:
+            buttons.append([InlineKeyboardButton(text=header, callback_data="noop:section")])
+        row: list[InlineKeyboardButton] = []
+        for btn in valid:
+            row.append(btn)
+            valid_count += 1
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+
+    if groupable:
+        # 分组渲染：标题行 + 按钮行
+        for key, header in _CHANNEL_GROUP_ORDER:
+            bucket = grouped[key]
+            if not bucket:
+                continue
+            _flush_group(bucket, header)
+    else:
+        # 不分组，原始顺序
+        _flush_group(teachers, header=None)
+
+    if not buttons or valid_count == 0:
         return None
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"📅 {date_str} 开课老师 {len(teachers)}位"
+    text = f"📅 {date_str} 今日开课老师 {valid_count} 位"
     return text, keyboard
 
 

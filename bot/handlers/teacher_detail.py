@@ -24,6 +24,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     get_teacher,
+    get_teacher_daily_status,
     is_checked_in,
     is_favorited,
     list_recent_teacher_views,
@@ -53,23 +54,57 @@ def format_teacher_detail_text(
     *,
     is_signed_in_today: bool,
     is_fav: bool,
+    daily_status_row: dict | None = None,
 ) -> str:
-    """构造详情页文本（被 teacher_detail handler 和 user_search 共用）"""
+    """构造详情页文本（被 teacher_detail handler 和 user_search 共用）
+
+    Phase 5：在原 6 行基础上追加今日状态 / 可约时间 / 备注（按 daily_status_row 派生）。
+    daily_status_row 的字段:
+        status: available / full / unavailable / unknown
+        available_time: 全天 / 下午 / 晚上 / 自定义 / 未设置 / NULL
+        note: 自由文本 / NULL
+    """
     try:
         tags = json.loads(teacher["tags"]) if teacher["tags"] else []
     except (json.JSONDecodeError, TypeError):
         tags = []
     tags_str = " | ".join(tags) if tags else "（无标签）"
-    today_label = "✅ 已开课" if is_signed_in_today else "⏳ 今日暂未开课"
     fav_label = "✅ 已收藏" if is_fav else "未收藏"
-    return (
-        f"👤 {teacher['display_name']}\n"
-        f"📍 地区：{teacher['region']}\n"
-        f"💰 价格：{teacher['price']}\n"
-        f"🏷 标签：{tags_str}\n"
-        f"📅 今日状态：{today_label}\n"
-        f"⭐ 收藏状态：{fav_label}"
-    )
+
+    # Phase 5：今日状态 / 可约时间 / 备注 派生（spec §七）
+    status_val = (daily_status_row or {}).get("status") if daily_status_row else None
+    avt_val = (daily_status_row or {}).get("available_time") if daily_status_row else None
+    note_val = (daily_status_row or {}).get("note") if daily_status_row else None
+
+    if not is_signed_in_today and status_val != "unavailable":
+        today_status_label = "⏳ 今日暂未开课"
+        avt_label = "—"
+    elif status_val == "unavailable":
+        today_status_label = "❌ 今日已取消"
+        avt_label = "—"
+    elif status_val == "full":
+        today_status_label = "🈵 今日已满"
+        avt_label = (avt_val or "").strip() or "未设置"
+    elif status_val == "available":
+        today_status_label = "✅ 今日可约"
+        avt_label = (avt_val or "").strip() or "未设置"
+    else:
+        # 已签到但 daily_status_row 为空 → 视为可约
+        today_status_label = "✅ 今日可约"
+        avt_label = "未设置"
+
+    lines = [
+        f"👤 {teacher['display_name']}",
+        f"📍 地区：{teacher['region']}",
+        f"💰 价格：{teacher['price']}",
+        f"🏷 标签：{tags_str}",
+        f"📅 今日状态：{today_status_label}",
+        f"⏰ 可约时间：{avt_label}",
+    ]
+    if note_val and str(note_val).strip():
+        lines.append(f"📝 备注：{str(note_val).strip()}")
+    lines.append(f"⭐ 收藏状态：{fav_label}")
+    return "\n".join(lines)
 
 
 async def _build_detail_payload(
@@ -80,10 +115,13 @@ async def _build_detail_payload(
     today = _today_str()
     is_signed_in = await is_checked_in(teacher["user_id"], today)
     is_fav = await is_favorited(user_id, teacher["user_id"])
+    # Phase 5：今日状态
+    daily_row = await get_teacher_daily_status(teacher["user_id"], today)
     text = format_teacher_detail_text(
         teacher,
         is_signed_in_today=is_signed_in,
         is_fav=is_fav,
+        daily_status_row=daily_row,
     )
     kb = teacher_detail_kb(teacher, is_favorited=is_fav)
     return text, kb

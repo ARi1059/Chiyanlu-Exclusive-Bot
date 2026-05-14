@@ -6,15 +6,57 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ============ 老师主菜单 ============
 
 def teacher_main_menu_kb() -> InlineKeyboardMarkup:
-    """老师私聊主菜单（v2 §2.5.5）
+    """老师私聊主菜单（v2 §2.5.5 + Phase 5 今日状态）
 
     - 我的资料 → 自助管理入口（F3）
     - 今日签到 → 等价于发文字"签到"（v1 行为，并存）
-    - 退出 → 不实际"退出"，只是去掉键盘（用户重发 /start 可重新进入）
+    - 今日状态 → Phase 5 老师今日开课状态管理
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ 我的资料", callback_data="teacher_self:profile")],
         [InlineKeyboardButton(text="✅ 今日签到", callback_data="teacher_self:checkin")],
+        [InlineKeyboardButton(text="📅 今日状态", callback_data="teacher:status")],
+    ])
+
+
+# ============ 老师今日状态（Phase 5） ============
+
+
+def time_picker_kb() -> InlineKeyboardMarkup:
+    """可约时间段选择器（签到后 + 状态菜单"设置可约时间"通用）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌞 全天", callback_data="teacher:time:all")],
+        [InlineKeyboardButton(text="🌤 下午", callback_data="teacher:time:afternoon")],
+        [InlineKeyboardButton(text="🌙 晚上", callback_data="teacher:time:evening")],
+        [InlineKeyboardButton(text="📝 自定义", callback_data="teacher:time:custom")],
+        [InlineKeyboardButton(text="⏭ 暂不设置", callback_data="teacher:time:skip")],
+    ])
+
+
+def teacher_status_kb() -> InlineKeyboardMarkup:
+    """老师今日状态菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ 设置可约时间", callback_data="teacher:status:set_time")],
+        [InlineKeyboardButton(text="🈵 标记今日已满", callback_data="teacher:status:mark_full")],
+        [InlineKeyboardButton(text="❌ 取消今日开课", callback_data="teacher:status:cancel")],
+        [InlineKeyboardButton(text="🔙 返回老师菜单", callback_data="teacher_self:menu")],
+    ])
+
+
+def custom_time_cancel_kb() -> InlineKeyboardMarkup:
+    """自定义时间 FSM 取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="teacher:status")],
+    ])
+
+
+def cancel_reason_kb() -> InlineKeyboardMarkup:
+    """取消今日开课时的输入引导：跳过 / 取消"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⏭ 跳过原因", callback_data="teacher:status:cancel_skip"),
+            InlineKeyboardButton(text="🔙 取消", callback_data="teacher:status"),
+        ],
     ])
 
 

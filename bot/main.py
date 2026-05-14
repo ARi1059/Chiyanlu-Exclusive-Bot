@@ -15,6 +15,7 @@ from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.start_router import router as start_router
+from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
 from bot.handlers.teacher_detail import router as teacher_detail_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
@@ -83,6 +84,11 @@ async def main():
     # PromoLinkStates / UserSourceLookupStates 保证文字消息只在对应状态下被截获
     dp.include_router(promo_links_router)
     dp.include_router(source_stats_router)
+    # teacher_daily_status_router（Phase 5）：
+    # 老师今日状态（设置时间/取消/已满）+ 时间选择器 + 管理员今日总览 + noop 占位
+    # 注册位置：在 teacher_self / user_panel / keyword 之前，保证 teacher:*/admin:today_status
+    # callback 命名空间清晰；TeacherDailyStatusStates 保证文字消息仅在 FSM 中被截获
+    dp.include_router(teacher_daily_status_router)
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)

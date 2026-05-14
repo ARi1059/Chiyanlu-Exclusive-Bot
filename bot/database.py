@@ -163,6 +163,22 @@ async def init_db():
                 ON user_sources(source_type, source_id);
             CREATE INDEX IF NOT EXISTS idx_user_sources_last_seen
                 ON user_sources(last_seen_at);
+
+            CREATE TABLE IF NOT EXISTS teacher_daily_status (
+                teacher_id INTEGER NOT NULL,
+                status_date TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'available',
+                available_time TEXT,
+                note TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (teacher_id, status_date),
+                FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_daily_status_date
+                ON teacher_daily_status(status_date);
+            CREATE INDEX IF NOT EXISTS idx_daily_status_date_status
+                ON teacher_daily_status(status_date, status);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -1512,8 +1528,9 @@ async def get_sorted_teachers(
     active_only: bool = True,
     signed_in_date: Optional[str] = None,
     limit: Optional[int] = None,
+    exclude_unavailable: bool = False,
 ) -> list[dict]:
-    """按统一排序规则返回老师列表（Phase 3 §二）
+    """按统一排序规则返回老师列表（Phase 3 §二 + Phase 5 接入 daily_status）
 
     排序规则（优先级高到低）：
         1. 当前有效推荐老师（is_featured=1 且未过期）优先
@@ -1527,9 +1544,13 @@ async def get_sorted_teachers(
         active_only: 仅启用老师
         signed_in_date: 不为空 → 仅返回当天已签到的老师（用于频道发布）
         limit: 限制返回条数
+        exclude_unavailable: True → 过滤掉 daily_status='unavailable' 的老师
+                             用于频道发布和用户今日开课列表（Phase 5 §五）
 
     Returns:
-        teachers list，每条额外带 fav_count / effective_featured / signed_in_today 字段
+        teachers list，每条带:
+            fav_count / effective_featured / signed_in_today
+            daily_status / daily_available_time / daily_note  (Phase 5)
     """
     today_str = _today_str_local()
     sign_date = signed_in_date or today_str
@@ -1542,13 +1563,19 @@ async def get_sorted_teachers(
             "EXISTS (SELECT 1 FROM checkins c "
             "WHERE c.teacher_id = t.user_id AND c.checkin_date = ?)"
         )
+    if exclude_unavailable:
+        where_clauses.append("(s.status IS NULL OR s.status != 'unavailable')")
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
     limit_sql = " LIMIT ?" if limit is not None else ""
 
-    # 参数顺序：effective_featured 比较用 today_str；signed_in_today 用 sign_date；
-    # signed_in_date 过滤（若启用）用 signed_in_date；最后 limit。
-    params: list = [today_str, sign_date]
+    # 参数顺序：
+    #   1. effective_featured 比较用 today_str
+    #   2. signed_in_today 用 sign_date
+    #   3. LEFT JOIN ON daily_status_date 用 sign_date
+    #   4. signed_in_date 过滤（若启用）用 signed_in_date
+    #   5. limit（若启用）
+    params: list = [today_str, sign_date, sign_date]
     if signed_in_date is not None:
         params.append(signed_in_date)
     if limit is not None:
@@ -1564,8 +1591,14 @@ async def get_sorted_teachers(
         "      THEN 1 ELSE 0 END AS effective_featured,"
         " CASE WHEN EXISTS (SELECT 1 FROM checkins c"
         "                   WHERE c.teacher_id = t.user_id AND c.checkin_date = ?)"
-        "      THEN 1 ELSE 0 END AS signed_in_today"
-        f" FROM teachers t WHERE {where_sql}"
+        "      THEN 1 ELSE 0 END AS signed_in_today,"
+        " s.status AS daily_status,"
+        " s.available_time AS daily_available_time,"
+        " s.note AS daily_note"
+        " FROM teachers t"
+        " LEFT JOIN teacher_daily_status s"
+        "   ON s.teacher_id = t.user_id AND s.status_date = ?"
+        f" WHERE {where_sql}"
         " ORDER BY effective_featured DESC,"
         " COALESCE(t.sort_weight, 0) DESC,"
         " COALESCE(t.hot_score, 0) DESC,"
@@ -1861,3 +1894,177 @@ async def count_total_source_users() -> int:
         return int(row["n"] or 0) if row else 0
     finally:
         await db.close()
+
+
+# ============ 老师每日状态 (Phase 5) ============
+
+
+# 可约时间段：固定 4 个值 + None；存储与展示统一使用中文（与 spec §一一致）
+TEACHER_TIME_SLOTS: tuple[str, ...] = ("全天", "下午", "晚上", "自定义")
+# 状态值：4 个枚举
+TEACHER_DAILY_STATUSES: tuple[str, ...] = (
+    "available", "unavailable", "full", "unknown",
+)
+
+
+def get_display_time_group(row: dict) -> str:
+    """把老师当天的 daily_status / available_time 归到一个展示组（纯函数）
+
+    返回值: 'all' / 'afternoon' / 'evening' / 'other' / 'full' / 'unavailable'
+
+    规则：
+        - daily_status == 'unavailable' → 'unavailable'
+        - daily_status == 'full' → 'full'
+        - available_time 是 '全天/下午/晚上' → 对应英文键
+        - 其他（自定义 / 未设置 / NULL） → 'other'
+    """
+    status = (row.get("daily_status") or "").strip()
+    if status == "unavailable":
+        return "unavailable"
+    if status == "full":
+        return "full"
+    avt = (row.get("daily_available_time") or "").strip()
+    if avt == "全天":
+        return "all"
+    if avt == "下午":
+        return "afternoon"
+    if avt == "晚上":
+        return "evening"
+    return "other"
+
+
+async def set_teacher_daily_status(
+    teacher_id: int,
+    status_date: str,
+    status: str,
+    available_time: Optional[str] = None,
+    note: Optional[str] = None,
+) -> bool:
+    """UPSERT 老师当日状态（Phase 5 §二）
+
+    UPSERT 语义：
+        - 若 (teacher_id, status_date) 不存在 → 插入
+        - 若已存在 → 更新 status / available_time / note / updated_at
+        - available_time / note 显式传 None 时 COALESCE 到旧值（不清空）
+          → 如需清空 note 请显式传空字符串 ''
+    """
+    if status not in TEACHER_DAILY_STATUSES:
+        return False
+
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO teacher_daily_status
+               (teacher_id, status_date, status, available_time, note, updated_at)
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(teacher_id, status_date) DO UPDATE SET
+                   status = excluded.status,
+                   available_time = COALESCE(excluded.available_time, available_time),
+                   note = COALESCE(excluded.note, note),
+                   updated_at = CURRENT_TIMESTAMP""",
+            (teacher_id, status_date, status, available_time, note),
+        )
+        await db.commit()
+        return True
+    finally:
+        await db.close()
+
+
+async def get_teacher_daily_status(
+    teacher_id: int,
+    status_date: str,
+) -> Optional[dict]:
+    """读取老师当日状态（Phase 5 §二）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT teacher_id, status_date, status, available_time, note, updated_at
+               FROM teacher_daily_status
+               WHERE teacher_id = ? AND status_date = ?""",
+            (teacher_id, status_date),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_today_teacher_statuses(
+    status_date: str,
+    active_only: bool = True,
+) -> list[dict]:
+    """返回当天所有老师 + 签到状态 + daily_status（Phase 5 §二）
+
+    用于管理员"今日开课状态总览"。
+    返回每条:
+        teachers.*（启用 + 已签到）
+        + signed_in (bool)
+        + daily_status / daily_available_time / daily_note (可能为 NULL)
+
+    spec §二：
+      "如果老师已签到但没有 teacher_daily_status，默认视为 available，
+       available_time 可显示'未设置'。"
+    所以这里返回 daily_status 为 NULL 时上层把它当作 available 渲染即可。
+    """
+    where = "1=1"
+    if active_only:
+        where = "t.is_active = 1"
+
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            f"""SELECT t.*,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM checkins c
+                       WHERE c.teacher_id = t.user_id AND c.checkin_date = ?
+                   ) THEN 1 ELSE 0 END AS signed_in,
+                   s.status AS daily_status,
+                   s.available_time AS daily_available_time,
+                   s.note AS daily_note
+               FROM teachers t
+               LEFT JOIN teacher_daily_status s
+                 ON s.teacher_id = t.user_id AND s.status_date = ?
+               WHERE {where}
+                 AND (EXISTS (SELECT 1 FROM checkins c
+                              WHERE c.teacher_id = t.user_id AND c.checkin_date = ?)
+                      OR s.status IS NOT NULL)
+               ORDER BY COALESCE(t.sort_weight, 0) DESC,
+                        COALESCE(t.hot_score, 0) DESC,
+                        t.created_at ASC""",
+            (status_date, status_date, status_date),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def cancel_teacher_today(
+    teacher_id: int,
+    status_date: str,
+    note: Optional[str] = None,
+) -> bool:
+    """老师取消今日开课：status='unavailable' + 可选原因（Phase 5 §四）"""
+    return await set_teacher_daily_status(
+        teacher_id=teacher_id,
+        status_date=status_date,
+        status="unavailable",
+        note=note,
+    )
+
+
+async def mark_teacher_full_today(
+    teacher_id: int,
+    status_date: str,
+    note: Optional[str] = None,
+) -> bool:
+    """老师标记今日已满：status='full'（Phase 5 §四）
+
+    保留原有 available_time（COALESCE 不覆盖）。
+    """
+    return await set_teacher_daily_status(
+        teacher_id=teacher_id,
+        status_date=status_date,
+        status="full",
+        note=note,
+    )
