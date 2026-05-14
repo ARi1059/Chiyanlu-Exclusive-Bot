@@ -21,7 +21,34 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📢 频道设置", callback_data="menu:channel"),
             InlineKeyboardButton(text="⚙️ 系统设置", callback_data="menu:system"),
         ],
-        [InlineKeyboardButton(text=review_label, callback_data="review:enter")],
+        [
+            InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
+            InlineKeyboardButton(text=review_label, callback_data="review:enter"),
+        ],
+    ])
+
+
+# ============ 数据看板（Phase 1） ============
+
+
+def dashboard_menu_kb() -> InlineKeyboardMarkup:
+    """看板主视图：刷新 / 操作日志 / 返回主菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 刷新", callback_data="dashboard:enter"),
+            InlineKeyboardButton(text="📜 操作日志", callback_data="dashboard:audit"),
+        ],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def dashboard_audit_back_kb() -> InlineKeyboardMarkup:
+    """操作日志页：返回看板 / 主菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔙 返回看板", callback_data="dashboard:enter"),
+            InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main"),
+        ],
     ])
 
 

@@ -12,6 +12,7 @@ from bot.handlers.admin_panel import router as admin_panel_router
 from bot.handlers.admin_review import router as admin_review_router
 from bot.handlers.favorite import router as favorite_router
 from bot.handlers.start_router import router as start_router
+from bot.handlers.teacher_detail import router as teacher_detail_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
 from bot.handlers.teacher_self import router as teacher_self_router
@@ -66,6 +67,10 @@ async def main():
     dp.include_router(start_router)
     # favorite_router：fav:* callback（卡片场景 + "我的收藏"列表）
     dp.include_router(favorite_router)
+    # teacher_detail_router（Phase 2）：teacher:view / teacher:toggle_fav / user:recent
+    # 位置：favorite 之后、user_panel 之前。三个 callback 命名空间互不重叠，
+    # keyword 也不会拦截（keyword 处理 group message，详情页全是 callback）
+    dp.include_router(teacher_detail_router)
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)

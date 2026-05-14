@@ -103,6 +103,47 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_edit_requests_status ON teacher_edit_requests(status);
             CREATE INDEX IF NOT EXISTS idx_edit_requests_teacher
                 ON teacher_edit_requests(teacher_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS user_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_events_created
+                ON user_events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_user_events_type_created
+                ON user_events(event_type, created_at);
+            CREATE INDEX IF NOT EXISTS idx_user_events_user_created
+                ON user_events(user_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS admin_audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                target_type TEXT,
+                target_id TEXT,
+                detail TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_admin_created
+                ON admin_audit_logs(admin_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_audit_action_created
+                ON admin_audit_logs(action, created_at);
+
+            CREATE TABLE IF NOT EXISTS user_teacher_views (
+                user_id INTEGER NOT NULL,
+                teacher_id INTEGER NOT NULL,
+                viewed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, teacher_id),
+                FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_views_user_time
+                ON user_teacher_views(user_id, viewed_at);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -1081,5 +1122,284 @@ async def reject_edit_request(
         )
         await db.commit()
         return True
+    finally:
+        await db.close()
+
+
+# ============ 事件 / 审计日志 (Phase 1) ============
+
+
+def _to_json_text(value) -> Optional[str]:
+    """把 dict / list / 其他对象序列化为 JSON 字符串；str 直接返回；None 返回 None"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+async def log_user_event(
+    user_id: int,
+    event_type: str,
+    payload=None,
+) -> None:
+    """记录用户侧事件（C1 用户主面板、搜索、收藏、查看等）
+
+    payload 可为 dict / list / str / None；非字符串会被 JSON 序列化。
+    本函数对调用方完全静默：内部异常不外抛，避免埋点失败连带核心流程出错。
+    """
+    payload_str = _to_json_text(payload)
+    try:
+        db = await get_db()
+        try:
+            await db.execute(
+                "INSERT INTO user_events (user_id, event_type, payload) VALUES (?, ?, ?)",
+                (user_id, event_type, payload_str),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception:
+        # 埋点失败不影响业务，吞掉异常
+        pass
+
+
+async def log_admin_audit(
+    admin_id: int,
+    action: str,
+    target_type: Optional[str] = None,
+    target_id=None,
+    detail=None,
+) -> None:
+    """记录管理员操作日志
+
+    target_id 接受任意类型，内部统一转字符串；
+    detail 接受 dict / list / str / None。
+    内部异常被吞掉，避免审计失败导致业务异常。
+    """
+    target_id_str = None if target_id is None else str(target_id)
+    detail_str = _to_json_text(detail)
+    try:
+        db = await get_db()
+        try:
+            await db.execute(
+                """INSERT INTO admin_audit_logs
+                   (admin_id, action, target_type, target_id, detail)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (admin_id, action, target_type, target_id_str, detail_str),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception:
+        pass
+
+
+async def get_dashboard_metrics(today_str: str, since_str: str) -> dict:
+    """聚合管理员看板所需统计
+
+    Args:
+        today_str: 今日日期 'YYYY-MM-DD'
+        since_str: N 天前的起始日期（含），用于 7 日窗口指标
+    """
+    db = await get_db()
+    try:
+        # ---- 用户 ----
+        cur = await db.execute("SELECT COUNT(*) AS n FROM users")
+        total_users = (await cur.fetchone())["n"] or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM users "
+            "WHERE last_started_bot = 1 AND notify_enabled = 1"
+        )
+        reachable_users = (await cur.fetchone())["n"] or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE DATE(created_at) = ?",
+            (today_str,),
+        )
+        new_users_today = (await cur.fetchone())["n"] or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE DATE(created_at) >= ?",
+            (since_str,),
+        )
+        new_users_range = (await cur.fetchone())["n"] or 0
+
+        # ---- 活跃（来自 user_events distinct user_id）----
+        cur = await db.execute(
+            "SELECT COUNT(DISTINCT user_id) AS n FROM user_events "
+            "WHERE DATE(created_at) = ?",
+            (today_str,),
+        )
+        active_today = (await cur.fetchone())["n"] or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(DISTINCT user_id) AS n FROM user_events "
+            "WHERE DATE(created_at) >= ?",
+            (since_str,),
+        )
+        active_range = (await cur.fetchone())["n"] or 0
+
+        # ---- 老师 ----
+        cur = await db.execute(
+            "SELECT "
+            "SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS active, "
+            "SUM(CASE WHEN is_active=0 THEN 1 ELSE 0 END) AS inactive "
+            "FROM teachers"
+        )
+        row = await cur.fetchone()
+        active_teachers = (row["active"] if row else 0) or 0
+        inactive_teachers = (row["inactive"] if row else 0) or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM checkins WHERE checkin_date = ?",
+            (today_str,),
+        )
+        checkins_today = (await cur.fetchone())["n"] or 0
+
+        # ---- 收藏 ----
+        cur = await db.execute("SELECT COUNT(*) AS n FROM favorites")
+        total_favorites = (await cur.fetchone())["n"] or 0
+
+        # ---- 今日用户行为（按事件类型聚合）----
+        cur = await db.execute(
+            "SELECT event_type, COUNT(*) AS n FROM user_events "
+            "WHERE DATE(created_at) = ? GROUP BY event_type",
+            (today_str,),
+        )
+        events_rows = await cur.fetchall()
+        events_today = {r["event_type"]: r["n"] for r in events_rows}
+
+        # ---- 运营 ----
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM teacher_edit_requests WHERE status = 'pending'"
+        )
+        pending_reviews = (await cur.fetchone())["n"] or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM sent_messages WHERE sent_date = ?",
+            (today_str,),
+        )
+        publishes_today = (await cur.fetchone())["n"] or 0
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM admin_audit_logs WHERE DATE(created_at) = ?",
+            (today_str,),
+        )
+        audits_today = (await cur.fetchone())["n"] or 0
+
+        return {
+            "total_users": total_users,
+            "reachable_users": reachable_users,
+            "new_users_today": new_users_today,
+            "new_users_range": new_users_range,
+            "active_today": active_today,
+            "active_range": active_range,
+            "active_teachers": active_teachers,
+            "inactive_teachers": inactive_teachers,
+            "checkins_today": checkins_today,
+            "total_favorites": total_favorites,
+            "events_today": events_today,
+            "pending_reviews": pending_reviews,
+            "publishes_today": publishes_today,
+            "audits_today": audits_today,
+        }
+    finally:
+        await db.close()
+
+
+async def list_recent_admin_audits(limit: int = 20) -> list[dict]:
+    """最近 N 条管理员操作日志（按 id 倒序，新的在前）
+
+    返回结构每行额外带 admin_username 字段（JOIN admins 表，可能为空字符串）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT a.*, COALESCE(adm.username, '') AS admin_username
+               FROM admin_audit_logs a
+               LEFT JOIN admins adm ON a.admin_id = adm.user_id
+               ORDER BY a.id DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+# ============ 最近浏览 / 热门老师（Phase 2） ============
+
+
+async def record_teacher_view(user_id: int, teacher_id: int) -> None:
+    """记录用户浏览过某位老师（详情页打开时调用）
+
+    幂等语义：(user_id, teacher_id) 唯一，已存在时刷新 viewed_at。
+    内部异常被吞掉，避免埋点失败影响主流程。
+    """
+    try:
+        db = await get_db()
+        try:
+            await db.execute(
+                """INSERT INTO user_teacher_views (user_id, teacher_id, viewed_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(user_id, teacher_id) DO UPDATE SET
+                       viewed_at = CURRENT_TIMESTAMP""",
+                (user_id, teacher_id),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception:
+        pass
+
+
+async def list_recent_teacher_views(user_id: int, limit: int = 10) -> list[dict]:
+    """当前用户最近浏览的启用老师列表，按 viewed_at 倒序
+
+    返回 teachers 表全部字段 + viewed_at。停用老师过滤掉。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT t.*, v.viewed_at
+               FROM user_teacher_views v
+               INNER JOIN teachers t ON v.teacher_id = t.user_id
+               WHERE v.user_id = ? AND t.is_active = 1
+               ORDER BY v.viewed_at DESC
+               LIMIT ?""",
+            (user_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_top_favorited_teachers(limit: int = 10) -> list[dict]:
+    """收藏数最多的启用老师 TOP N
+
+    返回 teachers 表全部字段 + fav_count。收藏数为 0 的老师不返回。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT t.*, COUNT(f.user_id) AS fav_count
+               FROM teachers t
+               LEFT JOIN favorites f ON t.user_id = f.teacher_id
+               WHERE t.is_active = 1
+               GROUP BY t.user_id
+               HAVING fav_count > 0
+               ORDER BY fav_count DESC, t.created_at ASC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
     finally:
         await db.close()

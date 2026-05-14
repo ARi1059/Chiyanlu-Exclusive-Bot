@@ -27,6 +27,7 @@ from bot.database import (
     get_edit_request,
     get_teacher,
     list_pending_edits,
+    log_admin_audit,
     reject_edit_request,
 )
 from bot.keyboards.admin_kb import (
@@ -260,6 +261,17 @@ async def cb_review_approve(callback: types.CallbackQuery):
             show_alert=True,
         )
     else:
+        approved = await get_edit_request(request_id)
+        await log_admin_audit(
+            admin_id=callback.from_user.id,
+            action="review_approve",
+            target_type="edit_request",
+            target_id=request_id,
+            detail={
+                "teacher_id": approved["teacher_id"] if approved else None,
+                "field": approved["field_name"] if approved else None,
+            },
+        )
         await callback.answer("✅ 已通过")
 
     # 刷新列表，跳到下一条（保持索引同一位置，因为当前条已离开 pending 队列）
@@ -401,6 +413,18 @@ async def _perform_reject(
         await callback.answer("⚠️ 驳回失败", show_alert=True)
         return
 
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="review_reject",
+        target_type="edit_request",
+        target_id=request_id,
+        detail={
+            "teacher_id": req["teacher_id"],
+            "field": req["field_name"],
+            "reason": reason,
+        },
+    )
+
     # 通知老师
     await _notify_teacher_rejected(
         callback.bot,
@@ -435,6 +459,17 @@ async def _perform_reject_from_message(
     else:
         ok = await reject_edit_request(request_id, message.from_user.id, reason)
         if ok:
+            await log_admin_audit(
+                admin_id=message.from_user.id,
+                action="review_reject",
+                target_type="edit_request",
+                target_id=request_id,
+                detail={
+                    "teacher_id": req["teacher_id"],
+                    "field": req["field_name"],
+                    "reason": reason,
+                },
+            )
             await _notify_teacher_rejected(
                 message.bot,
                 req["teacher_id"],

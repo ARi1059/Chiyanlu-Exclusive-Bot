@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from datetime import datetime
+from datetime import datetime, timedelta
 from pytz import timezone
 
 from bot.config import config
@@ -17,6 +17,9 @@ from bot.database import (
     get_sent_messages,
     checkin_teacher,
     count_pending_edits,
+    log_admin_audit,
+    get_dashboard_metrics,
+    list_recent_admin_audits,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
@@ -25,6 +28,8 @@ from bot.keyboards.admin_kb import (
     channel_menu_kb,
     system_menu_kb,
     admin_remove_kb,
+    dashboard_menu_kb,
+    dashboard_audit_back_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -165,6 +170,12 @@ async def on_admin_user_id(message: types.Message, state: FSMContext):
 
     success = await add_admin(user_id)
     if success:
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="admin_add",
+            target_type="admin",
+            target_id=user_id,
+        )
         await message.answer(f"✅ 已添加管理员: {user_id}")
     else:
         await message.answer(f"⚠️ 该用户已是管理员: {user_id}")
@@ -196,6 +207,12 @@ async def cb_admin_confirm_remove(callback: types.CallbackQuery):
     user_id = int(callback.data.split(":")[2])
     success = await remove_admin(user_id)
     if success:
+        await log_admin_audit(
+            admin_id=callback.from_user.id,
+            action="admin_remove",
+            target_type="admin",
+            target_id=user_id,
+        )
         await callback.answer("✅ 已移除", show_alert=True)
     else:
         await callback.answer("⚠️ 移除失败", show_alert=True)
@@ -252,7 +269,15 @@ async def on_publish_channel_id(message: types.Message, state: FSMContext):
         await message.reply("❌ 请至少输入一个发布目标 ID")
         return
 
-    await set_config("publish_channel_id", ",".join(str(chat_id) for chat_id in chat_ids))
+    chat_ids_str = ",".join(str(chat_id) for chat_id in chat_ids)
+    await set_config("publish_channel_id", chat_ids_str)
+    await log_admin_audit(
+        admin_id=message.from_user.id,
+        action="publish_channel_set",
+        target_type="config",
+        target_id="publish_channel_id",
+        detail={"value": chat_ids_str},
+    )
     await message.answer(f"✅ 发布目标已设置为: {chat_ids}")
     await state.clear()
     await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
@@ -283,7 +308,15 @@ async def on_response_group_id(message: types.Message, state: FSMContext):
         await message.reply("❌ 请输入有效的数字 ID，多个用逗号分隔")
         return
 
-    await set_config("response_group_ids", ",".join(str(g) for g in group_ids))
+    group_ids_str = ",".join(str(g) for g in group_ids)
+    await set_config("response_group_ids", group_ids_str)
+    await log_admin_audit(
+        admin_id=message.from_user.id,
+        action="response_group_set",
+        target_type="config",
+        target_id="response_group_ids",
+        detail={"value": group_ids_str},
+    )
     await message.answer(f"✅ 响应群组已设置: {group_ids}")
     await state.clear()
     await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
@@ -411,6 +444,18 @@ async def cb_publish_manual(callback: types.CallbackQuery):
         await callback.answer("已发布", show_alert=True)
     else:
         await callback.answer("发布失败，请查看详情", show_alert=True)
+
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="publish_manual",
+        target_type="publish",
+        target_id=today,
+        detail={
+            "success_count": len(success),
+            "failed_count": len(failed),
+            "success_targets": success,
+        },
+    )
 
     await callback.message.answer(
         f"手动发布 {today} 签到汇总完成\n" + _format_publish_result(success, failed)
@@ -556,6 +601,13 @@ async def cb_toggle_reminder(callback: types.CallbackQuery):
     enabled = (await get_config("checkin_reminder_enabled")) == "1"
     new_value = "0" if enabled else "1"
     await set_config("checkin_reminder_enabled", new_value)
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reminder_toggle",
+        target_type="config",
+        target_id="checkin_reminder_enabled",
+        detail={"new_value": new_value},
+    )
     status = "关闭" if enabled else "开启"
     await callback.answer(f"签到提醒已{status}", show_alert=True)
     await callback.message.edit_text("⚙️ 系统设置", reply_markup=system_menu_kb())
@@ -608,6 +660,13 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
             await message.reply("❌ 时间无效，小时 0-23，分钟 0-59")
             return
         await set_config("publish_time", text)
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="publish_time_set",
+            target_type="config",
+            target_id="publish_time",
+            detail={"value": text},
+        )
         reloaded_time = await reload_daily_publish()
         if reloaded_time:
             await message.answer(f"✅ 发布时间已修改为: {text}\n定时任务已重载")
@@ -624,6 +683,13 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
             await message.reply("❌ 时间无效，小时 0-23，分钟 0-59")
             return
         await set_config("checkin_reminder_time", text)
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="reminder_time_set",
+            target_type="config",
+            target_id="checkin_reminder_time",
+            detail={"value": text},
+        )
         reloaded_time = await reload_checkin_reminder()
         if reloaded_time:
             await message.answer(f"✅ 签到提醒时间已修改为: {text}\n定时任务已重载")
@@ -635,6 +701,13 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
             await message.reply("❌ 请输入有效的正整数（秒数）")
             return
         await set_config("cooldown_seconds", text)
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="cooldown_set",
+            target_type="config",
+            target_id="cooldown_seconds",
+            detail={"value": text},
+        )
         await message.answer(f"✅ 冷却时间已修改为: {text} 秒")
 
     else:
@@ -642,6 +715,131 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
 
     await state.clear()
     await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+
+
+# ============ 数据看板（Phase 1） ============
+
+
+_AUDIT_ACTION_LABELS: dict[str, str] = {
+    "admin_add": "添加管理员",
+    "admin_remove": "移除管理员",
+    "publish_channel_set": "设置发布目标",
+    "response_group_set": "设置响应群组",
+    "publish_time_set": "修改发布时间",
+    "cooldown_set": "修改冷却时间",
+    "reminder_time_set": "修改提醒时间",
+    "reminder_toggle": "切换签到提醒",
+    "publish_manual": "手动发布",
+    "review_approve": "审核通过",
+    "review_reject": "审核驳回",
+}
+
+
+def _format_audit_detail(action: str, detail: str | None, target_id: str | None) -> str:
+    """把审计 detail 字段格式化成易读的一行摘要"""
+    parts: list[str] = []
+    if target_id:
+        parts.append(f"#{target_id}")
+    if detail:
+        # detail 大部分时候是 JSON 字符串，能解析就提关键字段，不能就原样截断
+        try:
+            import json as _json
+            data = _json.loads(detail)
+            if isinstance(data, dict):
+                for k, v in list(data.items())[:3]:
+                    parts.append(f"{k}={v}")
+            else:
+                parts.append(str(data)[:80])
+        except Exception:
+            parts.append(detail[:80])
+    return " ".join(parts) if parts else ""
+
+
+@router.callback_query(F.data == "dashboard:enter")
+@admin_required
+async def cb_dashboard_enter(callback: types.CallbackQuery):
+    """数据看板主视图"""
+    tz = timezone(config.timezone)
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+    since_str = (now - timedelta(days=6)).strftime("%Y-%m-%d")  # 含今天共 7 天
+    metrics = await get_dashboard_metrics(today_str, since_str)
+
+    events = metrics["events_today"]
+
+    def _ev(name: str) -> int:
+        return events.get(name, 0)
+
+    lines = [
+        "📊 数据看板",
+        f"📅 {today_str}（近 7 日窗口含今日）",
+        "━━━━━━━━━━━━━━━",
+        "【用户】",
+        f"👥 总用户: {metrics['total_users']}",
+        f"🆕 新增: 今日 {metrics['new_users_today']} / 7日 {metrics['new_users_range']}",
+        f"🟢 活跃: 今日 {metrics['active_today']} / 7日 {metrics['active_range']}",
+        f"🔔 可推送: {metrics['reachable_users']}",
+        "",
+        "【老师】",
+        f"👩‍🏫 启用 / 停用: {metrics['active_teachers']} / {metrics['inactive_teachers']}",
+        f"📈 今日签到: {metrics['checkins_today']}/{metrics['active_teachers']}",
+        f"⭐ 累计收藏关系: {metrics['total_favorites']}",
+        "",
+        "【今日行为】",
+        f"🚪 启动 /start: {_ev('start')}",
+        f"🔍 搜索: {_ev('search')}",
+        f"⭐ 新收藏: {_ev('favorite_add')}",
+        f"🗑 取消收藏: {_ev('favorite_remove')}",
+        f"📚 查看今日开课: {_ev('view_today')}",
+        f"💝 查看收藏开课: {_ev('view_fav_signed_in')}",
+        "",
+        "【运营】",
+        f"📝 待审核: {metrics['pending_reviews']}",
+        f"🚀 今日发布: {metrics['publishes_today']} 条",
+        f"🛡️ 今日管理员操作: {metrics['audits_today']} 次",
+        "━━━━━━━━━━━━━━━",
+    ]
+
+    # 用户行为埋点尚未在所有用户侧入口接入时，给个提示
+    if not events:
+        lines.append("ℹ️ 今日暂无用户事件记录（埋点接入中）")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=dashboard_menu_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "dashboard:audit")
+@admin_required
+async def cb_dashboard_audit(callback: types.CallbackQuery):
+    """管理员操作日志（最近 20 条）"""
+    rows = await list_recent_admin_audits(limit=20)
+    if not rows:
+        await callback.message.edit_text(
+            "📜 操作日志\n\n(暂无记录)",
+            reply_markup=dashboard_audit_back_kb(),
+        )
+        await callback.answer()
+        return
+
+    lines = ["📜 操作日志（最近 20 条）", "━━━━━━━━━━━━━━━"]
+    for r in rows:
+        ts = (r.get("created_at") or "").replace("T", " ")[:19]
+        action_label = _AUDIT_ACTION_LABELS.get(r["action"], r["action"])
+        admin_label = f"@{r['admin_username']}" if r.get("admin_username") else str(r["admin_id"])
+        summary = _format_audit_detail(r["action"], r.get("detail"), r.get("target_id"))
+        line = f"• {ts}  {admin_label}  {action_label}"
+        if summary:
+            line += f"  {summary}"
+        lines.append(line)
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=dashboard_audit_back_kb(),
+    )
+    await callback.answer()
 
 
 # ============ 通用取消 ============

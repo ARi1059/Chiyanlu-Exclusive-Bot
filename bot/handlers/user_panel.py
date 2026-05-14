@@ -1,9 +1,10 @@
-"""普通用户私聊菜单的 callback handlers（v2 §2.5 C1）
+"""普通用户私聊菜单的 callback handlers（v2 §2.5 C1 + Phase 2 详情页接入）
 
-主菜单 4 个按钮:
-    📚 user:today      → 今日所有开课老师（同 14:00 频道发布内容）
-    ⭐ user:favorites  → 我的收藏（Step 2 数据为空，Step 3 后自然填充）
-    💝 user:fav_today  → 收藏 ∩ 已签到（Step 2 数据为空，Step 3 后自然填充）
+主菜单 5 个按钮:
+    📚 user:today      → 今日所有开课老师（点击老师进入 teacher:view 详情页）
+    ⭐ user:favorites  → 我的收藏（老师按钮 → 详情页；❌ → 移除收藏）
+    💝 user:fav_today  → 收藏 ∩ 已签到（老师按钮 → 详情页）
+    🕘 user:recent     → 最近看过（Phase 2 新增；handler 在 teacher_detail.py）
     🔍 user:search     → 进入搜索 FSM（user_search.py 接管）
 
 user:main → 返回主菜单（通用按钮）
@@ -17,6 +18,7 @@ from pytz import timezone
 
 from bot.config import config
 from bot.database import (
+    get_checked_in_teachers,
     list_user_favorites,
     list_user_favorites_signed_in,
 )
@@ -25,10 +27,9 @@ from bot.keyboards.user_kb import (
     back_to_user_main_kb,
     search_cancel_kb,
     my_favorites_kb,
+    teacher_detail_list_kb,
 )
-from bot.scheduler.tasks import build_daily_checkin_payload
 from bot.states.user_states import SearchStates
-from bot.utils.url import normalize_url
 
 router = Router(name="user_panel")
 
@@ -37,30 +38,6 @@ tz = timezone(config.timezone)
 
 def _today_str() -> str:
     return datetime.now(tz).strftime("%Y-%m-%d")
-
-
-def _build_signed_in_buttons_kb(teachers: list[dict]) -> types.InlineKeyboardMarkup:
-    """把"开课老师"列表渲染成按钮组 + 返回主菜单按钮
-
-    每行最多 3 个按钮，跳过 button_url 无效的老师。
-    """
-    buttons: list[list[types.InlineKeyboardButton]] = []
-    row: list[types.InlineKeyboardButton] = []
-    for t in teachers:
-        button_url = normalize_url(t["button_url"])
-        if not button_url:
-            continue
-        button_text = t["button_text"] or t["display_name"]
-        row.append(types.InlineKeyboardButton(text=button_text, url=button_url))
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([
-        types.InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
-    ])
-    return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 # ============ 返回主菜单 ============
@@ -80,10 +57,13 @@ async def cb_user_main(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "user:today")
 async def cb_today(callback: types.CallbackQuery):
-    """展示当天所有已签到老师（同 14:00 频道发布内容）"""
+    """展示当天所有已签到老师（Phase 2：点击进入 teacher:view 详情页）
+
+    频道 14:00 自动发布行为不变（仍使用 build_daily_checkin_payload + URL 按钮）。
+    """
     today = _today_str()
-    payload = await build_daily_checkin_payload(today)
-    if payload is None:
+    teachers = await get_checked_in_teachers(today)
+    if not teachers:
         await callback.message.edit_text(
             f"📚 {today}\n\n今日暂无老师开课。",
             reply_markup=back_to_user_main_kb(),
@@ -91,14 +71,16 @@ async def cb_today(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    text, kb_url_only = payload
-    # 复用 build_daily_checkin_payload 的按钮，再追加"返回主菜单"
-    merged = types.InlineKeyboardMarkup(
-        inline_keyboard=list(kb_url_only.inline_keyboard) + [
-            [types.InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")]
-        ]
+    text = (
+        f"📚 今日开课老师 · {today}（{len(teachers)} 位）\n\n"
+        "点击老师查看详情。"
     )
-    await callback.message.edit_text(text, reply_markup=merged)
+    kb = teacher_detail_list_kb(
+        teachers,
+        per_row=2,
+        label_fn=lambda t: t.get("button_text") or t["display_name"],
+    )
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 
@@ -120,7 +102,10 @@ async def cb_favorites(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    text = f"⭐ 我的收藏（{len(favorites)} 位）\n\n点击老师跳转，点击 ❌ 取消收藏"
+    text = (
+        f"⭐ 我的收藏（{len(favorites)} 位）\n\n"
+        "点击老师查看详情，点击 ❌ 取消收藏。"
+    )
     await callback.message.edit_text(
         text,
         reply_markup=my_favorites_kb(favorites),
@@ -132,7 +117,7 @@ async def cb_favorites(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "user:fav_today")
 async def cb_fav_today(callback: types.CallbackQuery):
-    """收藏老师中当天已签到的（Step 2 数据为空，Step 3 完整启用）"""
+    """收藏老师中当天已签到的（Phase 2：点击进入 teacher:view 详情页）"""
     today = _today_str()
     teachers = await list_user_favorites_signed_in(callback.from_user.id, today)
     if not teachers:
@@ -143,11 +128,16 @@ async def cb_fav_today(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    text = f"💝 收藏开课 · {today}\n\n你收藏的老师中今日开课共 {len(teachers)} 位："
-    await callback.message.edit_text(
-        text,
-        reply_markup=_build_signed_in_buttons_kb(teachers),
+    text = (
+        f"💝 收藏开课 · {today}（{len(teachers)} 位）\n\n"
+        "点击老师查看详情。"
     )
+    kb = teacher_detail_list_kb(
+        teachers,
+        per_row=2,
+        label_fn=lambda t: t.get("button_text") or t["display_name"],
+    )
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 

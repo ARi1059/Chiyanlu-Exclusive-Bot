@@ -1,4 +1,6 @@
-"""普通用户私聊菜单的 inline keyboards（v2 §2.5 C1 私聊冷启动）"""
+"""普通用户私聊菜单的 inline keyboards（v2 §2.5 C1 私聊冷启动 + Phase 2 详情页）"""
+
+from typing import Callable, Optional
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -8,11 +10,12 @@ from bot.utils.url import normalize_url
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单（v2 §2.5.3）"""
+    """普通用户私聊主菜单（v2 §2.5.3 + Phase 2 新增"最近看过"）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📚 今日开课老师", callback_data="user:today")],
         [InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites")],
         [InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today")],
+        [InlineKeyboardButton(text="🕘 最近看过", callback_data="user:recent")],
         [InlineKeyboardButton(text="🔍 搜索老师", callback_data="user:search")],
     ])
 
@@ -34,10 +37,10 @@ def search_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def my_favorites_kb(favorites: list[dict]) -> InlineKeyboardMarkup:
-    """"我的收藏"列表 keyboard（v2 §2.1 F1）
+    """"我的收藏"列表 keyboard（Phase 2：老师按钮进入详情页）
 
     每行：[老师名 · 地区 · 价格] [❌]
-        · 老师按钮：跳转 button_url（URL 无效时退化为带警告文案的 callback no-op）
+        · 老师按钮：进入 teacher:view:<id> 详情页（不再直接跳 URL）
         · ❌ 按钮：fav:rm_from_list:<teacher_id>，favorite handler 接住后取消并刷新列表
     末尾：[🔙 返回主菜单]
 
@@ -46,16 +49,11 @@ def my_favorites_kb(favorites: list[dict]) -> InlineKeyboardMarkup:
     """
     rows: list[list[InlineKeyboardButton]] = []
     for t in favorites:
-        url = normalize_url(t["button_url"])
         label = f"{t['display_name']} · {t['region']} · {t['price']}"
-        if url:
-            teacher_btn = InlineKeyboardButton(text=label, url=url)
-        else:
-            # button_url 无效：用 callback no-op，告知用户链接失效
-            teacher_btn = InlineKeyboardButton(
-                text=f"⚠️ {label}（链接失效）",
-                callback_data="fav:invalid_url",
-            )
+        teacher_btn = InlineKeyboardButton(
+            text=label,
+            callback_data=f"teacher:view:{t['user_id']}",
+        )
         rm_btn = InlineKeyboardButton(
             text="❌",
             callback_data=f"fav:rm_from_list:{t['user_id']}",
@@ -66,3 +64,137 @@ def my_favorites_kb(favorites: list[dict]) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ============ 老师详情页 / 列表（Phase 2） ============
+
+
+def teacher_detail_kb(
+    teacher: dict,
+    *,
+    is_favorited: bool,
+) -> InlineKeyboardMarkup:
+    """老师详情页按钮组（Phase 2）
+
+    布局：
+        [⭐ 收藏 / ✅ 已收藏，点击取消]
+        [📩 联系老师]  ← button_url 有效时显示，否则该行省略
+        [🔙 返回主菜单]
+    """
+    teacher_id = teacher["user_id"]
+    fav_text = "✅ 已收藏，点击取消" if is_favorited else "⭐ 收藏"
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(
+            text=fav_text,
+            callback_data=f"teacher:toggle_fav:{teacher_id}",
+        )],
+    ]
+    url = normalize_url(teacher["button_url"])
+    if url:
+        button_text = teacher.get("button_text") or teacher["display_name"]
+        rows.append([InlineKeyboardButton(
+            text=f"📩 联系 {button_text}",
+            url=url,
+        )])
+    rows.append([
+        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def teacher_detail_list_kb(
+    teachers: list[dict],
+    *,
+    per_row: int = 1,
+    label_fn: Optional[Callable[[dict], str]] = None,
+    extra_back_buttons: Optional[list[list[InlineKeyboardButton]]] = None,
+) -> InlineKeyboardMarkup:
+    """老师列表 keyboard：每个按钮进入 teacher:view 详情页
+
+    Args:
+        teachers: 老师 dict 列表
+        per_row: 每行多少个老师按钮（默认 1）
+        label_fn: 自定义按钮文案，默认为 display_name
+        extra_back_buttons: 自定义返回按钮行；默认仅一行"🔙 返回主菜单"
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for t in teachers:
+        label = label_fn(t) if label_fn else t["display_name"]
+        row.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"teacher:view:{t['user_id']}",
+        ))
+        if len(row) == per_row:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    if extra_back_buttons:
+        rows.extend(extra_back_buttons)
+    else:
+        rows.append([
+            InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def recent_views_kb(views: list[dict]) -> InlineKeyboardMarkup:
+    """最近浏览列表 keyboard（Phase 2）
+
+    每行一位老师，文案 `{display_name} · {region} · {price}`，点击进 teacher:view 详情页。
+    """
+    return teacher_detail_list_kb(
+        views,
+        per_row=1,
+        label_fn=lambda t: f"{t['display_name']} · {t['region']} · {t['price']}",
+    )
+
+
+# ============ 搜索失败推荐 / 搜索结果（Phase 2） ============
+
+
+def search_suggestion_kb(keywords: list[str]) -> InlineKeyboardMarkup:
+    """搜索 0 结果时的推荐键盘（Phase 2）
+
+    布局：
+        [📚 今日开课] [🔥 热门老师]
+        [关键词1] [关键词2]
+        [关键词3] [关键词4]
+        ...
+        [🔙 返回搜索] [🏠 返回主菜单]
+    """
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="📚 今日开课", callback_data="search:suggest:today"),
+            InlineKeyboardButton(text="🔥 热门老师", callback_data="search:suggest:hot"),
+        ],
+    ]
+    row: list[InlineKeyboardButton] = []
+    for kw in keywords:
+        row.append(InlineKeyboardButton(
+            text=kw,
+            callback_data=f"search:suggest:{kw}",
+        ))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(text="🔙 返回搜索", callback_data="user:search"),
+        InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def suggestion_result_back_kb() -> InlineKeyboardMarkup:
+    """推荐子页（今日 / 热门 / 单关键词）的返回按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔙 返回搜索", callback_data="user:search"),
+            InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main"),
+        ],
+    ])
