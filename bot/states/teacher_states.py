@@ -84,3 +84,14 @@ class PublishTemplateStates(StatesGroup):
     waiting_create_text = State()
     waiting_edit_text = State()
     waiting_set_default_id = State()
+
+
+class ReportSettingsStates(StatesGroup):
+    """报表设置 FSM（Phase 6.3）
+
+    分 4 类输入：日报时间 / 周报时间 / 周报星期(1-7) / 接收 chat_id
+    """
+    waiting_daily_time = State()
+    waiting_weekly_time = State()
+    waiting_weekly_day = State()
+    waiting_chat_id = State()

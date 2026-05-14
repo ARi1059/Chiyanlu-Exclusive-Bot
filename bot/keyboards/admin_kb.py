@@ -34,7 +34,20 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status"),
             InlineKeyboardButton(text="🏷 用户画像", callback_data="admin:user_tags"),
         ],
-        [InlineKeyboardButton(text="📝 发布模板", callback_data="admin:publish_templates")],
+        [
+            InlineKeyboardButton(text="📝 发布模板", callback_data="admin:publish_templates"),
+            InlineKeyboardButton(text="📨 报表设置", callback_data="admin:report_settings"),
+        ],
+    ])
+
+
+# ============ 报表设置（Phase 6.3） ============
+
+
+def report_settings_cancel_kb() -> InlineKeyboardMarkup:
+    """报表设置 FSM 输入页的取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:report_settings")],
     ])
 
 

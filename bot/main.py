@@ -14,6 +14,7 @@ from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
+from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
@@ -25,7 +26,12 @@ from bot.handlers.teacher_self import router as teacher_self_router
 from bot.handlers.user_panel import router as user_panel_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
-from bot.scheduler.tasks import schedule_daily_publish, schedule_checkin_reminder
+from bot.scheduler.tasks import (
+    schedule_checkin_reminder,
+    schedule_daily_publish,
+    schedule_daily_report,
+    schedule_weekly_report,
+)
 
 # 日志配置
 logging.basicConfig(
@@ -50,9 +56,12 @@ async def on_startup():
     # 配置定时任务
     publish_time = await schedule_daily_publish(scheduler, bot)
     reminder_time = await schedule_checkin_reminder(scheduler, bot)
+    daily_report_time = await schedule_daily_report(scheduler, bot)
+    weekly_report_time = await schedule_weekly_report(scheduler, bot)
     scheduler.start()
     logger.info(
-        f"定时任务已启动，发布时间: {publish_time}，签到提醒时间: {reminder_time} ({config.timezone})"
+        f"定时任务已启动，发布时间: {publish_time}，签到提醒时间: {reminder_time}，"
+        f"日报: {daily_report_time}，周报: {weekly_report_time} ({config.timezone})"
     )
 
     me = await bot.get_me()
@@ -99,6 +108,10 @@ async def main():
     # admin:publish_templates / :list / :create / :edit_default / :set_default
     # PublishTemplateStates 4 个状态保证文字消息仅在 FSM 中被截获
     dp.include_router(publish_templates_router)
+    # report_settings_router（Phase 6.3）：
+    # admin:report_settings / admin:report:* + 4 个 FSM 状态
+    # ReportSettingsStates 保证文字消息只在 FSM 中被截获
+    dp.include_router(report_settings_router)
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 import aiosqlite
 import os
 from bot.config import config
+
+logger = logging.getLogger(__name__)
 
 
 async def get_db() -> aiosqlite.Connection:
@@ -2536,3 +2539,274 @@ async def get_publish_template(template_id: int) -> Optional[dict]:
         return dict(row) if row else None
     finally:
         await db.close()
+
+
+# ============ 报表统计 (Phase 6.3) ============
+
+
+async def _existing_tables(db: aiosqlite.Connection) -> set:
+    """返回当前数据库中已存在的表名集合"""
+    cur = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )
+    return {row["name"] for row in await cur.fetchall()}
+
+
+async def _existing_columns(db: aiosqlite.Connection, table: str) -> set:
+    """返回某表的字段名集合；表不存在时返回空集合"""
+    try:
+        cur = await db.execute(f"PRAGMA table_info({table})")
+        return {row["name"] for row in await cur.fetchall()}
+    except Exception:
+        return set()
+
+
+async def get_report_stats(start_date: str, end_date: str) -> dict:
+    """聚合日报 / 周报所需统计（Phase 6.3 §三）
+
+    Args:
+        start_date / end_date: 'YYYY-MM-DD' 闭区间
+        日报时 start == end；周报时通常 start = end - 6 天
+
+    返回 10 个字段：
+        new_users / active_users / search_count / favorite_add_count /
+        teacher_view_count / today_checkin_count /
+        top_teachers / top_search_keywords / top_user_tags / top_sources
+
+    兼容降级：所有指标在数据来源缺失 / 查询异常时返回 0 或 []，
+    绝不抛异常。一项失败不影响其他指标。
+    """
+    result = {
+        "new_users": 0,
+        "active_users": 0,
+        "search_count": 0,
+        "favorite_add_count": 0,
+        "teacher_view_count": 0,
+        "today_checkin_count": 0,
+        "top_teachers": [],
+        "top_search_keywords": [],
+        "top_user_tags": [],
+        "top_sources": [],
+    }
+
+    db = await get_db()
+    try:
+        tables = await _existing_tables(db)
+
+        # 1. new_users —— users.created_at 在闭区间内
+        if "users" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM users "
+                    "WHERE DATE(created_at) >= ? AND DATE(created_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["new_users"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("new_users 查询失败: %s", e)
+
+        # 2. active_users —— user_events 区间内 distinct user_id
+        if "user_events" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(DISTINCT user_id) AS n FROM user_events "
+                    "WHERE DATE(created_at) >= ? AND DATE(created_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["active_users"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("active_users 查询失败: %s", e)
+
+        # 3. search_count —— user_events event_type='search'
+        if "user_events" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM user_events "
+                    "WHERE event_type = 'search' "
+                    "AND DATE(created_at) >= ? AND DATE(created_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["search_count"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("search_count 查询失败: %s", e)
+
+        # 4. favorite_add_count —— 先看 user_events，0 时降级到 favorites.created_at
+        if "user_events" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM user_events "
+                    "WHERE event_type = 'favorite_add' "
+                    "AND DATE(created_at) >= ? AND DATE(created_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["favorite_add_count"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("favorite_add_count(user_events) 失败: %s", e)
+        if result["favorite_add_count"] == 0 and "favorites" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM favorites "
+                    "WHERE DATE(created_at) >= ? AND DATE(created_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["favorite_add_count"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("favorite_add_count(favorites) 失败: %s", e)
+
+        # 5. teacher_view_count —— 先 user_events (view_teacher/teacher_view)，0 时降级 user_teacher_views
+        if "user_events" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM user_events "
+                    "WHERE event_type IN ('view_teacher', 'teacher_view') "
+                    "AND DATE(created_at) >= ? AND DATE(created_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["teacher_view_count"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("teacher_view_count(user_events) 失败: %s", e)
+        if result["teacher_view_count"] == 0 and "user_teacher_views" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM user_teacher_views "
+                    "WHERE DATE(viewed_at) >= ? AND DATE(viewed_at) <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["teacher_view_count"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("teacher_view_count(user_teacher_views) 失败: %s", e)
+
+        # 6. today_checkin_count —— checkins.checkin_date 在闭区间内
+        if "checkins" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS n FROM checkins "
+                    "WHERE checkin_date >= ? AND checkin_date <= ?",
+                    (start_date, end_date),
+                )
+                row = await cur.fetchone()
+                result["today_checkin_count"] = int(row["n"] or 0) if row else 0
+            except Exception as e:
+                logger.debug("today_checkin_count 查询失败: %s", e)
+
+        # 7. top_teachers —— 综合 hot_score + 收藏数
+        if "teachers" in tables:
+            try:
+                t_cols = await _existing_columns(db, "teachers")
+                score_parts: list[str] = []
+                if "hot_score" in t_cols:
+                    score_parts.append("COALESCE(t.hot_score, 0)")
+                if "favorites" in tables:
+                    score_parts.append(
+                        "(SELECT COUNT(*) FROM favorites WHERE teacher_id = t.user_id)"
+                    )
+                if not score_parts:
+                    score_parts = ["0"]
+                score_expr = " + ".join(score_parts)
+
+                order_parts: list[str] = []
+                if "hot_score" in t_cols:
+                    order_parts.append("COALESCE(t.hot_score, 0) DESC")
+                if "sort_weight" in t_cols:
+                    order_parts.append("COALESCE(t.sort_weight, 0) DESC")
+                if "favorites" in tables:
+                    order_parts.append(
+                        "(SELECT COUNT(*) FROM favorites WHERE teacher_id = t.user_id) DESC"
+                    )
+                order_parts.append("t.created_at ASC")
+                order_sql = ", ".join(order_parts)
+
+                cur = await db.execute(
+                    f"SELECT t.display_name, ({score_expr}) AS score "
+                    "FROM teachers t WHERE t.is_active = 1 "
+                    f"ORDER BY {order_sql} LIMIT 10"
+                )
+                rows = await cur.fetchall()
+                result["top_teachers"] = [
+                    {"display_name": r["display_name"], "score": int(r["score"] or 0)}
+                    for r in rows
+                    if r["display_name"] and int(r["score"] or 0) > 0
+                ]
+            except Exception as e:
+                logger.warning("top_teachers 查询失败: %s", e)
+
+        # 8. top_search_keywords —— 解析 user_events event_type='search' 的 payload.tokens
+        if "user_events" in tables:
+            try:
+                cur = await db.execute(
+                    "SELECT payload FROM user_events "
+                    "WHERE event_type = 'search' "
+                    "AND DATE(created_at) >= ? AND DATE(created_at) <= ? "
+                    "AND payload IS NOT NULL",
+                    (start_date, end_date),
+                )
+                rows = await cur.fetchall()
+                from collections import Counter
+                counter: Counter = Counter()
+                for r in rows:
+                    payload = r["payload"]
+                    if not payload:
+                        continue
+                    try:
+                        data = json.loads(payload)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    tokens = None
+                    if isinstance(data, dict):
+                        tokens = data.get("tokens") or data.get("keywords")
+                    if isinstance(tokens, list):
+                        for tok in tokens:
+                            s = str(tok or "").strip()
+                            if s:
+                                counter[s] += 1
+                result["top_search_keywords"] = [
+                    {"keyword": k, "count": c}
+                    for k, c in counter.most_common(10)
+                ]
+            except Exception as e:
+                logger.warning("top_search_keywords 查询失败: %s", e)
+
+        # 9. top_user_tags —— 直接复用 Phase 6.1 表
+        if "user_tags" in tables:
+            try:
+                cur = await db.execute(
+                    """SELECT tag,
+                              COUNT(DISTINCT user_id) AS user_count,
+                              SUM(score) AS total_score
+                       FROM user_tags
+                       GROUP BY tag
+                       ORDER BY total_score DESC, user_count DESC
+                       LIMIT 10"""
+                )
+                rows = await cur.fetchall()
+                result["top_user_tags"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("top_user_tags 查询失败: %s", e)
+
+        # 10. top_sources —— 直接 user_sources 聚合
+        if "user_sources" in tables:
+            try:
+                cur = await db.execute(
+                    """SELECT source_type, source_id,
+                              MAX(source_name) AS source_name,
+                              COUNT(DISTINCT user_id) AS user_count
+                       FROM user_sources
+                       GROUP BY source_type, source_id
+                       ORDER BY user_count DESC
+                       LIMIT 10"""
+                )
+                rows = await cur.fetchall()
+                result["top_sources"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("top_sources 查询失败: %s", e)
+    finally:
+        await db.close()
+
+    return result

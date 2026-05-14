@@ -114,6 +114,187 @@ async def reload_checkin_reminder() -> Optional[str]:
     return await schedule_checkin_reminder(_scheduler, _bot)
 
 
+# ============ 日报 / 周报定时任务 (Phase 6.3) ============
+
+
+async def get_daily_report_time() -> str:
+    """读取日报时间配置（HH:MM），缺失则 23:30"""
+    return await get_config("daily_report_time") or "23:30"
+
+
+async def get_weekly_report_time() -> str:
+    """读取周报时间配置（HH:MM），缺失则 23:00"""
+    return await get_config("weekly_report_time") or "23:00"
+
+
+async def get_weekly_report_day() -> int:
+    """读取周报星期配置 1-7（1=周一,7=周日），缺失或非法则 7"""
+    raw = await get_config("weekly_report_day")
+    if raw:
+        try:
+            v = int(raw)
+            if 1 <= v <= 7:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return 7
+
+
+async def _resolve_report_chat_id() -> int:
+    """report_chat_id 解析：config.report_chat_id → super_admin_id 兜底"""
+    raw = await get_config("report_chat_id")
+    if raw:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    return int(config.super_admin_id)
+
+
+async def schedule_daily_report(scheduler, bot: Bot) -> str:
+    """注册（或重载）日报 cron 任务（Phase 6.3 §五）
+
+    返回生效的发送时间字符串。
+    """
+    global _scheduler, _bot
+    _scheduler = scheduler
+    _bot = bot
+
+    time_str = await get_daily_report_time()
+    try:
+        hour, minute = map(int, time_str.split(":"))
+    except (ValueError, TypeError):
+        hour, minute = 23, 30
+        time_str = "23:30"
+
+    scheduler.add_job(
+        send_daily_report,
+        "cron",
+        hour=hour,
+        minute=minute,
+        args=[bot],
+        id="daily_report",
+        replace_existing=True,
+    )
+    return time_str
+
+
+async def reload_daily_report() -> Optional[str]:
+    """重载已注册的日报任务"""
+    if _scheduler is None or _bot is None:
+        return None
+    return await schedule_daily_report(_scheduler, _bot)
+
+
+async def schedule_weekly_report(scheduler, bot: Bot) -> str:
+    """注册（或重载）周报 cron 任务（Phase 6.3 §五）
+
+    周报日期约定：1=Mon..7=Sun（spec），APScheduler 内部 0=Mon..6=Sun → 转换 -1。
+    返回生效的发送时间字符串（不含星期）。
+    """
+    global _scheduler, _bot
+    _scheduler = scheduler
+    _bot = bot
+
+    time_str = await get_weekly_report_time()
+    try:
+        hour, minute = map(int, time_str.split(":"))
+    except (ValueError, TypeError):
+        hour, minute = 23, 0
+        time_str = "23:00"
+
+    day_1to7 = await get_weekly_report_day()
+    aps_day = (day_1to7 - 1) % 7  # APScheduler: 0=Mon..6=Sun
+
+    scheduler.add_job(
+        send_weekly_report,
+        "cron",
+        day_of_week=aps_day,
+        hour=hour,
+        minute=minute,
+        args=[bot],
+        id="weekly_report",
+        replace_existing=True,
+    )
+    return time_str
+
+
+async def reload_weekly_report() -> Optional[str]:
+    """重载已注册的周报任务"""
+    if _scheduler is None or _bot is None:
+        return None
+    return await schedule_weekly_report(_scheduler, _bot)
+
+
+async def send_daily_report(bot: Bot, force: bool = False) -> bool:
+    """生成并发送日报（Phase 6.3 §五）
+
+    Args:
+        force=True 时绕过 daily_report_enabled 检查（用于管理员立即测试）
+
+    定时执行路径：force=False；
+    管理员"立即测试"路径：force=True。
+
+    返回 True 表示已发送；False 表示跳过 / 失败。
+    """
+    if not force:
+        enabled = (await get_config("daily_report_enabled")) == "1"
+        if not enabled:
+            logger.info("日报未启用，跳过本次执行")
+            return False
+
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+
+    try:
+        from bot.utils.reports import build_daily_report_text
+        text = await build_daily_report_text(today_str)
+    except Exception as e:
+        logger.warning("构建日报文本失败: %s", e)
+        return False
+
+    chat_id = await _resolve_report_chat_id()
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
+        logger.info("[%s] 日报已发送到 %s", today_str, chat_id)
+        return True
+    except Exception as e:
+        logger.warning("发送日报失败 chat=%s: %s", chat_id, e)
+        return False
+
+
+async def send_weekly_report(bot: Bot, force: bool = False) -> bool:
+    """生成并发送周报（Phase 6.3 §五）
+
+    覆盖时间窗口：最近 7 天（含今天），start = today-6, end = today。
+    """
+    if not force:
+        enabled = (await get_config("weekly_report_enabled")) == "1"
+        if not enabled:
+            logger.info("周报未启用，跳过本次执行")
+            return False
+
+    now = datetime.now(tz)
+    end_str = now.strftime("%Y-%m-%d")
+    start_str = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+
+    try:
+        from bot.utils.reports import build_weekly_report_text
+        text = await build_weekly_report_text(start_str, end_str)
+    except Exception as e:
+        logger.warning("构建周报文本失败: %s", e)
+        return False
+
+    chat_id = await _resolve_report_chat_id()
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
+        logger.info("[%s ~ %s] 周报已发送到 %s", start_str, end_str, chat_id)
+        return True
+    except Exception as e:
+        logger.warning("发送周报失败 chat=%s: %s", chat_id, e)
+        return False
+
+
 async def send_checkin_reminders(bot: Bot):
     """给当天未签到的启用老师发送私聊提醒"""
     if not await is_checkin_reminder_enabled():
