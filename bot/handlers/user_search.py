@@ -24,6 +24,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.database import (
+    add_user_tag,
     get_checked_in_teachers,
     get_teacher_by_name,
     is_effective_featured,
@@ -158,6 +159,19 @@ async def _send_list(message: types.Message, teachers: list[dict]) -> None:
     await message.answer(text, reply_markup=kb)
 
 
+async def _record_search_tags(user_id: int, tokens: list[str]) -> None:
+    """Phase 6.1：把每个搜索 token 沉淀为用户画像标签 + 搜索型用户角色画像
+
+    异常静默吞（标签写入不能阻断搜索结果展示）。
+    """
+    try:
+        for tok in tokens:
+            await add_user_tag(user_id, tok, score_delta=1, source="search")
+        await add_user_tag(user_id, "搜索型用户", score_delta=1, source="search")
+    except Exception:
+        pass
+
+
 async def _execute_search(
     user_id: int,
     raw_query: str,
@@ -182,6 +196,8 @@ async def _execute_search(
     # 1. 艺名精确匹配 → 详情页
     teacher = await get_teacher_by_name(raw)
     if teacher:
+        # Phase 6.1：艺名搜索也记一个搜索型用户标签
+        await _record_search_tags(user_id, [])
         await send_teacher_detail_message(
             target_message, user_id, teacher, record_view=True,
         )
@@ -195,6 +211,9 @@ async def _execute_search(
             reply_markup=search_cancel_kb(),
         )
         return
+
+    # Phase 6.1：搜索 token → 用户画像标签（仅私聊场景，已在调用方过滤）
+    await _record_search_tags(user_id, tokens)
 
     teachers, unrecognized = await search_teachers_smart_and(tokens)
 

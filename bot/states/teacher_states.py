@@ -66,3 +66,8 @@ class TeacherDailyStatusStates(StatesGroup):
     """老师每日状态：自定义时间 / 取消原因 输入（Phase 5）"""
     waiting_custom_time = State()       # 自定义时间段文字
     waiting_cancel_reason = State()     # 取消原因（可选）
+
+
+class UserTagsQueryStates(StatesGroup):
+    """管理员查标签用户 FSM（Phase 6.1）"""
+    waiting_tag = State()

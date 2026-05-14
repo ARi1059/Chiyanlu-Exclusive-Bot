@@ -30,6 +30,7 @@ from bot.database import (
     list_recent_teacher_views,
     record_teacher_view,
     toggle_favorite,
+    update_user_tags_from_teacher_action,
     upsert_user,
 )
 from bot.keyboards.user_kb import (
@@ -142,6 +143,10 @@ async def send_teacher_detail_message(
     await message.answer(text, reply_markup=kb)
     if record_view:
         await record_teacher_view(user_id, teacher["user_id"])
+        # Phase 6.1：用户画像 view_teacher 动作
+        await update_user_tags_from_teacher_action(
+            user_id, teacher["user_id"], "view_teacher",
+        )
 
 
 async def _render_detail(
@@ -165,6 +170,10 @@ async def _render_detail(
 
     if record_view:
         await record_teacher_view(user.id, teacher_id)
+        # Phase 6.1：用户画像 view_teacher 动作
+        await update_user_tags_from_teacher_action(
+            user.id, teacher_id, "view_teacher",
+        )
 
     text, kb = await _build_detail_payload(user.id, teacher)
     try:
@@ -223,6 +232,10 @@ async def cb_teacher_toggle_fav(callback: types.CallbackQuery):
 
     is_fav_now = await toggle_favorite(user.id, teacher_id)
     if is_fav_now:
+        # Phase 6.1：仅收藏成功时累加画像分；取消不扣分
+        await update_user_tags_from_teacher_action(
+            user.id, teacher_id, "favorite_add",
+        )
         await callback.answer(f"✅ 已收藏 {teacher['display_name']}")
     else:
         await callback.answer(f"已取消收藏 {teacher['display_name']}")

@@ -179,6 +179,20 @@ async def init_db():
                 ON teacher_daily_status(status_date);
             CREATE INDEX IF NOT EXISTS idx_daily_status_date_status
                 ON teacher_daily_status(status_date, status);
+
+            CREATE TABLE IF NOT EXISTS user_tags (
+                user_id INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                score INTEGER DEFAULT 1,
+                source TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, tag)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_tags_tag
+                ON user_tags(tag);
+            CREATE INDEX IF NOT EXISTS idx_user_tags_user
+                ON user_tags(user_id);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -2068,3 +2082,202 @@ async def mark_teacher_full_today(
         status="full",
         note=note,
     )
+
+
+# ============ 用户画像标签 (Phase 6.1) ============
+
+
+async def add_user_tag(
+    user_id: int,
+    tag: str,
+    score_delta: int = 1,
+    source: Optional[str] = None,
+) -> None:
+    """记一次用户画像标签（Phase 6.1 §三）
+
+    UPSERT 语义：
+        - tag 自动 strip；空 tag 直接返回（不写入）
+        - score_delta < 1 时按 1 处理（最小累积单位）
+        - 若 (user_id, tag) 已存在：score += score_delta，source 优先采用新值
+          （传 None 时保留旧 source，便于追踪首次来源）
+        - 否则插入新行 score = score_delta
+
+    内部异常静默吞掉，标签写入失败不能影响主业务流程。
+    """
+    if tag is None:
+        return
+    t = str(tag).strip()
+    if not t:
+        return
+    delta = int(score_delta) if score_delta else 1
+    if delta < 1:
+        delta = 1
+
+    try:
+        db = await get_db()
+        try:
+            await db.execute(
+                """INSERT INTO user_tags (user_id, tag, score, source, updated_at)
+                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(user_id, tag) DO UPDATE SET
+                       score = score + ?,
+                       source = COALESCE(excluded.source, source),
+                       updated_at = CURRENT_TIMESTAMP""",
+                (user_id, t, delta, source, delta),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception:
+        pass
+
+
+async def get_user_tags(user_id: int, limit: int = 20) -> list[dict]:
+    """某个用户的画像标签，按 score DESC, updated_at DESC（Phase 6.1 §三）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT user_id, tag, score, source, updated_at
+               FROM user_tags
+               WHERE user_id = ?
+               ORDER BY score DESC, updated_at DESC
+               LIMIT ?""",
+            (user_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_top_user_tags(limit: int = 20) -> list[dict]:
+    """全站最热门用户画像标签 TOP N（Phase 6.1 §三）
+
+    返回字段：tag / user_count / total_score
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT tag,
+                      COUNT(DISTINCT user_id) AS user_count,
+                      SUM(score) AS total_score
+               FROM user_tags
+               GROUP BY tag
+               ORDER BY total_score DESC, user_count DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_users_by_tag(tag: str, limit: int = 50) -> list[dict]:
+    """拥有某标签的用户列表，LEFT JOIN users 取 username / first_name（Phase 6.1 §三）
+
+    users 表不存在时 LEFT JOIN 会让两列返回 None，不影响展示。
+    """
+    if not tag:
+        return []
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT ut.user_id AS user_id,
+                      ut.tag AS tag,
+                      ut.score AS score,
+                      ut.source AS source,
+                      ut.updated_at AS updated_at,
+                      u.username AS username,
+                      u.first_name AS first_name
+               FROM user_tags ut
+               LEFT JOIN users u ON ut.user_id = u.user_id
+               WHERE ut.tag = ?
+               ORDER BY ut.score DESC, ut.updated_at DESC
+               LIMIT ?""",
+            (str(tag).strip(), limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+def infer_tags_from_teacher(teacher: dict) -> list[str]:
+    """纯函数：从老师资料中提取用户画像标签（Phase 6.1 §三）
+
+    抽取顺序：tags JSON 数组 → region → price
+    返回去空 / 去重的字符串列表，保留原中文文本。
+    JSON 解析失败时跳过 tags 部分，不抛异常。
+    """
+    if not teacher:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _add(val) -> None:
+        if val is None:
+            return
+        s = str(val).strip()
+        if not s or s in seen:
+            return
+        seen.add(s)
+        out.append(s)
+
+    try:
+        raw_tags = teacher.get("tags")
+        if raw_tags:
+            parsed = json.loads(raw_tags)
+            if isinstance(parsed, list):
+                for t in parsed:
+                    _add(t)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    _add(teacher.get("region"))
+    _add(teacher.get("price"))
+    return out
+
+
+# 动作权重表：(老师标签/地区/价格权重, 角色画像标签 + 权重, source 标识)
+_TEACHER_ACTION_WEIGHTS: dict[str, tuple[int, str, int, str]] = {
+    "view_teacher":   (1, "浏览型用户", 1, "view_teacher"),
+    "favorite_add":   (3, "收藏型用户", 2, "favorite"),
+    "booking_intent": (5, "高意向用户", 5, "booking_intent"),
+}
+
+
+async def update_user_tags_from_teacher_action(
+    user_id: int,
+    teacher_id: int,
+    action: str,
+) -> None:
+    """根据老师 + 动作给用户加画像标签（Phase 6.1 §三 §6）
+
+    完整流程：
+        1. 取老师；不存在直接返回（不报错）
+        2. 通过 infer_tags_from_teacher 取标签集
+        3. 按 action 派生权重 + 附加角色标签
+        4. 调 add_user_tag 累加
+
+    全程包在 try/except 里，不允许阻断主业务。
+    """
+    if not action:
+        return
+    weights = _TEACHER_ACTION_WEIGHTS.get(action)
+    if not weights:
+        return
+    tag_weight, persona_tag, persona_weight, source = weights
+
+    try:
+        teacher = await get_teacher(teacher_id)
+        if not teacher:
+            return
+        tags = infer_tags_from_teacher(teacher)
+        for t in tags:
+            await add_user_tag(user_id, t, score_delta=tag_weight, source=source)
+        await add_user_tag(
+            user_id, persona_tag, score_delta=persona_weight, source=source,
+        )
+    except Exception:
+        pass

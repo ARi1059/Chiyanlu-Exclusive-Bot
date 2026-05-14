@@ -36,10 +36,12 @@ from aiogram.fsm.context import FSMContext
 from bot.config import config
 from bot.database import (
     add_favorite,
+    add_user_tag,
     get_teacher,
     is_admin,
     mark_user_started,
     record_user_source,
+    update_user_tags_from_teacher_action,
     upsert_user,
 )
 from bot.keyboards.admin_kb import main_menu_kb
@@ -179,7 +181,7 @@ async def _is_admin_user(user_id: int) -> bool:
 
 
 async def _track_source_if_any(user_id: int, parsed: dict) -> None:
-    """如果 parsed 含来源信息，记录 user_sources + user_events。
+    """如果 parsed 含来源信息，记录 user_sources + user_events + 用户画像标签。
     全程吞异常，绝不上抛。
     """
     stype = parsed.get("source_type")
@@ -207,6 +209,25 @@ async def _track_source_if_any(user_id: int, parsed: dict) -> None:
         event_type="source_enter",
         payload={"type": stype, "id": sid, "raw": raw},
     )
+
+    # Phase 6.1：根据来源类型沉淀用户画像标签
+    try:
+        if stype == "teacher":
+            # teacher 来源：复用 view_teacher 权重（老师标签/地区/价格 +1 + 浏览型用户 +1）
+            try:
+                tid_int = int(sid) if sid is not None else None
+            except (ValueError, TypeError):
+                tid_int = None
+            if tid_int is not None:
+                await update_user_tags_from_teacher_action(
+                    user_id, tid_int, "view_teacher",
+                )
+        elif stype in ("group", "channel", "campaign", "invite"):
+            await add_user_tag(user_id, f"来源:{stype}", 1, "source")
+            await add_user_tag(user_id, "新用户来源触达", 1, "source")
+        # unknown 来源不写画像（噪音太大）
+    except Exception as e:
+        logger.debug("用户画像写入失败 (source=%s): %s", stype, e)
 
 
 # ============ /start handlers ============

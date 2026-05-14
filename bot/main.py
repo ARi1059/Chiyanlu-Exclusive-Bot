@@ -17,6 +17,7 @@ from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
 from bot.handlers.teacher_detail import router as teacher_detail_router
+from bot.handlers.user_tags import router as user_tags_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
 from bot.handlers.teacher_self import router as teacher_self_router
@@ -89,6 +90,10 @@ async def main():
     # 注册位置：在 teacher_self / user_panel / keyword 之前，保证 teacher:*/admin:today_status
     # callback 命名空间清晰；TeacherDailyStatusStates 保证文字消息仅在 FSM 中被截获
     dp.include_router(teacher_daily_status_router)
+    # user_tags_router（Phase 6.1）：
+    # admin:user_tags / admin:user_tags:query + 查询标签用户 FSM
+    # UserTagsQueryStates 保证文字消息仅在 FSM 状态下被截获
+    dp.include_router(user_tags_router)
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)

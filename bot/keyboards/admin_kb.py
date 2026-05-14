@@ -30,7 +30,10 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔗 推广链接", callback_data="admin:promo_links"),
             InlineKeyboardButton(text="📈 渠道统计", callback_data="admin:source_stats"),
         ],
-        [InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status")],
+        [
+            InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status"),
+            InlineKeyboardButton(text="🏷 用户画像", callback_data="admin:user_tags"),
+        ],
     ])
 
 
@@ -44,6 +47,38 @@ def admin_today_status_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:today_status"),
             InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main"),
         ],
+    ])
+
+
+# ============ 用户画像看板（Phase 6.1） ============
+
+
+def user_tags_menu_kb() -> InlineKeyboardMarkup:
+    """用户画像看板主面板"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 查询标签用户", callback_data="admin:user_tags:query")],
+        [
+            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:user_tags"),
+            InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main"),
+        ],
+    ])
+
+
+def user_tags_query_cancel_kb() -> InlineKeyboardMarkup:
+    """查询标签用户 FSM 取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:user_tags")],
+    ])
+
+
+def user_tags_query_result_kb() -> InlineKeyboardMarkup:
+    """标签用户查询结果页：再查 / 返回看板 / 返回主菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔍 再查一个", callback_data="admin:user_tags:query"),
+            InlineKeyboardButton(text="🔙 返回看板", callback_data="admin:user_tags"),
+        ],
+        [InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main")],
     ])
 
 

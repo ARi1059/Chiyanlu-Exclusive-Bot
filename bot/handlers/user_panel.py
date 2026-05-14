@@ -18,6 +18,7 @@ from pytz import timezone
 
 from bot.config import config
 from bot.database import (
+    add_user_tag,
     get_checked_in_teachers,
     get_display_time_group,
     get_sorted_teachers,
@@ -168,6 +169,13 @@ async def cb_today(callback: types.CallbackQuery):
             "user_view_today",
             {"date": today, "count": len(teachers)},
         )
+    except Exception:
+        pass
+
+    # Phase 6.1：今日开课关注者 + 活跃用户画像标签
+    try:
+        await add_user_tag(callback.from_user.id, "今日开课关注者", 1, "today")
+        await add_user_tag(callback.from_user.id, "活跃用户", 1, "today")
     except Exception:
         pass
 

@@ -20,6 +20,7 @@ from bot.database import (
     list_user_favorites,
     remove_favorite,
     toggle_favorite,
+    update_user_tags_from_teacher_action,
     upsert_user,
 )
 from bot.keyboards.user_kb import back_to_user_main_kb, my_favorites_kb
@@ -99,6 +100,12 @@ async def cb_fav_toggle(callback: types.CallbackQuery):
 
     started_bot = await _ensure_user_record(user)
     is_fav_now = await toggle_favorite(user_id, teacher_id)
+
+    # Phase 6.1：仅收藏成功时累加画像分；取消不扣分（群组 + 私聊卡片通用）
+    if is_fav_now:
+        await update_user_tags_from_teacher_action(
+            user_id, teacher_id, "favorite_add",
+        )
 
     is_group = _is_group_chat(callback.message)
 
