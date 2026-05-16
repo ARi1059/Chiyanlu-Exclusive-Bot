@@ -5183,3 +5183,116 @@ async def list_active_or_scheduled_lotteries() -> list[dict]:
         return [_parse_lottery_row(dict(r)) for r in rows]
     finally:
         await db.close()
+
+
+async def list_lottery_entries_for_draw(lottery_id: int) -> list[dict]:
+    """开奖时取所有 entries（按 id 单调，CSPRNG 不依赖顺序）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM lottery_entries WHERE lottery_id = ? ORDER BY id",
+            (lottery_id,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def mark_lottery_entries_won(entry_ids: list[int]) -> int:
+    """标记 winners（won=1）；返回更新行数"""
+    if not entry_ids:
+        return 0
+    db = await get_db()
+    try:
+        placeholders = ",".join("?" * len(entry_ids))
+        await db.execute(
+            f"UPDATE lottery_entries SET won = 1 WHERE id IN ({placeholders})",
+            list(entry_ids),
+        )
+        await db.commit()
+        return db.total_changes
+    finally:
+        await db.close()
+
+
+async def mark_lottery_drawn(
+    lottery_id: int,
+    result_msg_id: Optional[int] = None,
+) -> bool:
+    """开奖完成：status active → drawn + drawn_at（含 result_msg_id 可选）
+
+    防重：仅 active 可改；drawn / cancelled / no_entries 保持原状。
+    """
+    db = await get_db()
+    try:
+        if result_msg_id is not None:
+            await db.execute(
+                "UPDATE lotteries SET status = 'drawn', "
+                "drawn_at = CURRENT_TIMESTAMP, "
+                "result_msg_id = ?, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'active'",
+                (int(result_msg_id), lottery_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE lotteries SET status = 'drawn', "
+                "drawn_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'active'",
+                (lottery_id,),
+            )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def mark_lottery_no_entries(lottery_id: int) -> bool:
+    """无人参与：status active → no_entries + drawn_at（终态）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE lotteries SET status = 'no_entries', "
+            "drawn_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'active'",
+            (lottery_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def mark_lottery_entry_notified(entry_id: int) -> bool:
+    """标记中奖通知已发送"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE lottery_entries SET notified_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (entry_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def update_lottery_result_msg(
+    lottery_id: int,
+    result_msg_id: int,
+) -> bool:
+    """单独更新 result_msg_id（mark_lottery_drawn 失败重试用）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE lotteries SET result_msg_id = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (int(result_msg_id), lottery_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
