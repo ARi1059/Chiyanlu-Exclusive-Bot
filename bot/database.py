@@ -3735,3 +3735,160 @@ async def is_teacher_profile_complete(user_id: int) -> tuple[bool, list[str]]:
         missing.append("photo_album")
 
     return (len(missing) == 0), missing
+
+
+# ============ 档案帖发布 (Phase 9.2) ============
+
+
+async def set_archive_channel_id(chat_id: int) -> None:
+    """设置档案帖发布目标频道（config key=archive_channel_id）"""
+    await set_config("archive_channel_id", str(int(chat_id)))
+
+
+async def get_archive_channel_id() -> Optional[int]:
+    """获取档案帖发布频道 ID
+
+    优先级：
+    1. config.archive_channel_id（Phase 9.2 新配置）
+    2. 回退 publish_channel_id 第一个（与每日签到帖共用）
+    3. 都没有时返回 None
+    """
+    raw = await get_config("archive_channel_id")
+    if raw:
+        try:
+            return int(raw.strip())
+        except (TypeError, ValueError):
+            pass
+    fallback = await get_config("publish_channel_id")
+    if not fallback:
+        return None
+    first = fallback.split(",")[0].strip()
+    if not first:
+        return None
+    try:
+        return int(first)
+    except (TypeError, ValueError):
+        return None
+
+
+async def upsert_teacher_channel_post(
+    teacher_id: int,
+    channel_chat_id: int,
+    channel_msg_id: int,
+    media_group_msg_ids: list[int],
+) -> None:
+    """新建或覆盖 teacher_channel_posts 行（首次发布 / 重发都走这里）
+
+    保留已有的 review_count / avg_* 字段（评价聚合归 Phase 9.5 维护）。
+    若不存在则 INSERT；存在则只覆盖与发布相关的 4 列 + updated_at。
+    """
+    mids_json = json.dumps([int(x) for x in media_group_msg_ids], ensure_ascii=False)
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT teacher_id FROM teacher_channel_posts WHERE teacher_id = ?",
+            (teacher_id,),
+        )
+        existing = await cur.fetchone()
+        if existing:
+            await db.execute(
+                """UPDATE teacher_channel_posts SET
+                    channel_chat_id = ?,
+                    channel_msg_id = ?,
+                    media_group_msg_ids = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE teacher_id = ?""",
+                (channel_chat_id, channel_msg_id, mids_json, teacher_id),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO teacher_channel_posts
+                    (teacher_id, channel_chat_id, channel_msg_id, media_group_msg_ids)
+                    VALUES (?, ?, ?, ?)""",
+                (teacher_id, channel_chat_id, channel_msg_id, mids_json),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_teacher_channel_post(teacher_id: int) -> Optional[dict]:
+    """读取 teacher_channel_posts 一行
+
+    media_group_msg_ids 解析为 list[int]；空时给 []。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teacher_channel_posts WHERE teacher_id = ?",
+            (teacher_id,),
+        )
+        row = await cur.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        return None
+    data = dict(row)
+    raw = data.get("media_group_msg_ids")
+    ids: list[int] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                ids = [int(x) for x in parsed]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            ids = []
+    data["media_group_msg_ids"] = ids
+    return data
+
+
+async def touch_teacher_channel_post(teacher_id: int) -> bool:
+    """仅更新 updated_at（用于 caption edit 成功后刷新 debounce 计时）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_channel_posts SET updated_at = CURRENT_TIMESTAMP "
+            "WHERE teacher_id = ?",
+            (teacher_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def delete_teacher_channel_post(teacher_id: int) -> bool:
+    """删除 teacher_channel_posts 一行（用于 unpublish / repost 前清理）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "DELETE FROM teacher_channel_posts WHERE teacher_id = ?",
+            (teacher_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def seconds_since_last_caption_edit(teacher_id: int) -> Optional[float]:
+    """距上次 update_at 经过的秒数（用于 60s debounce 判断）
+
+    返回 None 表示没有记录；否则返回非负浮点秒数。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT (julianday('now') - julianday(updated_at)) * 86400.0 AS sec "
+            "FROM teacher_channel_posts WHERE teacher_id = ?",
+            (teacher_id,),
+        )
+        row = await cur.fetchone()
+    finally:
+        await db.close()
+    if not row or row["sec"] is None:
+        return None
+    try:
+        return max(0.0, float(row["sec"]))
+    except (TypeError, ValueError):
+        return None
