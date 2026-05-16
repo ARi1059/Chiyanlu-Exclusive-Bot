@@ -145,12 +145,12 @@ def _build_deep_link_buttons(
     bot_username: str,
     buttons: list[tuple[str, str]],
     *,
-    per_row: int = 3,
+    per_row: int = 2,
 ) -> InlineKeyboardMarkup:
     """把 [(label, target_suffix), ...] 渲染成 URL deep link 按钮组
 
     Telegram 群组场景必须用 URL 跳转（callback 在群组里也能用，但 URL 体验更明确）。
-    per_row 默认 3 — 群组场景尽量单行减少视觉高度。
+    per_row 默认 2 — 全站统一"每行最多 2 个按钮"的视觉规则。
     """
     base = f"https://t.me/{bot_username}"
     rows: list[list[InlineKeyboardButton]] = []
@@ -245,7 +245,7 @@ async def _send_quick_entry(
         return False
 
     body = f"{cfg['banner']}\n\n{cfg['body']}"
-    kb = _build_deep_link_buttons(bot_username, cfg["buttons"], per_row=3)
+    kb = _build_deep_link_buttons(bot_username, cfg["buttons"], per_row=2)
 
     try:
         await message.reply(
