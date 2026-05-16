@@ -209,6 +209,29 @@ async def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_publish_templates_default
                 ON publish_templates(is_default, is_active);
+
+            CREATE TABLE IF NOT EXISTS teacher_channel_posts (
+                teacher_id              INTEGER PRIMARY KEY,
+                channel_chat_id         INTEGER NOT NULL,
+                channel_msg_id          INTEGER NOT NULL,
+                media_group_msg_ids     TEXT,
+                discussion_chat_id      INTEGER,
+                discussion_anchor_id    INTEGER,
+                review_count            INTEGER DEFAULT 0,
+                positive_count          INTEGER DEFAULT 0,
+                neutral_count           INTEGER DEFAULT 0,
+                negative_count          INTEGER DEFAULT 0,
+                avg_overall             REAL DEFAULT 0,
+                avg_humanphoto          REAL DEFAULT 0,
+                avg_appearance          REAL DEFAULT 0,
+                avg_body                REAL DEFAULT 0,
+                avg_service             REAL DEFAULT 0,
+                avg_attitude            REAL DEFAULT 0,
+                avg_environment         REAL DEFAULT 0,
+                created_at              TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at              TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE
+            );
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -225,6 +248,8 @@ async def init_db():
         await _ensure_default_publish_template(db)
         # Phase 7.1 schema 增量：users 表新增 onboarding_seen
         await _migrate_user_onboarding_column(db)
+        # Phase 9.1 schema 增量：teachers 表新增 10 个老师档案字段
+        await _migrate_teacher_profile_columns(db)
 
         await db.commit()
     finally:
@@ -297,6 +322,39 @@ async def _migrate_user_onboarding_column(db: aiosqlite.Connection) -> None:
         )
     except Exception as e:
         logger.warning("onboarding_seen 字段迁移失败（不阻断启动）: %s", e)
+
+
+async def _migrate_teacher_profile_columns(db: aiosqlite.Connection) -> None:
+    """Phase 9.1：teachers 表添加 10 个老师档案字段（全部 NULLABLE）
+
+    幂等：PRAGMA table_info 检测后再 ADD，重复执行安全。
+    新字段都允许为 NULL，老数据不受影响；档案帖发布前由
+    is_teacher_profile_complete 校验必填字段。
+    """
+    cur = await db.execute("PRAGMA table_info(teachers)")
+    rows = await cur.fetchall()
+    existing = {row["name"] for row in rows}
+
+    additions: list[tuple[str, str]] = [
+        ("age",              "INTEGER"),
+        ("height_cm",        "INTEGER"),
+        ("weight_kg",        "INTEGER"),
+        ("bra_size",         "TEXT"),
+        ("description",      "TEXT"),
+        ("service_content",  "TEXT"),
+        ("price_detail",     "TEXT"),
+        ("taboos",           "TEXT"),
+        ("contact_telegram", "TEXT"),
+        ("photo_album",      "TEXT"),
+    ]
+    for col, type_def in additions:
+        if col in existing:
+            continue
+        try:
+            await db.execute(f"ALTER TABLE teachers ADD COLUMN {col} {type_def}")
+        except Exception:
+            # PRAGMA 与实际 schema 不一致 → 忽略 duplicate column
+            pass
 
 
 DEFAULT_PUBLISH_TEMPLATE_TEXT: str = (
@@ -3417,3 +3475,263 @@ async def get_report_stats(start_date: str, end_date: str) -> dict:
         await db.close()
 
     return result
+
+
+# ============ 老师档案 (Phase 9.1) ============
+
+# 必填字段（用于 is_teacher_profile_complete 校验）；photo_album 单独要求 ≥ 1 张
+TEACHER_PROFILE_REQUIRED_FIELDS: list[str] = [
+    "display_name", "age", "height_cm", "weight_kg", "bra_size",
+    "price_detail", "contact_telegram",
+    "region", "price", "tags", "button_url",
+]
+
+# 可选字段（允许 NULL）
+TEACHER_PROFILE_OPTIONAL_FIELDS: list[str] = [
+    "description", "service_content", "taboos", "button_text",
+]
+
+# update_teacher_profile_field 接受的字段白名单
+TEACHER_PROFILE_EDITABLE_FIELDS: set[str] = (
+    set(TEACHER_PROFILE_REQUIRED_FIELDS)
+    | set(TEACHER_PROFILE_OPTIONAL_FIELDS)
+    | {"photo_album"}
+)
+
+
+def parse_basic_info(text: str) -> Optional[dict]:
+    """解析 "年龄 身高 体重 罩杯" 一行四字段（spec §2 / PHASE-9.1 §4.3）
+
+    成功返回 {"age", "height_cm", "weight_kg", "bra_size"}，失败返回 None。
+    边界：年龄 15-60 / 身高 140-200 / 体重 35-120 / 罩杯 1-3 个字母。
+    纯函数，不访问 DB。
+    """
+    if not text:
+        return None
+    parts = text.strip().split()
+    if len(parts) != 4:
+        return None
+    try:
+        age = int(parts[0])
+        height = int(parts[1])
+        weight = int(parts[2])
+    except ValueError:
+        return None
+    bra = parts[3].strip().upper()
+    if not (15 <= age <= 60):
+        return None
+    if not (140 <= height <= 200):
+        return None
+    if not (35 <= weight <= 120):
+        return None
+    if not (1 <= len(bra) <= 3) or not bra.isalpha():
+        return None
+    return {
+        "age": age,
+        "height_cm": height,
+        "weight_kg": weight,
+        "bra_size": bra,
+    }
+
+
+async def update_teacher_profile_field(user_id: int, field: str, value) -> bool:
+    """更新老师档案单个字段（白名单 + 类型校验）
+
+    支持：基础字段、Phase 9.1 新字段、photo_album（list 自动 JSON 序列化）。
+    返回是否真有行被更新。
+    """
+    if field not in TEACHER_PROFILE_EDITABLE_FIELDS:
+        return False
+
+    # 类型规范化
+    if field == "photo_album":
+        if value is None:
+            stored = None
+        elif isinstance(value, list):
+            stored = json.dumps(value, ensure_ascii=False)
+        elif isinstance(value, str):
+            stored = value
+        else:
+            return False
+    elif field == "tags":
+        if isinstance(value, list):
+            stored = json.dumps(value, ensure_ascii=False)
+        elif isinstance(value, str):
+            stored = value
+        else:
+            return False
+    elif field in {"age", "height_cm", "weight_kg"}:
+        if value is None:
+            stored = None
+        else:
+            try:
+                stored = int(value)
+            except (TypeError, ValueError):
+                return False
+    else:
+        stored = value
+
+    db = await get_db()
+    try:
+        await db.execute(
+            f"UPDATE teachers SET {field} = ? WHERE user_id = ?",
+            (stored, user_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def get_teacher_photos(user_id: int) -> list[str]:
+    """读取老师相册 file_id 列表
+
+    优先解析 photo_album JSON；为空时回退到旧字段 photo_file_id（单图相册）。
+    返回 [] 表示该老师没有任何照片。
+    """
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT photo_album, photo_file_id FROM teachers WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        return []
+    raw = row["photo_album"]
+    if raw:
+        try:
+            arr = json.loads(raw)
+            if isinstance(arr, list):
+                return [str(x) for x in arr if x]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # 回退到旧的单图字段
+    legacy = row["photo_file_id"]
+    return [legacy] if legacy else []
+
+
+async def set_teacher_photos(user_id: int, file_ids: list[str]) -> bool:
+    """整体替换老师相册（最多 10 张，Telegram 媒体组上限）
+
+    file_ids 为空列表时写入 "[]"（不是 NULL），保留"显式清空"语义。
+    同步把列表第一张写入旧字段 photo_file_id，保证旧逻辑兼容。
+    """
+    if file_ids is None:
+        return False
+    cleaned = [str(fid) for fid in file_ids if fid][:10]
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teachers SET photo_album = ?, photo_file_id = ? WHERE user_id = ?",
+            (
+                json.dumps(cleaned, ensure_ascii=False),
+                cleaned[0] if cleaned else None,
+                user_id,
+            ),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def add_teacher_photo(user_id: int, file_id: str) -> int:
+    """追加一张照片到老师相册，返回追加后的相册总长度
+
+    若已达 10 张上限，不追加，直接返回当前长度（调用方据此提示用户）。
+    """
+    if not file_id:
+        return await count_teacher_photos(user_id)
+    current = await get_teacher_photos(user_id)
+    if len(current) >= 10:
+        return len(current)
+    current.append(str(file_id))
+    await set_teacher_photos(user_id, current)
+    return len(current)
+
+
+async def remove_teacher_photo(user_id: int, index: int) -> bool:
+    """按 1-based index 删除相册中某张照片"""
+    current = await get_teacher_photos(user_id)
+    if index < 1 or index > len(current):
+        return False
+    del current[index - 1]
+    return await set_teacher_photos(user_id, current)
+
+
+async def count_teacher_photos(user_id: int) -> int:
+    """统计老师当前相册照片数（用于"已上传 X/10 张"提示）"""
+    return len(await get_teacher_photos(user_id))
+
+
+async def get_teacher_full_profile(user_id: int) -> Optional[dict]:
+    """读取老师完整档案（含相册解析）
+
+    返回的 dict 中：
+    - tags 解析为 list[str]（失败时给 []）
+    - photo_album 解析为 list[str]（失败回退 photo_file_id）
+    其他字段原样保留。老师不存在时返回 None。
+    """
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM teachers WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        return None
+    data = dict(row)
+    # tags JSON → list
+    try:
+        data["tags"] = json.loads(data.get("tags") or "[]")
+        if not isinstance(data["tags"], list):
+            data["tags"] = []
+    except (json.JSONDecodeError, TypeError):
+        data["tags"] = []
+    # photo_album JSON → list（带回退）
+    raw_album = data.get("photo_album")
+    album: list[str] = []
+    if raw_album:
+        try:
+            parsed = json.loads(raw_album)
+            if isinstance(parsed, list):
+                album = [str(x) for x in parsed if x]
+        except (json.JSONDecodeError, TypeError):
+            album = []
+    if not album and data.get("photo_file_id"):
+        album = [data["photo_file_id"]]
+    data["photo_album"] = album
+    return data
+
+
+async def is_teacher_profile_complete(user_id: int) -> tuple[bool, list[str]]:
+    """校验老师档案是否齐备（用于 [👁 预览] / Phase 9.2 发布前校验）
+
+    Returns:
+        (is_complete, missing_fields)
+        - is_complete: 所有必填字段非空 且 相册 ≥ 1 张
+        - missing_fields: 缺失字段名列表（顺序遵循 TEACHER_PROFILE_REQUIRED_FIELDS）
+          相册不足单独以 "photo_album" 形式追加
+    """
+    profile = await get_teacher_full_profile(user_id)
+    if profile is None:
+        return False, ["__teacher_not_found__"]
+
+    missing: list[str] = []
+    for field in TEACHER_PROFILE_REQUIRED_FIELDS:
+        val = profile.get(field)
+        if field == "tags":
+            if not isinstance(val, list) or len(val) == 0:
+                missing.append(field)
+        elif val is None or (isinstance(val, str) and not val.strip()):
+            missing.append(field)
+    # 相册要求至少 1 张
+    if not profile.get("photo_album"):
+        missing.append("photo_album")
+
+    return (len(missing) == 0), missing
