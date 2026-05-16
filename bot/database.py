@@ -291,6 +291,22 @@ async def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_required_subs_active
                 ON required_subscriptions(is_active, sort_order);
+
+            CREATE TABLE IF NOT EXISTS point_transactions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                delta       INTEGER NOT NULL,
+                reason      TEXT NOT NULL,
+                related_id  INTEGER,
+                operator_id INTEGER,
+                note        TEXT,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_point_tx_user_time
+                ON point_transactions(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_point_tx_related
+                ON point_transactions(reason, related_id);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -309,6 +325,8 @@ async def init_db():
         await _migrate_user_onboarding_column(db)
         # Phase 9.1 schema 增量：teachers 表新增 10 个老师档案字段
         await _migrate_teacher_profile_columns(db)
+        # Phase P.1 schema 增量：users 表新增 total_points
+        await _migrate_users_total_points(db)
 
         await db.commit()
     finally:
@@ -381,6 +399,24 @@ async def _migrate_user_onboarding_column(db: aiosqlite.Connection) -> None:
         )
     except Exception as e:
         logger.warning("onboarding_seen 字段迁移失败（不阻断启动）: %s", e)
+
+
+async def _migrate_users_total_points(db: aiosqlite.Connection) -> None:
+    """Phase P.1：users 表添加 total_points 字段
+
+    PRAGMA 检测后再 ADD，幂等可重入。
+    """
+    try:
+        cur = await db.execute("PRAGMA table_info(users)")
+        rows = await cur.fetchall()
+        existing = {row["name"] for row in rows}
+        if "total_points" in existing:
+            return
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN total_points INTEGER DEFAULT 0"
+        )
+    except Exception as e:
+        logger.warning("total_points 字段迁移失败（不阻断启动）: %s", e)
 
 
 async def _migrate_teacher_profile_columns(db: aiosqlite.Connection) -> None:
@@ -4490,5 +4526,164 @@ async def get_users_first_names(user_ids: list[int]) -> dict[int, Optional[str]]
         )
         rows = await cur.fetchall()
         return {int(r["user_id"]): r["first_name"] for r in rows}
+    finally:
+        await db.close()
+
+
+# ============ 积分 (Phase P.1) ============
+
+
+# 审核通过加分预设套餐（spec §1.2）
+POINT_PACKAGE_OPTIONS: list[dict] = [
+    {"key": "p",     "label": "P / PP",  "delta": 1},
+    {"key": "hour",  "label": "包时",     "delta": 3},
+    {"key": "night", "label": "包夜",     "delta": 5},
+    {"key": "day",   "label": "包天",     "delta": 8},
+    {"key": "zero",  "label": "不加分",   "delta": 0},
+]
+
+# 自定义加分输入范围（spec §4.3）
+POINT_CUSTOM_MIN: int = 0
+POINT_CUSTOM_MAX: int = 100
+
+
+async def add_point_transaction(
+    user_id: int,
+    delta: int,
+    reason: str,
+    *,
+    related_id: Optional[int] = None,
+    operator_id: Optional[int] = None,
+    note: Optional[str] = None,
+) -> Optional[int]:
+    """添加一条积分流水，同时同步 users.total_points
+
+    Args:
+        user_id: 评价者 user_id
+        delta: 整数；正数加分，负数扣分（本期不开放扣分 UI，DB 层允许）
+        reason: 'review_approved' / 'admin_grant' / 'admin_revoke' / ...
+        related_id: 关联 review_id 等业务 id
+        operator_id: 操作管理员 id（None 表示系统自动）
+        note: 备注（手动加分时填）
+
+    Returns:
+        tx_id（成功） / None（失败：DB 异常或参数错误）
+
+    容错：user 不在 users 表时 INSERT OR IGNORE 一条 minimal row。
+    """
+    try:
+        delta_int = int(delta)
+    except (TypeError, ValueError):
+        return None
+    if not reason:
+        return None
+
+    db = await get_db()
+    try:
+        # 兜底：user 可能不在 users 表（最早评价者从未进过 /start）
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (user_id,),
+        )
+        cur = await db.execute(
+            """INSERT INTO point_transactions
+                (user_id, delta, reason, related_id, operator_id, note)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, delta_int, reason, related_id, operator_id, note),
+        )
+        tx_id = cur.lastrowid
+        # 同步 users.total_points（COALESCE 兼容老数据 NULL）
+        await db.execute(
+            "UPDATE users SET total_points = COALESCE(total_points, 0) + ? "
+            "WHERE user_id = ?",
+            (delta_int, user_id),
+        )
+        await db.commit()
+        return tx_id
+    except Exception as e:
+        logger.warning(
+            "add_point_transaction 失败 user=%s delta=%s reason=%s: %s",
+            user_id, delta_int, reason, e,
+        )
+        return None
+    finally:
+        await db.close()
+
+
+async def get_user_total_points(user_id: int) -> int:
+    """获取用户当前 total_points（不存在 / NULL 时返回 0）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT total_points FROM users WHERE user_id = ?", (user_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        v = row["total_points"]
+        return int(v) if v is not None else 0
+    finally:
+        await db.close()
+
+
+async def get_user_points_summary(user_id: int) -> dict:
+    """积分汇总：total / earned (SUM positive) / spent (ABS SUM negative) / tx_count"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT
+                COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS earned,
+                COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS spent,
+                COUNT(*) AS tx_count
+            FROM point_transactions WHERE user_id = ?""",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        earned = int(row["earned"] or 0) if row else 0
+        spent = int(row["spent"] or 0) if row else 0
+        tx_count = int(row["tx_count"] or 0) if row else 0
+        # total 用 users.total_points（防止应用层 / DB 层不一致时优先 users）
+        cur = await db.execute(
+            "SELECT total_points FROM users WHERE user_id = ?", (user_id,)
+        )
+        u_row = await cur.fetchone()
+        total = int((u_row["total_points"] if u_row else 0) or 0)
+    finally:
+        await db.close()
+    return {
+        "total": total,
+        "earned": earned,
+        "spent": spent,
+        "tx_count": tx_count,
+    }
+
+
+async def list_user_point_transactions(
+    user_id: int, limit: int = 20, offset: int = 0,
+) -> list[dict]:
+    """列出某用户的积分流水（按 created_at DESC, id DESC）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM point_transactions WHERE user_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (user_id, int(limit), int(offset)),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_user_point_transactions(user_id: int) -> int:
+    """统计某用户的积分流水总数（用于分页）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM point_transactions WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
     finally:
         await db.close()
