@@ -847,6 +847,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "lottery_entry": "参与抽奖",
     "lottery_repost": "重发抽奖帖",
     "lottery_contact_set": "设置抽奖客服链接",
+    "lottery_edit": "编辑抽奖",
 }
 
 

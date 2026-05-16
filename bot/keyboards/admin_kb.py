@@ -1024,6 +1024,39 @@ def lottery_contact_cancel_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def admin_lottery_edit_field_kb(lottery_id: int) -> InlineKeyboardMarkup:
+    """active 抽奖编辑字段选择（Phase L.4.2）
+
+    6 个可编辑字段：name / description / prize_description / prize_count /
+                    required_chat_ids / draw_at
+    （cover / entry_method / entry_code 不可改 — admin 重新建抽奖即可）
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🏷 名称",   callback_data=f"admin:lottery:edit_field:{lottery_id}:name"),
+            InlineKeyboardButton(text="📋 规则",   callback_data=f"admin:lottery:edit_field:{lottery_id}:description"),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 奖品描述", callback_data=f"admin:lottery:edit_field:{lottery_id}:prize_description"),
+            InlineKeyboardButton(text="🏆 中奖人数", callback_data=f"admin:lottery:edit_field:{lottery_id}:prize_count"),
+        ],
+        [
+            InlineKeyboardButton(text="📡 必关频道", callback_data=f"admin:lottery:edit_field:{lottery_id}:required_chat_ids"),
+            InlineKeyboardButton(text="⏰ 开奖时间", callback_data=f"admin:lottery:edit_field:{lottery_id}:draw_at"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 返回详情", callback_data=f"admin:lottery:item:{lottery_id}"),
+        ],
+    ])
+
+
+def lottery_edit_cancel_kb(lottery_id: int) -> InlineKeyboardMarkup:
+    """active 编辑 FSM 取消（回详情）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:lottery:item:{lottery_id}")],
+    ])
+
+
 def admin_lottery_publish_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
     """[📤 立即发布] 二次确认"""
     return InlineKeyboardMarkup(inline_keyboard=[

@@ -295,3 +295,61 @@ async def update_lottery_entry_count(
 
     await touch_lottery(lottery_id)
     return True
+
+
+async def refresh_lottery_channel_caption(
+    bot: Bot,
+    lottery_id: int,
+) -> bool:
+    """active 编辑后重渲染频道帖 caption / text（Phase L.4.2）
+
+    Admin 改 name / description / prize_description / prize_count /
+    required_chat_ids / draw_at 后调用，按当前 DB 状态重新渲染并 edit。
+    无 debounce（admin 主动操作即时反馈）。
+
+    返回 True 表示已 edit 或被 'not modified' 跳过；False 表示未发布到频道。
+    所有 BadRequest / Forbidden 容错（log warning 不抛错）。
+    """
+    lottery = await get_lottery(lottery_id)
+    if lottery is None:
+        return False
+    chat_id = lottery.get("channel_chat_id")
+    msg_id = lottery.get("channel_msg_id")
+    if not chat_id or not msg_id:
+        return False  # 还没发布到频道
+
+    try:
+        me = await bot.get_me()
+    except Exception as e:
+        logger.warning("refresh_lottery_channel_caption get_me 失败 lid=%s: %s", lottery_id, e)
+        return False
+
+    chat_info_map = await fetch_chat_info_map(
+        bot, lottery.get("required_chat_ids") or [],
+    )
+    caption = render_lottery_caption(lottery, me.username, chat_info_map)
+    n = await count_lottery_entries(lottery_id)
+    kb = build_lottery_keyboard(lottery, n, me.username)
+    has_cover = bool(lottery.get("cover_file_id"))
+    try:
+        if has_cover:
+            await bot.edit_message_caption(
+                chat_id=chat_id, message_id=msg_id,
+                caption=caption, reply_markup=kb,
+            )
+        else:
+            await bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=caption, reply_markup=kb,
+            )
+    except TelegramBadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.warning(
+                "refresh_lottery_channel_caption edit 失败 lid=%s: %s", lottery_id, e,
+            )
+    except Exception as e:
+        logger.warning(
+            "refresh_lottery_channel_caption edit 失败 lid=%s: %s", lottery_id, e,
+        )
+    await touch_lottery(lottery_id)
+    return True

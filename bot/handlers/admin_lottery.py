@@ -43,6 +43,7 @@ from bot.database import (
 from bot.keyboards.admin_kb import (
     admin_lottery_cancel_confirm_kb,
     admin_lottery_detail_kb,
+    admin_lottery_edit_field_kb,
     admin_lottery_entries_pagination_kb,
     admin_lottery_list_kb,
     admin_lottery_menu_kb,
@@ -56,6 +57,7 @@ from bot.keyboards.admin_kb import (
     lottery_create_publish_mode_kb,
     lottery_create_required_kb,
     lottery_create_skip_cancel_kb,
+    lottery_edit_cancel_kb,
 )
 from bot.states.teacher_states import (
     LotteryContactUrlStates,
@@ -629,6 +631,277 @@ async def on_lottery_contact_url(message: types.Message, state: FSMContext):
         f"✅ 客服链接已设置：{url}\n"
         "中奖通知将附 [👨‍💼 联系管理员] 按钮跳转此链接。",
         reply_markup=admin_lottery_menu_kb(await count_lotteries_by_status()),
+    )
+
+
+# ============ active 编辑 FSM（Phase L.4.2）============
+
+# 可编辑字段元数据：label / 类型 / 校验提示
+_EDITABLE_FIELDS: dict[str, dict] = {
+    "name":               {"label": "名称",       "type": "str",      "max": 30},
+    "description":        {"label": "活动规则",   "type": "str",      "max": 500},
+    "prize_description":  {"label": "奖品描述",   "type": "str",      "max": 100},
+    "prize_count":        {"label": "中奖人数",   "type": "int_range", "min": 1, "max": 1000},
+    "required_chat_ids":  {"label": "必关频道/群组", "type": "chat_ids"},
+    "draw_at":            {"label": "开奖时间",   "type": "datetime"},
+}
+
+
+def _format_current_value(lottery: dict, field: str) -> str:
+    v = lottery.get(field)
+    if field == "required_chat_ids":
+        if not v:
+            return "（无门槛）"
+        return ", ".join(str(x) for x in v)
+    if v is None or v == "":
+        return "（未设置）"
+    return str(v)
+
+
+@router.callback_query(F.data.startswith("admin:lottery:edit:"))
+@_super_admin_required
+async def cb_admin_lottery_edit(callback: types.CallbackQuery, state: FSMContext):
+    """[✏️ 编辑] 入口（仅 active）"""
+    await state.clear()
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("该抽奖不存在", show_alert=True)
+        return
+    if lottery.get("status") != "active":
+        await callback.answer(
+            f"仅 active 状态可编辑；当前 {lottery.get('status')}",
+            show_alert=True,
+        )
+        return
+    await state.set_state(LotteryEditStates.waiting_field_choice)
+    await state.set_data({"lottery_id": lid})
+    text = (
+        f"✏️ 编辑抽奖 #{lid}「{lottery.get('name', '')}」\n\n"
+        "请选择要修改的字段：\n"
+        "（封面 / 参与方式 / 口令不可改；如需大改请新建抽奖）"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_lottery_edit_field_kb(lid))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_lottery_edit_field_kb(lid))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:lottery:edit_field:"))
+@_super_admin_required
+async def cb_admin_lottery_edit_field(callback: types.CallbackQuery, state: FSMContext):
+    """选某字段 → 显示当前值 + 进 FSM 等输入"""
+    parts = callback.data.split(":")
+    if len(parts) != 5:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    field = parts[4]
+    if field not in _EDITABLE_FIELDS:
+        await callback.answer("不支持该字段", show_alert=True)
+        return
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("该抽奖不存在", show_alert=True)
+        return
+    if lottery.get("status") != "active":
+        await callback.answer(
+            f"仅 active 状态可编辑；当前 {lottery.get('status')}",
+            show_alert=True,
+        )
+        return
+    meta = _EDITABLE_FIELDS[field]
+    current = _format_current_value(lottery, field)
+    hint_lines = [f"✏️ 编辑：{meta['label']}", "", f"当前值：{current}", ""]
+    if meta["type"] == "str":
+        hint_lines.append(f"请输入新值（≤ {meta['max']} 字）。")
+    elif meta["type"] == "int_range":
+        hint_lines.append(f"请输入新数值（{meta['min']}-{meta['max']} 整数）。")
+    elif meta["type"] == "datetime":
+        now = _now_local().strftime("%Y-%m-%d %H:%M")
+        hint_lines.append(f"请输入新时间，格式 YYYY-MM-DD HH:MM（必须晚于现在 {now}）。")
+    elif meta["type"] == "chat_ids":
+        hint_lines.append(
+            "请输入 chat_id 列表（逗号分隔，bot 必须已加入；回复 0 清空门槛）。\n"
+            "示例：-1001234567890, -1009876543210"
+        )
+    hint_lines.append("/cancel 取消。")
+    await state.set_state(LotteryEditStates.waiting_new_value)
+    await state.set_data({"lottery_id": lid, "field_key": field})
+    try:
+        await callback.message.edit_text(
+            "\n".join(hint_lines),
+            reply_markup=lottery_edit_cancel_kb(lid),
+        )
+    except Exception:
+        await callback.message.answer(
+            "\n".join(hint_lines),
+            reply_markup=lottery_edit_cancel_kb(lid),
+        )
+    await callback.answer()
+
+
+@router.message(F.text == "/cancel", LotteryEditStates())
+@_super_admin_required
+async def cmd_cancel_lottery_edit(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    lid = data.get("lottery_id")
+    await state.clear()
+    if lid:
+        lottery = await get_lottery(int(lid))
+        if lottery:
+            text = await _render_lottery_detail(lottery)
+            await message.answer(text, reply_markup=admin_lottery_detail_kb(lottery))
+            return
+    await message.answer("❌ 已取消。")
+
+
+@router.message(LotteryEditStates.waiting_new_value, F.text)
+@_super_admin_required
+async def on_lottery_edit_value(message: types.Message, state: FSMContext):
+    """接收编辑值；按字段类型校验 + DB 更新 + 频道刷新 + 必要时 reschedule"""
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel_lottery_edit(message, state)
+    data = await state.get_data()
+    lid = data.get("lottery_id")
+    field = data.get("field_key")
+    if not lid or field not in _EDITABLE_FIELDS:
+        await state.clear()
+        await message.reply("⚠️ 会话失效，请重新进入 [✏️ 编辑]。")
+        return
+    lottery = await get_lottery(int(lid))
+    if not lottery or lottery.get("status") != "active":
+        await state.clear()
+        await message.reply("⚠️ 抽奖状态变更，无法编辑。")
+        return
+    meta = _EDITABLE_FIELDS[field]
+    old_value = lottery.get(field)
+
+    # ---- 校验 + 解析 new_value ----
+    new_value = None
+    if meta["type"] == "str":
+        if not text:
+            await message.reply("❌ 不能为空。")
+            return
+        if len(text) > meta["max"]:
+            await message.reply(f"❌ 超长（最多 {meta['max']} 字）。")
+            return
+        new_value = text
+    elif meta["type"] == "int_range":
+        if not text.lstrip("-").isdigit():
+            await message.reply("❌ 请输入整数。")
+            return
+        n = int(text)
+        if not (meta["min"] <= n <= meta["max"]):
+            await message.reply(f"❌ 取值范围 {meta['min']}-{meta['max']}。")
+            return
+        new_value = n
+    elif meta["type"] == "datetime":
+        dt = _parse_datetime_input(text)
+        if dt is None:
+            await message.reply("❌ 格式错误（YYYY-MM-DD HH:MM）。")
+            return
+        if dt <= _now_local():
+            await message.reply("❌ 开奖时间必须晚于当前时间。")
+            return
+        new_value = _format_datetime_store(dt)
+    elif meta["type"] == "chat_ids":
+        if text == "0":
+            new_value = []
+        else:
+            raw_ids = [p.strip() for p in text.split(",") if p.strip()]
+            parsed: list[int] = []
+            for raw in raw_ids:
+                try:
+                    parsed.append(int(raw))
+                except ValueError:
+                    await message.reply(f"❌ '{raw}' 不是有效 chat_id。")
+                    return
+            if len(parsed) != len(set(parsed)):
+                await message.reply("❌ chat_id 重复。")
+                return
+            # 逐个 precheck（bot 必须在场）
+            failures: list[str] = []
+            for cid in parsed:
+                ok, reason, _ = await precheck_required_chat(message.bot, cid)
+                if not ok:
+                    failures.append(f"{cid}: {reason}")
+            if failures:
+                await message.reply(
+                    "❌ 校验失败：\n" + "\n".join(failures[:5]) +
+                    ("\n…" if len(failures) > 5 else "")
+                )
+                return
+            new_value = parsed
+
+    # ---- DB 更新 ----
+    ok = await update_lottery_fields(int(lid), **{field: new_value})
+    if not ok:
+        await message.reply("⚠️ 更新失败（DB 未变化）。")
+        return
+
+    await log_admin_audit(
+        admin_id=message.from_user.id,
+        action="lottery_edit",
+        target_type="lottery",
+        target_id=str(lid),
+        detail={"field": field, "old": old_value, "new": new_value},
+    )
+
+    # ---- 副作用：reschedule draw 或 刷新频道 caption ----
+    side_effects: list[str] = []
+    if field == "draw_at":
+        try:
+            from bot.scheduler.lottery_tasks import (
+                schedule_lottery_draw, unschedule_lottery,
+            )
+            from bot.main import scheduler as _scheduler
+            unschedule_lottery(_scheduler, int(lid))
+            fresh = await get_lottery(int(lid))
+            if fresh and schedule_lottery_draw(_scheduler, message.bot, fresh):
+                side_effects.append("⏰ 开奖定时任务已重注册")
+            else:
+                side_effects.append("⚠️ reschedule 失败（请检查日志）")
+        except Exception as e:
+            logger.warning("reschedule draw 失败 lid=%s: %s", lid, e)
+            side_effects.append("⚠️ reschedule 异常（不影响 DB）")
+
+    # 文字 / 数量 / required → 频道 caption 刷新
+    if field in {"name", "description", "prize_description", "prize_count", "required_chat_ids", "draw_at"}:
+        try:
+            from bot.utils.lottery_publish import refresh_lottery_channel_caption
+            refreshed = await refresh_lottery_channel_caption(message.bot, int(lid))
+            if refreshed:
+                side_effects.append("📣 频道帖已刷新")
+        except Exception as e:
+            logger.warning("refresh caption 失败 lid=%s: %s", lid, e)
+            side_effects.append("⚠️ 频道刷新异常")
+
+    await state.clear()
+    lines = [
+        f"✅ {meta['label']} 已更新",
+        f"旧值：{_format_current_value(lottery, field)}",
+        f"新值：{_format_current_value({field: new_value}, field)}",
+    ]
+    lines.extend(side_effects)
+    fresh = await get_lottery(int(lid))
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=admin_lottery_detail_kb(fresh or lottery),
     )
 
 
