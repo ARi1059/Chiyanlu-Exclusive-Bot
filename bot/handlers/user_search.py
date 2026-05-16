@@ -26,11 +26,13 @@ from aiogram.fsm.context import FSMContext
 from bot.database import (
     add_user_tag,
     get_checked_in_teachers,
+    get_sorted_teachers,
     get_teacher_by_name,
     is_effective_featured,
     is_favorited,
     search_teachers_smart_and,
 )
+from bot.utils.teacher_format import build_today_label
 from bot.keyboards.user_kb import (
     search_cancel_kb,
     search_suggestion_kb,
@@ -311,7 +313,15 @@ async def cb_suggest_today(callback: types.CallbackQuery):
         return
 
     today = _today_str()
-    teachers = await get_checked_in_teachers(today)
+    try:
+        teachers = await get_sorted_teachers(
+            active_only=True,
+            signed_in_date=today,
+            exclude_unavailable=True,
+            exclude_full=True,
+        )
+    except Exception:
+        teachers = await get_checked_in_teachers(today)
     if not teachers:
         await callback.message.edit_text(
             f"📚 今日开课老师 · {today}\n\n今日暂无老师开课。",
@@ -327,7 +337,7 @@ async def cb_suggest_today(callback: types.CallbackQuery):
     kb = teacher_detail_list_kb(
         teachers,
         per_row=2,
-        label_fn=lambda t: t.get("button_text") or t["display_name"],
+        label_fn=build_today_label,
         extra_back_buttons=[
             [
                 types.InlineKeyboardButton(text="🔙 返回搜索", callback_data="user:search"),

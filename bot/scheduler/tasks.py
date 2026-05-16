@@ -11,7 +11,6 @@ from bot.config import config
 from bot.database import (
     get_checked_in_teachers,
     get_default_publish_template,
-    get_display_time_group,
     get_sorted_teachers,
     get_unchecked_teachers,
     get_config,
@@ -21,6 +20,7 @@ from bot.database import (
     delete_sent_messages,
 )
 from bot.utils.notifier import send_favorite_notifications
+from bot.utils.teacher_format import build_today_label
 from bot.utils.url import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -340,15 +340,6 @@ async def send_checkin_reminders(bot: Bot):
     )
 
 
-_CHANNEL_GROUP_ORDER: list[tuple[str, str]] = [
-    ("all", "🌞 全天可约"),
-    ("afternoon", "🌤 下午可约"),
-    ("evening", "🌙 晚上可约"),
-    ("other", "📝 其他时间"),
-    ("full", "🈵 今日已满"),
-]
-
-
 _WEEKDAY_CN: tuple[str, ...] = (
     "周一", "周二", "周三", "周四", "周五", "周六", "周日",
 )
@@ -363,107 +354,63 @@ def _weekday_cn(date_str: str) -> str:
 
 
 async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, InlineKeyboardMarkup]]:
-    """构建每日签到发布内容（Phase 3 排序 + Phase 5 分组 + Phase 6.2 模板）
+    """构建每日签到发布内容（扁平列表 + Phase 6.2 模板）
 
-    范围：当天已签到 + 启用 + daily_status != 'unavailable'
-    顺序：先按统一排序规则取出，再按 5 个时间段分组，每组保留组内排序。
-    频道按钮仍跳转 button_url，分组标题用 callback='noop:section' 占位按钮。
+    范围：当天已签到 + 启用 + daily_status 不在 ('unavailable','full')
+    顺序：统一排序规则一遍走到底，不再按时间段分组。
+    按钮：URL 跳转 button_url，文案为 '地区 艺名 价格'。
 
-    文本：Phase 6.2 接入发布模板。流程：
+    文本：接入发布模板。流程：
         1. 计算 valid_count / weekday / city / grouped_teachers
         2. 取默认模板；若存在则 render；若无 / 渲染失败 → 回退硬编码原文案
     模板渲染失败仅 logger.warning，不影响发布。
 
     兼容降级：若 get_sorted_teachers 异常（旧 schema 未迁移）→ 回退原始顺序，
-    不分组（保持 v1 行为），grouped_teachers 用简单列表格式。
+    grouped_teachers 用简单列表格式。
     """
     try:
         teachers = await get_sorted_teachers(
             active_only=True,
             signed_in_date=date_str,
             exclude_unavailable=True,
+            exclude_full=True,
         )
-        groupable = True
     except Exception as e:
         logger.warning("get_sorted_teachers 失败，回退到原始顺序: %s", e)
         teachers = await get_checked_in_teachers(date_str)
-        groupable = False
 
     if not teachers:
         return None
 
-    # 按时间段分桶（仅在 get_sorted_teachers 成功时启用分组）
-    grouped: dict[str, list[dict]] = {key: [] for key, _ in _CHANNEL_GROUP_ORDER}
-    if groupable:
-        for t in teachers:
-            key = get_display_time_group(t)
-            # unavailable 已经在 SQL 层 exclude 了，这里只可能命中其余 5 个键
-            if key not in grouped:
-                key = "other"
-            grouped[key].append(t)
-
     buttons: list[list[InlineKeyboardButton]] = []
-    grouped_lines: list[str] = []
-    valid_count = 0
+    grouped_lines: list[str] = ["今日老师："]
+    valid: list[dict] = []
+    valid_buttons: list[InlineKeyboardButton] = []
+    for t in teachers:
+        url = normalize_url(t["button_url"])
+        if not url:
+            logger.warning("跳过无效老师链接: %s (%s)", t["display_name"], t["button_url"])
+            continue
+        label = build_today_label(t)
+        valid.append(t)
+        valid_buttons.append(InlineKeyboardButton(text=label, url=url))
 
-    def _flush_group(group_teachers: list[dict], header: Optional[str]) -> None:
-        """按 3 个一行渲染老师 URL 按钮；header 非空时先放一个占位行。
+    if not valid:
+        return None
 
-        同时把"有效老师"的展示文本写入 grouped_lines（用于模板 {grouped_teachers}）。
-        """
-        nonlocal valid_count
-        valid: list[dict] = []
-        valid_buttons: list[InlineKeyboardButton] = []
-        for t in group_teachers:
-            url = normalize_url(t["button_url"])
-            if not url:
-                logger.warning("跳过无效老师链接: %s (%s)", t["display_name"], t["button_url"])
-                continue
-            label = t["button_text"] or t["display_name"]
-            valid.append(t)
-            valid_buttons.append(InlineKeyboardButton(text=label, url=url))
-        if not valid:
-            return
-
-        # —— Keyboard 部分 ——
-        if header is not None:
-            buttons.append([InlineKeyboardButton(text=header, callback_data="noop:section")])
-        row: list[InlineKeyboardButton] = []
-        for btn in valid_buttons:
-            row.append(btn)
-            valid_count += 1
-            if len(row) == 3:
-                buttons.append(row)
-                row = []
-        if row:
+    row: list[InlineKeyboardButton] = []
+    for btn in valid_buttons:
+        row.append(btn)
+        if len(row) == 3:
             buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
 
-        # —— 文本部分（供模板 {grouped_teachers} 使用） ——
-        if header is not None:
-            grouped_lines.append(header)
-            for t in valid:
-                grouped_lines.append(f"- {t['display_name']}")
-            grouped_lines.append("")  # 段间空行
-        else:
-            # 无分组（回退分支）：展示更详细的一行
-            for t in valid:
-                grouped_lines.append(
-                    f"- {t['display_name']}"
-                    f"｜{t.get('region', '')}"
-                    f"｜{t.get('price', '')}"
-                )
+    for t in valid:
+        grouped_lines.append(f"- {build_today_label(t)}")
 
-    if groupable:
-        # 分组渲染：标题行 + 按钮行 + 文本段
-        for key, header in _CHANNEL_GROUP_ORDER:
-            bucket = grouped[key]
-            if not bucket:
-                continue
-            _flush_group(bucket, header)
-    else:
-        # 不分组，原始顺序：文本带"今日老师："开头
-        grouped_lines.append("今日老师：")
-        _flush_group(teachers, header=None)
+    valid_count = len(valid)
 
     if not buttons or valid_count == 0:
         return None

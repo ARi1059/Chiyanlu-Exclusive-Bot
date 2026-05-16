@@ -20,7 +20,6 @@ from bot.config import config
 from bot.database import (
     add_user_tag,
     get_checked_in_teachers,
-    get_display_time_group,
     get_sorted_teachers,
     list_user_favorites,
     list_user_favorites_signed_in,
@@ -34,6 +33,7 @@ from bot.keyboards.user_kb import (
     teacher_detail_list_kb,
 )
 from bot.states.user_states import SearchStates
+from bot.utils.teacher_format import build_today_label
 
 router = Router(name="user_panel")
 
@@ -127,36 +127,25 @@ async def cb_onboarding_main(callback: types.CallbackQuery, state: FSMContext):
 # ============ 📚 今日开课老师 ============
 
 
-_USER_TODAY_GROUP_ORDER: list[tuple[str, str]] = [
-    ("all", "🌞 全天可约"),
-    ("afternoon", "🌤 下午可约"),
-    ("evening", "🌙 晚上可约"),
-    ("other", "📝 其他时间"),
-    ("full", "🈵 今日已满"),
-]
-
-
 @router.callback_query(F.data == "user:today")
 async def cb_today(callback: types.CallbackQuery):
-    """展示当天所有已签到老师（Phase 5：按时间段分组 + teacher:view 按钮）
+    """展示当天所有已签到老师（扁平列表）
 
-    范围：当天已签到 + 启用 + daily_status != 'unavailable'
-    分组：5 个 bucket（全天 / 下午 / 晚上 / 其他时间 / 今日已满）
-    按钮：每个老师 → teacher:view:<id>（私聊详情页）
-    频道 14:00 自动发布走另一条 build_daily_checkin_payload 路径，URL 按钮不变。
+    范围：当天已签到 + 启用 + daily_status 不在 ('unavailable','full')
+    按钮文案：'地区 艺名 价格'（价格除以 100 + P）
+    按钮回调：teacher:view:<id>（私聊详情页）
     """
     today = _today_str()
-    # Phase 5：try 排序版（带 daily_status）；老 schema 异常时回退
     try:
         teachers = await get_sorted_teachers(
             active_only=True,
             signed_in_date=today,
             exclude_unavailable=True,
+            exclude_full=True,
         )
-        groupable = True
     except Exception:
+        # 老 schema 异常 fallback：不带 full 过滤
         teachers = await get_checked_in_teachers(today)
-        groupable = False
 
     if not teachers:
         await callback.message.edit_text(
@@ -166,55 +155,18 @@ async def cb_today(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    # 老师按钮文案
-    def _label(t: dict) -> str:
-        return t.get("button_text") or t["display_name"]
-
-    # 分组渲染：每个 group 一行标题占位（noop callback）+ 该组的老师按钮（per_row=2）
     rows: list[list[types.InlineKeyboardButton]] = []
-
-    if not groupable:
-        # 回退到不分组
-        row: list[types.InlineKeyboardButton] = []
-        for t in teachers:
-            row.append(types.InlineKeyboardButton(
-                text=_label(t),
-                callback_data=f"teacher:view:{t['user_id']}",
-            ))
-            if len(row) == 2:
-                rows.append(row)
-                row = []
-        if row:
+    row: list[types.InlineKeyboardButton] = []
+    for t in teachers:
+        row.append(types.InlineKeyboardButton(
+            text=build_today_label(t),
+            callback_data=f"teacher:view:{t['user_id']}",
+        ))
+        if len(row) == 2:
             rows.append(row)
-    else:
-        # 分组
-        buckets: dict[str, list[dict]] = {key: [] for key, _ in _USER_TODAY_GROUP_ORDER}
-        for t in teachers:
-            key = get_display_time_group(t)
-            if key not in buckets:
-                key = "other"
-            buckets[key].append(t)
-
-        for key, header in _USER_TODAY_GROUP_ORDER:
-            bucket = buckets[key]
-            if not bucket:
-                continue
-            # 组标题
-            rows.append([types.InlineKeyboardButton(
-                text=header,
-                callback_data="noop:section",
-            )])
-            row: list[types.InlineKeyboardButton] = []
-            for t in bucket:
-                row.append(types.InlineKeyboardButton(
-                    text=_label(t),
-                    callback_data=f"teacher:view:{t['user_id']}",
-                ))
-                if len(row) == 2:
-                    rows.append(row)
-                    row = []
-            if row:
-                rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
 
     rows.append([types.InlineKeyboardButton(
         text="🔙 返回主菜单",
@@ -281,9 +233,10 @@ async def cb_favorites(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "user:fav_today")
 async def cb_fav_today(callback: types.CallbackQuery):
-    """收藏老师中当天已签到的（Phase 2：点击进入 teacher:view 详情页）"""
+    """收藏老师中当天已签到的（扁平列表 + 隐藏 full 状态）"""
     today = _today_str()
     teachers = await list_user_favorites_signed_in(callback.from_user.id, today)
+    teachers = [t for t in teachers if (t.get("daily_status") or "") != "full"]
     if not teachers:
         await callback.message.edit_text(
             f"💝 收藏开课 · {today}\n\n你的收藏老师今日均未开课。",
@@ -299,7 +252,7 @@ async def cb_fav_today(callback: types.CallbackQuery):
     kb = teacher_detail_list_kb(
         teachers,
         per_row=2,
-        label_fn=lambda t: t.get("button_text") or t["display_name"],
+        label_fn=build_today_label,
     )
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()

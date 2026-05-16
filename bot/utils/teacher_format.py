@@ -33,6 +33,34 @@ def parse_teacher_tags(teacher: dict) -> list[str]:
         return []
 
 
+def format_price_display(price: Optional[str]) -> str:
+    """把存储价格转换为展示价格：'1000P' → '10P'，'900P' → '9P'
+
+    规则：抽出数字部分，除以 100 后追加 'P'。无数字时原样返回；None/空 → ''。
+    """
+    if price is None:
+        return ""
+    s = str(price).strip()
+    if not s:
+        return ""
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return s
+    return f"{int(digits) // 100}P"
+
+
+def build_today_label(t: dict) -> str:
+    """今日开课列表按钮 label：'地区 艺名 价格'
+
+    任一字段缺失时跳过该段；空白用空格连接。display_name 全空时兜底 '?'。
+    """
+    region = (t.get("region") or "").strip()
+    name = (t.get("display_name") or "").strip()
+    price = format_price_display(t.get("price"))
+    parts = [p for p in (region, name, price) if p]
+    return " ".join(parts) or name or "?"
+
+
 def build_teacher_hot_text(
     teacher: dict,
     today_str: str,

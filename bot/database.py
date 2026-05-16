@@ -1274,19 +1274,22 @@ async def list_user_favorites_signed_in(
     """用户的"收藏 ∩ 当天已签到"老师（用于 C1 "💝 收藏开课"子菜单）
 
     仅返回 is_active=1 的老师，按签到时间排序。
+    LEFT JOIN teacher_daily_status：返回 daily_status 字段供 handler 过滤 full。
     """
     db = await get_db()
     try:
         cursor = await db.execute(
-            """SELECT t.*
+            """SELECT t.*, s.status AS daily_status
                FROM favorites f
                INNER JOIN teachers t ON f.teacher_id = t.user_id
                INNER JOIN checkins c ON t.user_id = c.teacher_id
+               LEFT JOIN teacher_daily_status s
+                  ON s.teacher_id = t.user_id AND s.status_date = ?
                WHERE f.user_id = ?
                  AND c.checkin_date = ?
                  AND t.is_active = 1
                ORDER BY c.created_at""",
-            (user_id, date_str),
+            (date_str, user_id, date_str),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -1860,6 +1863,7 @@ async def get_sorted_teachers(
     signed_in_date: Optional[str] = None,
     limit: Optional[int] = None,
     exclude_unavailable: bool = False,
+    exclude_full: bool = False,
 ) -> list[dict]:
     """按统一排序规则返回老师列表（Phase 3 §二 + Phase 5 接入 daily_status）
 
@@ -1877,6 +1881,7 @@ async def get_sorted_teachers(
         limit: 限制返回条数
         exclude_unavailable: True → 过滤掉 daily_status='unavailable' 的老师
                              用于频道发布和用户今日开课列表（Phase 5 §五）
+        exclude_full: True → 过滤掉 daily_status='full' 的老师（与 unavailable 合并视为下线）
 
     Returns:
         teachers list，每条带:
@@ -1894,8 +1899,12 @@ async def get_sorted_teachers(
             "EXISTS (SELECT 1 FROM checkins c "
             "WHERE c.teacher_id = t.user_id AND c.checkin_date = ?)"
         )
-    if exclude_unavailable:
+    if exclude_unavailable and exclude_full:
+        where_clauses.append("(s.status IS NULL OR s.status NOT IN ('unavailable','full'))")
+    elif exclude_unavailable:
         where_clauses.append("(s.status IS NULL OR s.status != 'unavailable')")
+    elif exclude_full:
+        where_clauses.append("(s.status IS NULL OR s.status != 'full')")
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
     limit_sql = " LIMIT ?" if limit is not None else ""
