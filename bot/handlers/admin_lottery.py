@@ -26,6 +26,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     LOTTERY_STATUSES,
+    add_point_transaction,
     cancel_lottery,
     count_lotteries_by_status,
     count_lottery_entries,
@@ -35,6 +36,7 @@ from bot.database import (
     get_users_first_names,
     is_super_admin,
     list_lotteries_by_status,
+    list_lottery_entries_for_draw,
     list_lottery_entries_paged,
     log_admin_audit,
     set_config,
@@ -225,7 +227,10 @@ async def _render_lottery_detail(lottery: dict) -> str:
 @router.callback_query(F.data.startswith("admin:lottery:cancel:"))
 @_super_admin_required
 async def cb_admin_lottery_cancel(callback: types.CallbackQuery, state: FSMContext):
-    """[❌ 取消草稿] 二次确认"""
+    """[❌ 取消抽奖] 二次确认（draft / scheduled / active）
+
+    active + cost > 0 + has entries → 显示退积分二选一；否则单确认按钮。
+    """
     parts = callback.data.split(":")
     if len(parts) != 4:
         await callback.answer("参数错误", show_alert=True)
@@ -239,24 +244,144 @@ async def cb_admin_lottery_cancel(callback: types.CallbackQuery, state: FSMConte
     if not lottery:
         await callback.answer("该抽奖不存在", show_alert=True)
         return
-    if lottery.get("status") != "draft":
+    status_val = lottery.get("status")
+    if status_val not in ("draft", "scheduled", "active"):
         await callback.answer(
-            f"当前状态 {lottery.get('status')} 不可在本 phase 取消（active 取消见 L.4）",
+            f"当前状态 {status_val} 不可取消",
             show_alert=True,
         )
         return
+
+    cost = int(lottery.get("entry_cost_points") or 0)
+    entry_count = await count_lottery_entries(lid)
+    show_refund_choice = (status_val == "active" and cost > 0 and entry_count > 0)
+
+    lines = [
+        f"⚠️ 确认取消抽奖 #{lid}「{lottery.get('name', '')}」？",
+        "",
+        f"当前状态：{status_val}",
+        f"参与人数：{entry_count} 位",
+    ]
+    if cost > 0:
+        lines.append(f"参与消耗：{cost} 积分")
+    lines.append("")
+    if show_refund_choice:
+        total_refund = cost * entry_count
+        lines.extend([
+            f"如选择「取消并退积分」，将向 {entry_count} 位参与者各退 {cost} 积分",
+            f"（合计 {total_refund} 积分）。",
+            "",
+            "取消后状态变为 cancelled，无法恢复（记录保留）。",
+        ])
+    else:
+        lines.append("取消后状态变为 cancelled，无法恢复（记录保留）。")
+
     await callback.message.edit_text(
-        f"⚠️ 确认取消抽奖 #{lid}「{lottery.get('name', '')}」？\n\n"
-        "取消后状态变为 cancelled，无法恢复（但记录保留）。",
-        reply_markup=admin_lottery_cancel_confirm_kb(lid),
+        "\n".join(lines),
+        reply_markup=admin_lottery_cancel_confirm_kb(
+            lid, show_refund_choice=show_refund_choice,
+        ),
     )
     await callback.answer()
+
+
+async def _do_lottery_cancel(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    lid: int,
+    *,
+    refund: bool,
+) -> None:
+    """实际取消抽奖 + 可选退款。
+
+    流程：
+        1. 取 lottery（拿 cost / name 用于退款）+ entries
+        2. cancel_lottery
+        3. unschedule_lottery（容错）
+        4. refund=True 且 cost>0 → 遍历 entries add_point_transaction(+cost,
+           reason='lottery_refund', related_id=lid)；audit lottery_refund
+        5. audit lottery_cancel
+        6. 回列表
+    """
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("⚠️ 抽奖不存在", show_alert=True)
+        return
+    cost = int(lottery.get("entry_cost_points") or 0)
+    name = lottery.get("name") or ""
+
+    # 退款必须在 cancel 前抓 entries（cancel 后 entries 仍在表，但顺序更稳）
+    entries_for_refund: list[dict] = []
+    if refund and cost > 0:
+        entries_for_refund = await list_lottery_entries_for_draw(lid)
+
+    ok = await cancel_lottery(lid)
+    if not ok:
+        await callback.answer("⚠️ 取消失败（可能已是终态）", show_alert=True)
+        return
+
+    try:
+        from bot.scheduler.lottery_tasks import unschedule_lottery
+        from bot.main import scheduler as _scheduler
+        unschedule_lottery(_scheduler, lid)
+    except Exception as e:
+        logger.warning("unschedule_lottery 失败 lid=%s: %s", lid, e)
+
+    refunded_count = 0
+    if refund and cost > 0 and entries_for_refund:
+        for entry in entries_for_refund:
+            try:
+                tx_id = await add_point_transaction(
+                    user_id=int(entry["user_id"]),
+                    delta=cost,
+                    reason="lottery_refund",
+                    related_id=lid,
+                    operator_id=callback.from_user.id,
+                    note=name,
+                )
+                if tx_id is not None:
+                    refunded_count += 1
+            except Exception as e:
+                logger.warning(
+                    "lottery_refund 失败 lid=%s uid=%s: %s",
+                    lid, entry.get("user_id"), e,
+                )
+        await log_admin_audit(
+            admin_id=callback.from_user.id,
+            action="lottery_refund",
+            target_type="lottery",
+            target_id=str(lid),
+            detail={
+                "cost": cost,
+                "entries": len(entries_for_refund),
+                "refunded": refunded_count,
+                "total_amount": cost * refunded_count,
+            },
+        )
+
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="lottery_cancel",
+        target_type="lottery",
+        target_id=str(lid),
+        detail={"refund": refund, "refunded": refunded_count, "cost": cost},
+    )
+
+    if refund and refunded_count > 0:
+        await callback.answer(
+            f"✅ 已取消 #{lid}，向 {refunded_count} 位参与者退还 {cost} 积分",
+            show_alert=True,
+        )
+    else:
+        await callback.answer(f"✅ 已取消 #{lid}")
+    callback.data = "admin:lottery:list"
+    await cb_admin_lottery_list(callback, state)
 
 
 @router.callback_query(F.data.startswith("admin:lottery:cancel_ok:"))
 @_super_admin_required
 async def cb_admin_lottery_cancel_ok(callback: types.CallbackQuery, state: FSMContext):
-    """实际取消"""
+    """实际取消（无退款分支：draft / scheduled / cost=0 / 0 entries）"""
     parts = callback.data.split(":")
     if len(parts) != 4:
         await callback.answer("参数错误", show_alert=True)
@@ -266,28 +391,43 @@ async def cb_admin_lottery_cancel_ok(callback: types.CallbackQuery, state: FSMCo
     except ValueError:
         await callback.answer("参数错误", show_alert=True)
         return
-    ok = await cancel_lottery(lid)
-    if not ok:
-        await callback.answer("⚠️ 取消失败（可能已是终态）", show_alert=True)
+    await _do_lottery_cancel(callback, state, lid, refund=False)
+
+
+@router.callback_query(F.data.startswith("admin:lottery:cancel_ok_refund:"))
+@_super_admin_required
+async def cb_admin_lottery_cancel_ok_refund(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """取消并退还参与者积分"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
         return
-    # Phase L.2.2：取消已注册的定时任务
     try:
-        from bot.scheduler.lottery_tasks import unschedule_lottery
-        from bot.main import scheduler as _scheduler
-        unschedule_lottery(_scheduler, lid)
-    except Exception as e:
-        logger.warning("unschedule_lottery 失败 lid=%s: %s", lid, e)
-    await log_admin_audit(
-        admin_id=callback.from_user.id,
-        action="lottery_cancel",
-        target_type="lottery",
-        target_id=str(lid),
-        detail={},
-    )
-    await callback.answer(f"✅ 已取消 #{lid}")
-    # 回到列表
-    callback.data = "admin:lottery:list"
-    await cb_admin_lottery_list(callback, state)
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await _do_lottery_cancel(callback, state, lid, refund=True)
+
+
+@router.callback_query(F.data.startswith("admin:lottery:cancel_ok_norefund:"))
+@_super_admin_required
+async def cb_admin_lottery_cancel_ok_norefund(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """取消但不退还积分（admin 明确选择）"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await _do_lottery_cancel(callback, state, lid, refund=False)
 
 
 # ============ 立即发布（Phase L.2.1）============

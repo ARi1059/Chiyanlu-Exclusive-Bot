@@ -1068,14 +1068,42 @@ def admin_lottery_publish_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def admin_lottery_cancel_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
-    """取消草稿二次确认"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⚠️ 确认取消", callback_data=f"admin:lottery:cancel_ok:{lottery_id}"),
-            InlineKeyboardButton(text="🔙 不取消", callback_data=f"admin:lottery:item:{lottery_id}"),
-        ],
+def admin_lottery_cancel_confirm_kb(
+    lottery_id: int,
+    *,
+    show_refund_choice: bool = False,
+) -> InlineKeyboardMarkup:
+    """取消抽奖二次确认
+
+    - show_refund_choice=False（默认；草稿/0 entries/cost=0）：单按钮 ⚠️ 确认取消
+    - show_refund_choice=True（active 且 cost > 0 且 has entries）：
+      两个按钮 [✅ 取消并退积分] / [⚠️ 取消但不退积分]
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_refund_choice:
+        rows.append([
+            InlineKeyboardButton(
+                text="✅ 取消并退积分",
+                callback_data=f"admin:lottery:cancel_ok_refund:{lottery_id}",
+            ),
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                text="⚠️ 取消但不退积分",
+                callback_data=f"admin:lottery:cancel_ok_norefund:{lottery_id}",
+            ),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                text="⚠️ 确认取消",
+                callback_data=f"admin:lottery:cancel_ok:{lottery_id}",
+            ),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="🔙 不取消", callback_data=f"admin:lottery:item:{lottery_id}"),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ============ 抽奖创建 FSM 键盘（Phase L.1.2） ============
