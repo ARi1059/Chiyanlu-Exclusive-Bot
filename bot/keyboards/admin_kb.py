@@ -809,6 +809,74 @@ def admin_points_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def admin_points_grant_value_kb() -> InlineKeyboardMarkup:
+    """[➕ 手动加分] Step 2 加分值预设（spec §3.2）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="+1 P/PP", callback_data="admin:points:grant_v:p"),
+            InlineKeyboardButton(text="+3 包时", callback_data="admin:points:grant_v:hour"),
+        ],
+        [
+            InlineKeyboardButton(text="+5 包夜", callback_data="admin:points:grant_v:night"),
+            InlineKeyboardButton(text="+8 包天", callback_data="admin:points:grant_v:day"),
+        ],
+        [
+            InlineKeyboardButton(text="+10", callback_data="admin:points:grant_v:p10"),
+            InlineKeyboardButton(text="+20", callback_data="admin:points:grant_v:p20"),
+        ],
+        [
+            InlineKeyboardButton(text="➖ 扣分", callback_data="admin:points:grant_minus"),
+            InlineKeyboardButton(text="💬 自定义", callback_data="admin:points:grant_custom"),
+        ],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:points:grant_cancel")],
+    ])
+
+
+def admin_points_grant_minus_kb() -> InlineKeyboardMarkup:
+    """[➖ 扣分] Step 2b 扣分预设"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="-1", callback_data="admin:points:grant_m:1"),
+            InlineKeyboardButton(text="-3", callback_data="admin:points:grant_m:3"),
+        ],
+        [
+            InlineKeyboardButton(text="-5", callback_data="admin:points:grant_m:5"),
+            InlineKeyboardButton(text="-10", callback_data="admin:points:grant_m:10"),
+        ],
+        [InlineKeyboardButton(text="💬 自定义负数", callback_data="admin:points:grant_custom")],
+        [
+            InlineKeyboardButton(text="🔙 返回加分", callback_data="admin:points:grant_back"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="admin:points:grant_cancel"),
+        ],
+    ])
+
+
+def admin_points_grant_reason_kb() -> InlineKeyboardMarkup:
+    """Step 3 加分原因预设（spec §3.2）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📝 报告审核补加", callback_data="admin:points:grant_r:audit"),
+            InlineKeyboardButton(text="🎁 活动奖励",     callback_data="admin:points:grant_r:event"),
+        ],
+        [
+            InlineKeyboardButton(text="⚠️ 违规扣分", callback_data="admin:points:grant_r:violate"),
+            InlineKeyboardButton(text="🛠 系统修正", callback_data="admin:points:grant_r:fix"),
+        ],
+        [InlineKeyboardButton(text="💬 自定义原因", callback_data="admin:points:grant_rcustom")],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:points:grant_cancel")],
+    ])
+
+
+def admin_points_grant_confirm_kb() -> InlineKeyboardMarkup:
+    """Step 4 确认页（spec §3.2）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 确认", callback_data="admin:points:grant_ok"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="admin:points:grant_cancel"),
+        ],
+    ])
+
+
 def rreview_approve_points_kb(review_id: int) -> InlineKeyboardMarkup:
     """Phase P.1：审核通过加分子页（spec §3.1）
 

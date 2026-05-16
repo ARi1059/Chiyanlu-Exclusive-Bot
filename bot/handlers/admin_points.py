@@ -20,20 +20,31 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.database import (
+    add_point_transaction,
     count_user_point_transactions,
     find_user_by_username,
     get_user,
     get_user_points_summary,
+    get_user_total_points,
     is_super_admin,
     list_user_point_transactions,
     log_admin_audit,
+    POINT_GRANT_REASON_OPTIONS,
+    POINT_PACKAGE_OPTIONS,
 )
 from bot.keyboards.admin_kb import (
     admin_points_back_kb,
     admin_points_cancel_kb,
+    admin_points_grant_confirm_kb,
+    admin_points_grant_minus_kb,
+    admin_points_grant_reason_kb,
+    admin_points_grant_value_kb,
     admin_points_menu_kb,
 )
-from bot.states.teacher_states import AdminPointsQueryStates
+from bot.states.teacher_states import (
+    AdminPointsGrantStates,
+    AdminPointsQueryStates,
+)
 from bot.utils.user_points_render import (
     fetch_teacher_names_for_txs,
     format_points_detail_block,
@@ -194,3 +205,352 @@ async def _render_user_points_view(user_row: dict) -> str:
         f"{detail_title}\n"
         f"{detail_block}"
     )
+
+
+# ============ 手动加扣分 4 步 FSM ============
+
+# 加分预设额外项（spec §3.2：+10 / +20）
+_EXTRA_GRANT_VALUES: dict[str, dict] = {
+    "p10": {"delta": 10, "label": "+10"},
+    "p20": {"delta": 20, "label": "+20"},
+}
+
+
+def _build_pkg_lookup() -> dict[str, dict]:
+    """合并 POINT_PACKAGE_OPTIONS (P/PP/包时/包夜/包天/不加分) + _EXTRA"""
+    m: dict[str, dict] = {}
+    for o in POINT_PACKAGE_OPTIONS:
+        m[o["key"]] = {"delta": int(o["delta"]), "label": o["label"]}
+    m.update(_EXTRA_GRANT_VALUES)
+    return m
+
+
+_PKG_LOOKUP = _build_pkg_lookup()
+_REASON_LOOKUP = {o["key"]: o for o in POINT_GRANT_REASON_OPTIONS}
+
+
+@router.callback_query(F.data == "admin:points:grant")
+@_super_admin_required
+async def cb_admin_points_grant(callback: types.CallbackQuery, state: FSMContext):
+    """[➕ 手动加分] Step 1 入口"""
+    await state.set_state(AdminPointsGrantStates.waiting_target)
+    await state.set_data({})
+    await callback.message.edit_text(
+        "➕ 手动加分（Step 1/4）\n\n"
+        "请输入目标用户的 Telegram 数字 ID 或 @username。\n"
+        "/cancel 取消。",
+        reply_markup=admin_points_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(F.text == "/cancel", AdminPointsGrantStates())
+@_super_admin_required
+async def cmd_cancel_grant(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("已取消。", reply_markup=admin_points_menu_kb())
+
+
+@router.callback_query(F.data == "admin:points:grant_cancel")
+@_super_admin_required
+async def cb_grant_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("已取消。", reply_markup=admin_points_menu_kb())
+    await callback.answer()
+
+
+@router.message(AdminPointsGrantStates.waiting_target, F.text)
+@_super_admin_required
+async def on_grant_target(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel_grant(message, state)
+    user_row = await _resolve_user(text)
+    if user_row is None:
+        await message.reply(
+            "❌ 未找到该用户。请确认 user_id 或 @username 正确，或 /cancel 取消。"
+        )
+        return
+    user_id = int(user_row["user_id"])
+    current = await get_user_total_points(user_id)
+    await state.update_data(
+        target_user_id=user_id,
+        target_username=user_row.get("username"),
+        target_first_name=user_row.get("first_name") or "",
+        current_total=current,
+    )
+    await state.set_state(AdminPointsGrantStates.waiting_delta)
+
+    name_line = (user_row.get("first_name") or "(无姓名)")
+    if user_row.get("username"):
+        name_line = f"{name_line} (@{user_row['username']})"
+    await message.answer(
+        f"➕ 手动加分（Step 2/4）\n\n"
+        f"目标：{name_line}\n"
+        f"uid：{user_id}\n"
+        f"当前余额：{current} 分\n\n"
+        "请选择加分值：",
+        reply_markup=admin_points_grant_value_kb(),
+    )
+
+
+# ---- Step 2：选数值 ----
+
+@router.callback_query(F.data.startswith("admin:points:grant_v:"))
+@_super_admin_required
+async def cb_grant_value_preset(callback: types.CallbackQuery, state: FSMContext):
+    """加分预设：+1/+3/+5/+8/+10/+20"""
+    key = callback.data.split(":")[3]
+    pkg = _PKG_LOOKUP.get(key)
+    if not pkg:
+        await callback.answer("未知套餐", show_alert=True)
+        return
+    await state.update_data(delta=int(pkg["delta"]), package_label=pkg["label"])
+    await _enter_reason_step(callback, state)
+
+
+@router.callback_query(F.data == "admin:points:grant_minus")
+@_super_admin_required
+async def cb_grant_value_minus_entry(callback: types.CallbackQuery, state: FSMContext):
+    """[➖ 扣分] 入口 → 显示扣分子页"""
+    await callback.message.edit_text(
+        "➖ 扣分（Step 2b/4）\n\n请选择扣分值：",
+        reply_markup=admin_points_grant_minus_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:points:grant_back")
+@_super_admin_required
+async def cb_grant_value_back(callback: types.CallbackQuery, state: FSMContext):
+    """扣分子页 [🔙 返回加分] → 回 Step 2 加分页"""
+    data = await state.get_data()
+    name_line = data.get("target_first_name") or "(无姓名)"
+    if data.get("target_username"):
+        name_line = f"{name_line} (@{data['target_username']})"
+    await callback.message.edit_text(
+        f"➕ 手动加分（Step 2/4）\n\n"
+        f"目标：{name_line}\n"
+        f"uid：{data.get('target_user_id')}\n"
+        f"当前余额：{data.get('current_total', 0)} 分\n\n"
+        "请选择加分值：",
+        reply_markup=admin_points_grant_value_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:points:grant_m:"))
+@_super_admin_required
+async def cb_grant_value_minus_preset(callback: types.CallbackQuery, state: FSMContext):
+    """扣分预设：-1/-3/-5/-10"""
+    try:
+        n = int(callback.data.split(":")[3])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    delta = -abs(n)
+    await state.update_data(delta=delta, package_label=f"{delta}")
+    await _enter_reason_step(callback, state)
+
+
+@router.callback_query(F.data == "admin:points:grant_custom")
+@_super_admin_required
+async def cb_grant_value_custom(callback: types.CallbackQuery, state: FSMContext):
+    """[💬 自定义] → FSM 等数字 -100~100"""
+    await state.set_state(AdminPointsGrantStates.waiting_custom_delta)
+    await callback.message.edit_text(
+        "💬 自定义加分值（Step 2c/4）\n\n"
+        "请回复一个 -100 至 100 之间的整数（含 0）。\n"
+        "/cancel 取消。",
+        reply_markup=admin_points_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminPointsGrantStates.waiting_custom_delta, F.text)
+@_super_admin_required
+async def on_custom_delta(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel_grant(message, state)
+    try:
+        delta = int(text)
+    except ValueError:
+        await message.reply("❌ 请输入整数（-100~100），或 /cancel 取消。")
+        return
+    if delta < -100 or delta > 100:
+        await message.reply(f"❌ 范围 -100~100，当前 {delta}。")
+        return
+    await state.update_data(delta=delta, package_label=f"自定义 {'+' if delta > 0 else ''}{delta}")
+    # 回到 reason 步骤需 callback 触发；这里用 message 驱动
+    data = await state.get_data()
+    await state.set_state(AdminPointsGrantStates.waiting_reason)
+    await message.answer(
+        _format_reason_prompt(data, delta),
+        reply_markup=admin_points_grant_reason_kb(),
+    )
+
+
+def _format_reason_prompt(data: dict, delta: int) -> str:
+    name_line = data.get("target_first_name") or "(无姓名)"
+    if data.get("target_username"):
+        name_line = f"{name_line} (@{data['target_username']})"
+    pkg_label = data.get("package_label") or f"{delta:+d}"
+    return (
+        f"➕ 手动加分（Step 3/4）\n\n"
+        f"目标：{name_line}\n"
+        f"加分值：{pkg_label}（{delta:+d} 分）\n\n"
+        "请选择加分原因："
+    )
+
+
+async def _enter_reason_step(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    delta = int(data.get("delta", 0))
+    await state.set_state(AdminPointsGrantStates.waiting_reason)
+    await callback.message.edit_text(
+        _format_reason_prompt(data, delta),
+        reply_markup=admin_points_grant_reason_kb(),
+    )
+    await callback.answer()
+
+
+# ---- Step 3：选原因 ----
+
+@router.callback_query(F.data.startswith("admin:points:grant_r:"))
+@_super_admin_required
+async def cb_grant_reason_preset(callback: types.CallbackQuery, state: FSMContext):
+    """选预设原因 → 进确认页"""
+    key = callback.data.split(":")[3]
+    reason_meta = _REASON_LOOKUP.get(key)
+    if not reason_meta:
+        await callback.answer("未知原因", show_alert=True)
+        return
+    await state.update_data(
+        reason_key=key,
+        reason_db=reason_meta["reason"],
+        reason_note=reason_meta["note"],
+    )
+    await _enter_confirm_step(callback, state)
+
+
+@router.callback_query(F.data == "admin:points:grant_rcustom")
+@_super_admin_required
+async def cb_grant_reason_custom(callback: types.CallbackQuery, state: FSMContext):
+    """[💬 自定义原因] → FSM 等文本"""
+    await state.set_state(AdminPointsGrantStates.waiting_custom_reason)
+    await callback.message.edit_text(
+        "💬 自定义原因（Step 3c/4）\n\n"
+        "请回复一段文字（≤ 100 字）作为加扣分原因。\n"
+        "/cancel 取消。",
+        reply_markup=admin_points_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminPointsGrantStates.waiting_custom_reason, F.text)
+@_super_admin_required
+async def on_custom_reason(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel_grant(message, state)
+    if not text:
+        await message.reply("❌ 请输入非空原因，或 /cancel 取消。")
+        return
+    if len(text) > 100:
+        await message.reply(f"❌ 原因过长（≤ 100 字），当前 {len(text)} 字。")
+        return
+    # 自定义原因：根据 delta 正负决定 reason db 值
+    data = await state.get_data()
+    delta = int(data.get("delta", 0))
+    reason_db = "admin_grant" if delta >= 0 else "admin_revoke"
+    await state.update_data(reason_key="custom", reason_db=reason_db, reason_note=text)
+    # 渲染确认页（message 驱动）
+    await state.set_state(AdminPointsGrantStates.waiting_confirm)
+    await message.answer(
+        _format_confirm_text(await state.get_data()),
+        reply_markup=admin_points_grant_confirm_kb(),
+    )
+
+
+async def _enter_confirm_step(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AdminPointsGrantStates.waiting_confirm)
+    await callback.message.edit_text(
+        _format_confirm_text(await state.get_data()),
+        reply_markup=admin_points_grant_confirm_kb(),
+    )
+    await callback.answer()
+
+
+def _format_confirm_text(data: dict) -> str:
+    """Step 4 确认页（spec §3.2）"""
+    name_line = data.get("target_first_name") or "(无姓名)"
+    if data.get("target_username"):
+        name_line = f"{name_line} (@{data['target_username']})"
+    delta = int(data.get("delta", 0))
+    current = int(data.get("current_total", 0))
+    new_total = current + delta
+    pkg_label = data.get("package_label") or f"{delta:+d}"
+    note = data.get("reason_note") or "-"
+    return (
+        f"➕ 手动加分确认（Step 4/4）\n\n"
+        f"👤 目标：{name_line}\n"
+        f"uid：{data.get('target_user_id')}\n\n"
+        f"加分值：{pkg_label}（{delta:+d} 分）\n"
+        f"原因：{note}\n\n"
+        f"💰 余额变化：{current} → {new_total} 分\n\n"
+        "确认后立即执行；可在 [📋 数据看板] 操作日志查到本次审计记录。"
+    )
+
+
+# ---- Step 4：确认提交 ----
+
+@router.callback_query(F.data == "admin:points:grant_ok")
+@_super_admin_required
+async def cb_grant_confirm(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    target = data.get("target_user_id")
+    delta = data.get("delta")
+    reason_db = data.get("reason_db")
+    note = data.get("reason_note")
+    if target is None or delta is None or not reason_db:
+        await callback.answer("状态丢失，请重新进入", show_alert=True)
+        await state.clear()
+        try:
+            await callback.message.edit_text("已取消（状态丢失）。", reply_markup=admin_points_menu_kb())
+        except Exception:
+            pass
+        return
+
+    tx_id = await add_point_transaction(
+        int(target), int(delta), reason_db,
+        operator_id=callback.from_user.id,
+        note=note,
+    )
+    if not tx_id:
+        await callback.answer("写入失败，请检查", show_alert=True)
+        return
+
+    new_total = await get_user_total_points(int(target))
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="points_grant",
+        target_type="user",
+        target_id=str(target),
+        detail={
+            "delta": int(delta),
+            "reason": reason_db,
+            "note": note,
+            "new_total": new_total,
+            "tx_id": tx_id,
+        },
+    )
+    await state.clear()
+    await callback.message.edit_text(
+        f"✅ 已 {'加' if int(delta) >= 0 else '扣'} {abs(int(delta))} 分\n\n"
+        f"👤 uid {target}\n"
+        f"💰 新余额：{new_total} 分\n"
+        f"原因：{note}",
+        reply_markup=admin_points_back_kb(),
+    )
+    await callback.answer(f"完成（{int(delta):+d}）")
