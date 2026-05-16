@@ -232,6 +232,65 @@ async def init_db():
                 updated_at              TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS teacher_reviews (
+                id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                teacher_id                  INTEGER NOT NULL,
+                user_id                     INTEGER NOT NULL,
+                booking_screenshot_file_id  TEXT NOT NULL,
+                gesture_photo_file_id       TEXT NOT NULL,
+                rating                      TEXT NOT NULL,
+                score_humanphoto            REAL NOT NULL,
+                score_appearance            REAL NOT NULL,
+                score_body                  REAL NOT NULL,
+                score_service               REAL NOT NULL,
+                score_attitude              REAL NOT NULL,
+                score_environment           REAL NOT NULL,
+                overall_score               REAL NOT NULL,
+                summary                     TEXT,
+                status                      TEXT NOT NULL DEFAULT 'pending',
+                reviewer_id                 INTEGER,
+                reject_reason               TEXT,
+                discussion_chat_id          INTEGER,
+                discussion_msg_id           INTEGER,
+                created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at                 TEXT,
+                published_at                TEXT,
+                FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE,
+                CHECK (
+                    score_humanphoto BETWEEN 0 AND 10 AND
+                    score_appearance BETWEEN 0 AND 10 AND
+                    score_body BETWEEN 0 AND 10 AND
+                    score_service BETWEEN 0 AND 10 AND
+                    score_attitude BETWEEN 0 AND 10 AND
+                    score_environment BETWEEN 0 AND 10 AND
+                    overall_score BETWEEN 0 AND 10
+                )
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reviews_teacher_status
+                ON teacher_reviews(teacher_id, status);
+            CREATE INDEX IF NOT EXISTS idx_reviews_status_created
+                ON teacher_reviews(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_reviews_user_created
+                ON teacher_reviews(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_reviews_user_teacher_created
+                ON teacher_reviews(user_id, teacher_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS required_subscriptions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id      INTEGER NOT NULL UNIQUE,
+                chat_type    TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                invite_link  TEXT NOT NULL,
+                sort_order   INTEGER DEFAULT 0,
+                is_active    INTEGER DEFAULT 1,
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_required_subs_active
+                ON required_subscriptions(is_active, sort_order);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -3892,3 +3951,277 @@ async def seconds_since_last_caption_edit(teacher_id: int) -> Optional[float]:
         return max(0.0, float(row["sec"]))
     except (TypeError, ValueError):
         return None
+
+
+# ============ 评价 / 必关频道 (Phase 9.3) ============
+
+# 6 维度评分配置（spec §7.5）
+REVIEW_DIMENSIONS: list[dict] = [
+    {"key": "humanphoto",   "label": "🎨 人照",   "column": "score_humanphoto"},
+    {"key": "appearance",   "label": "颜值",      "column": "score_appearance"},
+    {"key": "body",         "label": "身材",      "column": "score_body"},
+    {"key": "service",      "label": "服务",      "column": "score_service"},
+    {"key": "attitude",     "label": "态度",      "column": "score_attitude"},
+    {"key": "environment",  "label": "环境",      "column": "score_environment"},
+]
+
+REVIEW_RATINGS: list[dict] = [
+    {"key": "positive", "emoji": "👍", "label": "好评"},
+    {"key": "neutral",  "emoji": "😐", "label": "中评"},
+    {"key": "negative", "emoji": "👎", "label": "差评"},
+]
+
+REVIEW_SCORE_MIN: float = 0.0
+REVIEW_SCORE_MAX: float = 10.0
+REVIEW_SCORE_DECIMAL_PLACES: int = 1
+REVIEW_SCORE_QUICK_BUTTONS_FOR_DIM: list[float] = [6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0]
+REVIEW_SCORE_QUICK_BUTTONS_FOR_OVERALL: list[float] = [7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0]
+
+REVIEW_SUMMARY_MIN_LEN: int = 5
+REVIEW_SUMMARY_MAX_LEN: int = 100
+REVIEW_SUMMARY_REQUIRED: bool = False
+
+REVIEW_RATE_LIMIT_PER_TEACHER_24H: int = 3
+REVIEW_RATE_LIMIT_PER_USER_DAY: int = 10
+REVIEW_RATE_LIMIT_PER_USER_60S: int = 1
+
+
+def parse_review_score(text: str) -> Optional[float]:
+    """解析评分输入文字 → float in [0,10]，最多 1 位小数
+
+    成功返回 round(x, 1)；失败返回 None。
+    纯函数，不访问 DB。
+    """
+    if text is None:
+        return None
+    s = str(text).strip()
+    if not s:
+        return None
+    # 不允许带空格 / 字母（"8.5 分"也返回 None，由 UI 引导用户）
+    try:
+        value = float(s)
+    except ValueError:
+        return None
+    if value < REVIEW_SCORE_MIN or value > REVIEW_SCORE_MAX:
+        return None
+    # 小数位 > 1 → 拒绝；用 round 之前先看原字符串
+    if "." in s:
+        decimal_part = s.split(".", 1)[1]
+        if len(decimal_part) > REVIEW_SCORE_DECIMAL_PLACES:
+            return None
+    return round(value, REVIEW_SCORE_DECIMAL_PLACES)
+
+
+# ---- required_subscriptions CRUD ----
+
+async def add_required_subscription(
+    chat_id: int,
+    chat_type: str,
+    display_name: str,
+    invite_link: str,
+    sort_order: int = 0,
+) -> Optional[int]:
+    """新增必关订阅项；chat_id 冲突时返回 None"""
+    db = await get_db()
+    try:
+        try:
+            cur = await db.execute(
+                """INSERT INTO required_subscriptions
+                    (chat_id, chat_type, display_name, invite_link, sort_order)
+                    VALUES (?, ?, ?, ?, ?)""",
+                (chat_id, chat_type, display_name, invite_link, sort_order),
+            )
+        except Exception:
+            return None
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def list_required_subscriptions(active_only: bool = False) -> list[dict]:
+    """列出必关订阅项，按 sort_order ASC, id ASC"""
+    db = await get_db()
+    try:
+        query = "SELECT * FROM required_subscriptions"
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY sort_order, id"
+        cur = await db.execute(query)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_required_subscription(item_id: int) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM required_subscriptions WHERE id = ?", (item_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def toggle_required_subscription(item_id: int) -> Optional[int]:
+    """启停切换；返回切换后的 is_active 值；不存在时返回 None"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT is_active FROM required_subscriptions WHERE id = ?", (item_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        new_val = 0 if row["is_active"] else 1
+        await db.execute(
+            "UPDATE required_subscriptions SET is_active = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (new_val, item_id),
+        )
+        await db.commit()
+        return new_val
+    finally:
+        await db.close()
+
+
+async def remove_required_subscription(item_id: int) -> bool:
+    db = await get_db()
+    try:
+        await db.execute(
+            "DELETE FROM required_subscriptions WHERE id = ?", (item_id,)
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+# ---- teacher_reviews CRUD ----
+
+async def create_teacher_review(data: dict) -> Optional[int]:
+    """插入 pending 评价，返回 review_id
+
+    data 必含：teacher_id / user_id / booking_screenshot_file_id /
+              gesture_photo_file_id / rating / 6 个 score_* / overall_score
+    可选：summary（None 或字符串）
+    """
+    required = ["teacher_id", "user_id", "booking_screenshot_file_id",
+                "gesture_photo_file_id", "rating", "overall_score"]
+    for f in required:
+        if data.get(f) is None:
+            return None
+    for d in REVIEW_DIMENSIONS:
+        if data.get(d["column"]) is None:
+            return None
+
+    db = await get_db()
+    try:
+        try:
+            cur = await db.execute(
+                """INSERT INTO teacher_reviews (
+                    teacher_id, user_id,
+                    booking_screenshot_file_id, gesture_photo_file_id,
+                    rating,
+                    score_humanphoto, score_appearance, score_body,
+                    score_service, score_attitude, score_environment,
+                    overall_score, summary, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                (
+                    int(data["teacher_id"]), int(data["user_id"]),
+                    data["booking_screenshot_file_id"],
+                    data["gesture_photo_file_id"],
+                    data["rating"],
+                    float(data["score_humanphoto"]),
+                    float(data["score_appearance"]),
+                    float(data["score_body"]),
+                    float(data["score_service"]),
+                    float(data["score_attitude"]),
+                    float(data["score_environment"]),
+                    float(data["overall_score"]),
+                    data.get("summary"),
+                ),
+            )
+        except Exception as e:
+            logger.warning("create_teacher_review 失败: %s", e)
+            return None
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_teacher_review(review_id: int) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teacher_reviews WHERE id = ?", (review_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def count_recent_user_reviews(user_id: int, seconds: int) -> int:
+    """近 seconds 秒内该用户提交的评价数（不分老师，含 pending/approved/rejected）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM teacher_reviews "
+            "WHERE user_id = ? AND created_at >= datetime('now', ? || ' seconds')",
+            (user_id, f"-{int(seconds)}"),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def count_recent_user_teacher_reviews(
+    user_id: int, teacher_id: int, seconds: int,
+) -> int:
+    """近 seconds 秒内该用户对该老师的评价数"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM teacher_reviews "
+            "WHERE user_id = ? AND teacher_id = ? "
+            "  AND created_at >= datetime('now', ? || ' seconds')",
+            (user_id, teacher_id, f"-{int(seconds)}"),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def count_pending_reviews() -> int:
+    """待审核评价数（用于主面板 [📝 报告审核 (M)] 徽标，Phase 9.4 用）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM teacher_reviews WHERE status = 'pending'"
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def list_pending_reviews(limit: int = 50, offset: int = 0) -> list[dict]:
+    """列出待审核评价（Phase 9.4 用），按 created_at ASC（最老的先审）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teacher_reviews WHERE status = 'pending' "
+            "ORDER BY created_at LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
