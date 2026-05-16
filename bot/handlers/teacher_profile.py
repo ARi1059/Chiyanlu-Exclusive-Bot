@@ -1012,6 +1012,7 @@ async def cb_preview_show(callback: types.CallbackQuery):
         get_teacher_channel_post,
     )
     from bot.utils.teacher_profile_render import render_teacher_channel_caption
+    from bot.utils.teacher_channel_publish import _load_brand_settings
     from bot.keyboards.admin_kb import teacher_profile_publish_action_kb
 
     profile = await get_teacher_full_profile(target)
@@ -1022,10 +1023,11 @@ async def cb_preview_show(callback: types.CallbackQuery):
     ok, missing = await is_teacher_profile_complete(target)
     post = await get_teacher_channel_post(target)
     is_published = post is not None
+    brand = await _load_brand_settings(callback.bot)
 
     # 渲染时把 channel_posts 行作为 stats 传入（首发前 post 为 None → 占位符）
     try:
-        caption = render_teacher_channel_caption(profile, stats=post)
+        caption = render_teacher_channel_caption(profile, stats=post, **brand)
         caption_block = (
             "─── 档案 caption 预览 ───\n"
             f"{caption}\n"

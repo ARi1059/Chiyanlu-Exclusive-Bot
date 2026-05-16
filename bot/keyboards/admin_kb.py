@@ -527,6 +527,10 @@ def system_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool"),
             InlineKeyboardButton(text="🔘 报销功能开关", callback_data="system:reimburse_toggle"),
         ],
+        [
+            InlineKeyboardButton(text="🏷 档案品牌名",   callback_data="system:brand_name"),
+            InlineKeyboardButton(text="📡 档案品牌频道", callback_data="system:brand_channels"),
+        ],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 

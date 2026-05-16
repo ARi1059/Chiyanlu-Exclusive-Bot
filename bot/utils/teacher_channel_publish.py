@@ -19,6 +19,7 @@ from aiogram.types import InputMediaPhoto
 from bot.database import (
     delete_teacher_channel_post,
     get_archive_channel_id,
+    get_config,
     get_teacher_channel_post,
     get_teacher_full_profile,
     is_teacher_profile_complete,
@@ -27,6 +28,33 @@ from bot.database import (
     upsert_teacher_channel_post,
 )
 from bot.utils.teacher_profile_render import render_teacher_channel_caption
+
+
+async def _load_brand_settings(bot: Bot) -> dict:
+    """从 config 取品牌名 / 品牌频道 + bot.username
+
+    Returns:
+        {"bot_username": str, "brand_name": str, "brand_channels": str}
+    """
+    try:
+        me = await bot.get_me()
+        bot_username = me.username or "ChiYanBookBot"
+    except Exception as e:
+        logger.warning("bot.get_me 失败，使用默认 bot_username: %s", e)
+        bot_username = "ChiYanBookBot"
+    try:
+        brand_name = (await get_config("archive_brand_name")) or "《痴颜录》"
+    except Exception:
+        brand_name = "《痴颜录》"
+    try:
+        brand_channels = (await get_config("archive_brand_channels")) or ""
+    except Exception:
+        brand_channels = ""
+    return {
+        "bot_username": bot_username,
+        "brand_name": brand_name,
+        "brand_channels": brand_channels,
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +138,10 @@ async def publish_teacher_post(bot: Bot, teacher_id: int) -> dict:
         )
     profile = await _load_publishable_profile(teacher_id)
     chat_id = await _resolve_channel()
+    brand = await _load_brand_settings(bot)
 
     # 首次发布时 stats 还没记录（teacher_channel_posts 不存在）→ 渲染用占位符
-    caption = render_teacher_channel_caption(profile, stats=None)
+    caption = render_teacher_channel_caption(profile, stats=None, **brand)
     media = _build_media_group(profile["photo_album"], caption)
     if not media:
         raise PublishError("no_photos", "相册解析为空。")
@@ -183,8 +212,9 @@ async def update_teacher_post_caption(
     if profile is None:
         raise PublishError("incomplete", f"老师不存在: user_id={teacher_id}")
 
+    brand = await _load_brand_settings(bot)
     try:
-        caption = render_teacher_channel_caption(profile, stats=post)
+        caption = render_teacher_channel_caption(profile, stats=post, **brand)
     except ValueError as e:
         # 必填字段后来被清空了（理论上不该发生，因为 is_complete 校验过才发的）
         logger.warning("update_caption render 失败 teacher=%s: %s", teacher_id, e)

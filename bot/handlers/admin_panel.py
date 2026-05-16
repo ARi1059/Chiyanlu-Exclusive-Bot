@@ -766,6 +766,39 @@ async def cb_set_reimburse_pool(callback: types.CallbackQuery, state: FSMContext
     await callback.answer()
 
 
+@router.callback_query(F.data == "system:brand_name")
+@super_admin_required
+async def cb_set_brand_name(callback: types.CallbackQuery, state: FSMContext):
+    """[🏷 档案品牌名] 设置档案帖末行品牌（默认 《痴颜录》）"""
+    current = await get_config("archive_brand_name") or "《痴颜录》"
+    await state.set_state(SystemSettingStates.waiting_value)
+    await state.set_data({"setting": "archive_brand_name"})
+    await callback.message.edit_text(
+        f"🏷 档案品牌名设置\n\n"
+        f"当前值：{current}\n\n"
+        "请输入新的品牌名（如 《痴颜录》）；\n"
+        "输入 0 恢复默认 《痴颜录》。",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:brand_channels")
+@super_admin_required
+async def cb_set_brand_channels(callback: types.CallbackQuery, state: FSMContext):
+    """[📡 档案品牌频道] 设置档案帖末行品牌频道列表"""
+    current = await get_config("archive_brand_channels") or "（未设置）"
+    await state.set_state(SystemSettingStates.waiting_value)
+    await state.set_data({"setting": "archive_brand_channels"})
+    await callback.message.edit_text(
+        f"📡 档案品牌频道设置\n\n"
+        f"当前值：{current}\n\n"
+        "请输入品牌频道列表（多个用空格分隔），例如：\n"
+        "@CDCChiYanLog @ChiYanLog\n\n"
+        "输入 0 清空。",
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "system:reimburse_toggle")
 @super_admin_required
 async def cb_toggle_reimburse_feature(callback: types.CallbackQuery, state: FSMContext):
@@ -881,6 +914,66 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
         label = f"{text} 元" if int(text) > 0 else "不限"
         await message.answer(f"✅ 报销月度池已设为：{label}")
 
+    elif setting == "archive_brand_name":
+        # 输入 0 恢复默认（清空 config → 渲染时 fallback 《痴颜录》）
+        if text == "0":
+            await set_config("archive_brand_name", "")
+            await log_admin_audit(
+                admin_id=message.from_user.id,
+                action="brand_name_set",
+                target_type="config",
+                target_id="archive_brand_name",
+                detail={"value": ""},
+            )
+            await message.answer("✅ 档案品牌名已恢复默认（《痴颜录》）")
+        else:
+            if len(text) > 30:
+                await message.reply("❌ 品牌名过长（>30 字）")
+                return
+            await set_config("archive_brand_name", text)
+            await log_admin_audit(
+                admin_id=message.from_user.id,
+                action="brand_name_set",
+                target_type="config",
+                target_id="archive_brand_name",
+                detail={"value": text},
+            )
+            await message.answer(f"✅ 档案品牌名已设为：{text}")
+
+    elif setting == "archive_brand_channels":
+        if text == "0":
+            await set_config("archive_brand_channels", "")
+            await log_admin_audit(
+                admin_id=message.from_user.id,
+                action="brand_channels_set",
+                target_type="config",
+                target_id="archive_brand_channels",
+                detail={"value": ""},
+            )
+            await message.answer("✅ 档案品牌频道已清空（档案帖末行不再附频道）")
+        else:
+            # 简单校验：每段必须 @ 开头
+            parts = text.split()
+            invalid = [p for p in parts if not p.startswith("@")]
+            if invalid:
+                await message.reply(
+                    f"❌ 以下条目未以 @ 开头：{', '.join(invalid[:3])}\n"
+                    "格式：@xxx @yyy ...，多个用空格分隔"
+                )
+                return
+            if len(text) > 200:
+                await message.reply("❌ 内容过长（>200 字），请精简")
+                return
+            await set_config("archive_brand_channels", text)
+            await log_admin_audit(
+                admin_id=message.from_user.id,
+                action="brand_channels_set",
+                target_type="config",
+                target_id="archive_brand_channels",
+                detail={"value": text},
+            )
+            await message.answer(f"✅ 档案品牌频道已设为：{text}")
+
     else:
         await message.answer("⚠️ 未知设置项")
 
@@ -932,6 +1025,8 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "reimburse_toggle": "切换报销功能开关",
     "reimburse_queued": "静默录入报销名单",
     "reimburse_activate": "激活报销名单条目（queued → pending）",
+    "brand_name_set": "设置档案品牌名",
+    "brand_channels_set": "设置档案品牌频道",
 }
 
 
