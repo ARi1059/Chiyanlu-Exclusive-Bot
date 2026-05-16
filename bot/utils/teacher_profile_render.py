@@ -76,14 +76,17 @@ def render_teacher_channel_caption(
     brand_name: str = "《痴颜录》",
     brand_channels: str = "",
 ) -> str:
-    """生成老师档案帖 caption（2026-05-17 模板）
+    """生成老师档案帖 caption（2026-05-17 模板 v2）
 
     格式示例：
         👤 乔儿
 
         22 岁 · 163cm · 90kg · 胸 C
 
-        课费：800P
+        📍 地区：金融城 · 成都
+        💰 价格：800P
+        📋 服务：正规推油 / 60 分钟正点
+        🚫 禁忌：不接老外 / 不戴套
 
         📊 0 条车评，综合评分 0.00
         好评 ---- | 人照 ---- | 服务 ----
@@ -96,14 +99,17 @@ def render_teacher_channel_caption(
 
         ✳ 报告提交： @ChiYanBookBot
 
-        成都 · 《痴颜录》： @CDCChiYanLog @ChiYanLog
+        《痴颜录》： @CDCChiYanLog @ChiYanLog
 
     Args:
         teacher: get_teacher_full_profile 字典；必填 display_name / age /
                  height_cm / weight_kg / bra_size / price / contact_telegram。
+                 region / service_content / taboos 为空时跳过对应行。
         stats: teacher_channel_posts 行；None / review_count=0 → 占位符。
         bot_username: footer 「报告提交」展示用。
-        brand_name: 末行品牌名（默认 '《痴颜录》'，可由 config 覆盖）。
+        brand_name: 末行品牌名（默认 '《痴颜录》'）。**不再自动前缀 region**；
+                    如要在 footer 显示城市，admin 把 brand_name 配置成
+                    '成都 · 《痴颜录》' 即可。
         brand_channels: 末行品牌频道列表（空字符串则不显示该后缀；如
                         '@CDCChiYanLog @ChiYanLog'）。
 
@@ -184,18 +190,16 @@ def render_teacher_channel_caption(
         lines.append("")
         lines.append(f"✳ 报告提交： @{bot_username}")
 
-        # 末行品牌：{region} · {brand_name}：{brand_channels}
-        brand_line_parts: list[str] = []
-        if region:
-            brand_line_parts.append(region)
+        # 末行品牌：{brand_name}： {brand_channels}
+        # 注意：teacher.region 已在正文「📍 地区：」展示，footer 不再附加，
+        # 避免出现「金融城 · 成都 · 《痴颜录》」这类把地名混进品牌行的问题。
+        # 如需在 footer 显示城市，admin 可把 brand_name 配置为如「成都 · 《痴颜录》」
         if brand_name:
-            brand_suffix = brand_name
+            brand_line = brand_name
             if brand_channels:
-                brand_suffix = f"{brand_name}： {brand_channels}"
-            brand_line_parts.append(brand_suffix)
-        if brand_line_parts:
+                brand_line = f"{brand_name}： {brand_channels}"
             lines.append("")
-            lines.append(" · ".join(brand_line_parts))
+            lines.append(brand_line)
 
         return "\n".join(lines)
 
