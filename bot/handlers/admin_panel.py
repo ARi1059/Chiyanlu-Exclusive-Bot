@@ -835,6 +835,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "lottery_create": "创建抽奖",
     "lottery_cancel": "取消抽奖",
     "lottery_publish": "发布抽奖到频道",
+    "lottery_entry": "参与抽奖",
 }
 
 

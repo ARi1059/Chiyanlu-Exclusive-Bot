@@ -94,6 +94,7 @@ def parse_start_args(raw: str) -> dict:
         "fav_teacher_id": None,
         "teacher_detail_id": None,
         "review_target_id": None,
+        "lottery_id": None,
         "search_query": None,
         "search_entry": False,
         "source_type": None,
@@ -144,6 +145,15 @@ def parse_start_args(raw: str) -> dict:
     if m_wr:
         try:
             result["review_target_id"] = int(m_wr.group(1))
+        except ValueError:
+            pass
+        return result
+
+    # Phase L.2.3：/start lottery_<digits> 抽奖参与 deep link
+    m_lt = re.match(r"^lottery_(\d+)$", raw)
+    if m_lt:
+        try:
+            result["lottery_id"] = int(m_lt.group(1))
         except ValueError:
             pass
         return result
@@ -345,6 +355,7 @@ async def cmd_start_with_arg(
         quick_entry=parsed.get("quick_entry"),
         teacher_detail_id=parsed.get("teacher_detail_id"),
         review_target_id=parsed.get("review_target_id"),
+        lottery_id=parsed.get("lottery_id"),
         search_entry=parsed.get("search_entry", False),
         search_query=parsed.get("search_query"),
         state=state,
@@ -420,6 +431,7 @@ async def _route_by_role(
     quick_entry: str | None = None,
     teacher_detail_id: int | None = None,
     review_target_id: int | None = None,
+    lottery_id: int | None = None,
     search_entry: bool = False,
     search_query: str | None = None,
     state: FSMContext | None = None,
@@ -551,6 +563,23 @@ async def _route_by_role(
         if extra_text:
             body = f"{extra_text}\n\n{body}"
         await message.answer(body, reply_markup=review_cancel_kb())
+        return
+
+    # Phase L.2.3：/start lottery_<id> 直达抽奖参与
+    if lottery_id is not None:
+        from bot.handlers.lottery_entry import start_lottery_from_deep_link
+        await _safe_log_user_event(
+            user_id, "deep_link_lottery_entry",
+            {"lottery_id": lottery_id},
+        )
+        if extra_text:
+            try:
+                await message.answer(extra_text)
+            except Exception:
+                pass
+        await start_lottery_from_deep_link(
+            message.bot, user_id, message.chat.id, lottery_id,
+        )
         return
 
     # Phase 8.1：/start teacher_<id> 落地页（仅普通用户分支处理；不破坏现有 deep link）

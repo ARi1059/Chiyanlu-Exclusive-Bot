@@ -17,6 +17,7 @@ from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.admin_lottery import router as admin_lottery_router
 from bot.handlers.admin_points import router as admin_points_router
 from bot.handlers.discussion_anchor_listener import router as discussion_anchor_router
+from bot.handlers.lottery_entry import router as lottery_entry_router
 from bot.handlers.noop_handlers import router as noop_router
 from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.review_submit import router as review_submit_router
@@ -198,6 +199,10 @@ async def main():
     # 必须在 keyword 之前（keyword 是 catch-all）；F.is_automatic_forward 过滤
     # 保证只对自动转发消息触发，不与正常群组关键词冲突
     dp.include_router(discussion_anchor_router)
+    # Phase L.2.3：lottery_entry 私聊文字尝试匹配口令；不匹配 silent skip
+    # 必须在 keyword 之前；F.chat.type == "private" + F.text 过滤；
+    # 群消息走 keyword 不冲突
+    dp.include_router(lottery_entry_router)
     dp.include_router(keyword_router)  # keyword 放最后，避免拦截其他消息
 
     # 注册生命周期钩子
