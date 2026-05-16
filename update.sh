@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Chiyanlu-Exclusive-Bot 一键更新脚本
-# 用法：cd /opt/Chiyanlu-Exclusive-Bot && bash update.sh
+# Chiyanlu-Exclusive-Bot 管理脚本
+#
+# 用法：
+#   ./update.sh             完整更新（拉代码 + 装依赖 + 自检 + 重启服务）
+#   ./update.sh start       仅启动服务（不更新代码）
+#   ./update.sh stop        仅停止服务
+#   ./update.sh restart     仅重启服务（不更新代码）
+#   ./update.sh status      显示服务运行状态和最近日志
+#   ./update.sh help        显示帮助
 
 set -euo pipefail
 
@@ -21,7 +28,112 @@ ok()    { echo "${GREEN}[ OK ]${NC} $*"; }
 warn()  { echo "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo "${RED}[ERR ]${NC} $*" >&2; }
 
-trap 'err "更新过程中出错，已中止（行 $LINENO）。请检查上方输出。"' ERR
+trap 'err "脚本执行出错（行 $LINENO）。请检查上方输出。"' ERR
+
+
+# ============ 服务控制子命令 ============
+
+_check_service_unit() {
+    if ! systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
+        err "未找到 systemd 服务单元：${SERVICE_NAME}.service"
+        err "请确认服务已配置，或在脚本顶部修改 SERVICE_NAME 变量"
+        exit 1
+    fi
+}
+
+cmd_start() {
+    _check_service_unit
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        warn "服务已经在运行，跳过启动"
+        systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
+        return 0
+    fi
+    info "启动服务 $SERVICE_NAME ..."
+    systemctl start "$SERVICE_NAME"
+    sleep 2
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        ok "服务已启动并处于运行状态"
+        systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
+        info "查看实时日志：journalctl -u $SERVICE_NAME -f"
+    else
+        err "启动失败！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
+        exit 1
+    fi
+}
+
+cmd_stop() {
+    _check_service_unit
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        warn "服务已经处于停止状态"
+        return 0
+    fi
+    info "停止服务 $SERVICE_NAME ..."
+    systemctl stop "$SERVICE_NAME"
+    ok "服务已停止"
+}
+
+cmd_restart() {
+    _check_service_unit
+    info "重启服务 $SERVICE_NAME ..."
+    systemctl restart "$SERVICE_NAME"
+    sleep 2
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        ok "服务已重启并处于运行状态"
+        systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
+    else
+        err "重启失败！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
+        exit 1
+    fi
+}
+
+cmd_status() {
+    _check_service_unit
+    systemctl --no-pager --lines=20 status "$SERVICE_NAME" || true
+}
+
+cmd_help() {
+    cat <<EOF
+Chiyanlu-Exclusive-Bot 管理脚本
+
+用法: $(basename "$0") [command]
+
+命令:
+  (空) / update    完整更新流程（拉代码 + 装依赖 + 自检 + 重启服务）
+  start            仅启动服务（不更新代码）
+  stop             仅停止服务
+  restart          仅重启服务（不更新代码）
+  status           显示服务运行状态和最近日志
+  help             显示此帮助
+
+示例:
+  $(basename "$0")           # 拉新代码并部署
+  $(basename "$0") start     # 服务挂了，直接拉起
+  $(basename "$0") restart   # 改了 .env 后只重启不更新
+EOF
+}
+
+
+# ============ 命令分发 ============
+
+COMMAND="${1:-update}"
+
+case "$COMMAND" in
+    start)             cmd_start;   exit 0 ;;
+    stop)              cmd_stop;    exit 0 ;;
+    restart)           cmd_restart; exit 0 ;;
+    status)            cmd_status;  exit 0 ;;
+    help|-h|--help)    cmd_help;    exit 0 ;;
+    update|"")         ;;  # 继续往下走完整更新流程
+    *)
+        err "未知命令: $COMMAND"
+        echo
+        cmd_help
+        exit 1
+        ;;
+esac
+
+
+# ============ 完整更新流程 ============
 
 # 1. 进入项目目录
 if [[ ! -d "$PROJECT_DIR/.git" ]]; then
