@@ -110,6 +110,54 @@ async def send_teacher_card(
         await message.answer(text, reply_markup=keyboard)
 
 
+def build_teacher_group_card_v2_kb(
+    teacher: dict,
+    bot_username: str | None,
+) -> InlineKeyboardMarkup:
+    """Phase 8.1 群组精简详情卡片键盘
+
+    布局：
+        [📩 联系老师]                    ← button_url 有效时显示
+        [⭐ 收藏/提醒] [🔍 私聊详情]
+
+    收藏/提醒：callback group:fav:<teacher_id>（不 toggle，只加收藏+开提醒）
+    私聊详情：URL deep link → t.me/<bot_username>?start=teacher_<teacher_id>
+              bot_username 缺失时退化为 callback teacher:view:<id>（极端兜底）
+
+    群组场景按钮恒定，不显示个性化收藏状态（消息对所有人可见）。
+    """
+    teacher_id = teacher["user_id"]
+    rows: list[list[InlineKeyboardButton]] = []
+
+    # 1. 联系老师
+    url = normalize_url(teacher.get("button_url"))
+    if url:
+        rows.append([InlineKeyboardButton(text="📩 联系老师", url=url)])
+
+    # 2. 收藏/提醒 + 私聊详情
+    second_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(
+            text="⭐ 收藏/提醒",
+            callback_data=f"group:fav:{teacher_id}",
+        ),
+    ]
+    if bot_username:
+        second_row.append(InlineKeyboardButton(
+            text="🔍 私聊详情",
+            url=f"https://t.me/{bot_username}?start=teacher_{teacher_id}",
+        ))
+    else:
+        # 极端兜底：拿不到 bot username 时用 callback（仅私聊场景能工作；
+        # 群组里 callback 也能用，aiogram 会把它路由给 teacher_detail handler）
+        second_row.append(InlineKeyboardButton(
+            text="🔍 私聊详情",
+            callback_data=f"teacher:view:{teacher_id}",
+        ))
+    rows.append(second_row)
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def format_teacher_list_html(teachers: list[dict]) -> str | None:
     """构造老师超链接列表（HTML）
 

@@ -15,16 +15,31 @@ from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.database import (
+    add_favorite,
     get_teacher,
     get_user,
+    is_favorited,
     list_user_favorites,
     remove_favorite,
+    set_user_notify_enabled,
     toggle_favorite,
     update_user_tags_from_teacher_action,
     upsert_user,
 )
 from bot.keyboards.user_kb import back_to_user_main_kb, my_favorites_kb
 from bot.utils.teacher_render import build_teacher_card_keyboard
+
+
+async def _safe_log_event(user_id: int, event_type: str, payload=None) -> None:
+    """log_user_event 缺失 / 异常时静默跳过"""
+    try:
+        from bot.database import log_user_event  # type: ignore
+    except ImportError:
+        return
+    try:
+        await log_user_event(user_id, event_type, payload)
+    except Exception as e:
+        logger.debug("log_user_event(%s) 失败: %s", event_type, e)
 
 logger = logging.getLogger(__name__)
 
@@ -199,3 +214,106 @@ async def cb_fav_invalid_url(callback: types.CallbackQuery):
         "该老师的链接已失效，请联系管理员更新",
         show_alert=True,
     )
+
+
+# ============ group:fav —— Phase 8.1 群组卡片"收藏/提醒"按钮 ============
+
+
+@router.callback_query(F.data.startswith("group:fav:"))
+async def cb_group_fav(callback: types.CallbackQuery):
+    """群组场景的"收藏/提醒"按钮（Phase 8.1 §四 2）
+
+    与 fav:toggle 的关键区别：
+        - **不 toggle**：已收藏则保持收藏，不会取消（取消请去私聊"我的收藏"）
+        - 同时尝试开启用户级 notify_enabled
+        - 仅 alert 反馈，不在群里发新消息（避免刷屏）
+        - 提示用户：如未私聊过 Bot 需点"私聊详情"激活
+    """
+    raw = callback.data[len("group:fav:"):]
+    try:
+        teacher_id = int(raw)
+    except ValueError:
+        await callback.answer("⚠️ 无效操作")
+        return
+
+    teacher = await get_teacher(teacher_id)
+    if not teacher or not teacher.get("is_active"):
+        await callback.answer("⚠️ 该老师暂不可查看", show_alert=True)
+        return
+
+    user = callback.from_user
+    display_name = teacher["display_name"]
+
+    # 维护用户身份（不 mark_user_started —— 群组点击不代表已私聊）
+    started_bot = False
+    try:
+        existing = await get_user(user.id)
+        await upsert_user(user.id, user.username, user.first_name)
+        started_bot = bool(existing and existing.get("last_started_bot"))
+    except Exception as e:
+        logger.debug("upsert_user 失败 user=%s: %s", user.id, e)
+
+    # 是否已收藏 → 决定 alert 文案
+    already_fav = False
+    try:
+        already_fav = await is_favorited(user.id, teacher_id)
+    except Exception as e:
+        logger.debug("is_favorited 失败: %s", e)
+
+    new_added = False
+    if not already_fav:
+        try:
+            new_added = await add_favorite(user.id, teacher_id)
+        except Exception as e:
+            logger.warning("add_favorite 失败 user=%s teacher=%s: %s",
+                           user.id, teacher_id, e)
+        if new_added:
+            # Phase 6.1：用户画像 favorite_add 动作
+            try:
+                await update_user_tags_from_teacher_action(
+                    user.id, teacher_id, "favorite_add",
+                )
+            except Exception as e:
+                logger.debug("update_user_tags 失败: %s", e)
+
+    # 尝试开启用户级 notify_enabled（方法缺失 / 异常都静默）
+    notify_set = False
+    try:
+        notify_set = await set_user_notify_enabled(user.id, True)
+    except Exception as e:
+        logger.warning("set_user_notify_enabled 失败 user=%s: %s", user.id, e)
+
+    # 组装 alert 文案
+    if new_added:
+        head = f"✅ 已收藏 {display_name}"
+        if notify_set:
+            head += "，开课提醒已开启"
+    elif already_fav:
+        head = f"你已收藏 {display_name}"
+        if notify_set:
+            head += "，开课提醒已开启"
+    else:
+        # add_favorite 异常 + 之前未收藏（罕见）
+        head = "操作未完成，请稍后重试"
+
+    if not started_bot:
+        # 用户尚未私聊过 Bot —— 即使收藏成功也无法主动推送
+        alert = head + "。\n如未私聊过 Bot，请点「🔍 私聊详情」激活通知。"
+    else:
+        alert = head + "。"
+
+    # 埋点
+    chat_id = callback.message.chat.id if callback.message else 0
+    await _safe_log_event(
+        user.id,
+        "group_teacher_fav_click",
+        {
+            "teacher_id": teacher_id,
+            "group_id": chat_id,
+            "new_added": new_added,
+            "notify_set": notify_set,
+            "started_bot": started_bot,
+        },
+    )
+
+    await callback.answer(alert, show_alert=True)

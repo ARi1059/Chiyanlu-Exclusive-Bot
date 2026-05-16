@@ -80,6 +80,9 @@ def parse_start_args(raw: str) -> dict:
         {
             "activate": bool,                  # /start activate
             "fav_teacher_id": int | None,      # /start fav_<id>...
+            "teacher_detail_id": int | None,   # Phase 8.1: /start teacher_<id>
+            "search_query": str | None,        # Phase 8.2: /start q_<base64url> 解码后；"" 表示空查询
+            "search_entry": bool,              # Phase 8.2: /start search
             "source_type": str | None,         # channel/group/teacher/campaign/invite/unknown
             "source_id": str | None,
             "quick_entry": str | None,         # Phase 7.3: menu/today/hot/filter/recommend
@@ -89,6 +92,9 @@ def parse_start_args(raw: str) -> dict:
     result = {
         "activate": False,
         "fav_teacher_id": None,
+        "teacher_detail_id": None,
+        "search_query": None,
+        "search_entry": False,
         "source_type": None,
         "source_id": None,
         "quick_entry": None,
@@ -104,6 +110,32 @@ def parse_start_args(raw: str) -> dict:
     # Phase 7.3：群内快捷入口 deep link（menu / today / hot / filter / recommend）
     if raw in _QUICK_ENTRY_VALUES:
         result["quick_entry"] = raw
+        return result
+
+    # Phase 8.2：/start search 进入私聊搜索入口
+    if raw == "search":
+        result["search_entry"] = True
+        return result
+
+    # Phase 8.2：/start q_<base64url> 编码搜索词，解码后回放
+    if raw.startswith("q_"):
+        from bot.utils.group_search import decode_query_from_deep_link
+        decoded = decode_query_from_deep_link(raw[2:])
+        # 解码失败 / 解码后空串 → 退化为 search_entry（spec §八）
+        if decoded:
+            result["search_query"] = decoded
+        else:
+            result["search_entry"] = True
+        return result
+
+    # Phase 8.1：/start teacher_<digits> 私聊详情 deep link（群组卡片"私聊详情"按钮）
+    # 必须放在 fav_ / 来源解析之前，且与 src_teacher_<id> 不冲突（后者以 src_ 开头）
+    m_td = re.match(r"^teacher_(\d+)$", raw)
+    if m_td:
+        try:
+            result["teacher_detail_id"] = int(m_td.group(1))
+        except ValueError:
+            pass
         return result
 
     # fav 前缀：可能是 fav_<digits> 或 fav_<digits>_<source-suffix>
@@ -301,6 +333,10 @@ async def cmd_start_with_arg(
         user_id,
         extra_text=extra_text,
         quick_entry=parsed.get("quick_entry"),
+        teacher_detail_id=parsed.get("teacher_detail_id"),
+        search_entry=parsed.get("search_entry", False),
+        search_query=parsed.get("search_query"),
+        state=state,
     )
 
 
@@ -355,11 +391,26 @@ def _continue_last_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def _teacher_detail_landing_kb(teacher_id: int) -> InlineKeyboardMarkup:
+    """Phase 8.1：/start teacher_<id> 落地页 CTA 键盘"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🔍 查看老师详情",
+            callback_data=f"teacher:view:{teacher_id}",
+        )],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
 async def _route_by_role(
     message: types.Message,
     user_id: int,
     extra_text: str | None = None,
     quick_entry: str | None = None,
+    teacher_detail_id: int | None = None,
+    search_entry: bool = False,
+    search_query: str | None = None,
+    state: FSMContext | None = None,
 ):
     """根据角色展示对应菜单。
 
@@ -411,6 +462,90 @@ async def _route_by_role(
             onboarding_text = f"{extra_text}\n\n{onboarding_text}"
         await message.answer(onboarding_text, reply_markup=onboarding_kb())
         await _safe_log_user_event(user_id, "onboarding_view", None)
+        return
+
+    # Phase 8.1：/start teacher_<id> 落地页（仅普通用户分支处理；不破坏现有 deep link）
+    if teacher_detail_id is not None:
+        try:
+            target_teacher = await get_teacher(teacher_detail_id)
+        except Exception as e:
+            logger.warning("get_teacher(deep link) 失败 id=%s: %s", teacher_detail_id, e)
+            target_teacher = None
+
+        await _safe_log_user_event(
+            user_id,
+            "deep_link_teacher_detail",
+            {"teacher_id": teacher_detail_id},
+        )
+
+        if target_teacher and target_teacher.get("is_active"):
+            body = (
+                f"已为你打开老师详情：{target_teacher['display_name']}\n\n"
+                "点击下方按钮查看完整信息。"
+            )
+            if extra_text:
+                body = f"{extra_text}\n\n{body}"
+            await message.answer(
+                body,
+                reply_markup=_teacher_detail_landing_kb(teacher_detail_id),
+            )
+            return
+
+        # 无效 teacher_id → 直接进主菜单 + 提示（spec §四 3 末尾）
+        menu_text = (
+            "⚠️ 该老师暂不可查看\n\n"
+            "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？"
+        )
+        if extra_text:
+            menu_text = f"{extra_text}\n\n{menu_text}"
+        await message.answer(menu_text, reply_markup=user_main_menu_kb())
+        return
+
+    # Phase 8.2：/start q_<base64url> 解码搜索词 → 直接在私聊回放搜索
+    if search_query:
+        await _safe_log_user_event(
+            user_id,
+            "deep_link_group_search_entry",
+            {"kind": "q", "query": search_query},
+        )
+        # 把成功提示放第一行，再调用 user_search._execute_search 回放
+        hint = f"🔍 搜索：{search_query}"
+        if extra_text:
+            hint = f"{extra_text}\n\n{hint}"
+        await message.answer(hint, reply_markup=user_main_menu_kb())
+        try:
+            from bot.handlers.user_search import _execute_search
+            await _execute_search(user_id, search_query, message)
+        except Exception as e:
+            logger.warning("回放搜索失败 q=%r: %s", search_query, e)
+        return
+
+    # Phase 8.2：/start search 进入私聊搜索 FSM（与点击 user:search 等价）
+    if search_entry:
+        await _safe_log_user_event(
+            user_id,
+            "deep_link_group_search_entry",
+            {"kind": "search"},
+        )
+        body = (
+            "🔍 搜索老师\n\n"
+            "请输入关键词：\n"
+            "・艺名（精确命中直接返回该老师）\n"
+            "・标签 / 地区 / 价格 的组合（例：御姐 1000P 天府一街）\n\n"
+            "随时点击下方按钮退出搜索。"
+        )
+        if extra_text:
+            body = f"{extra_text}\n\n{body}"
+        # 把用户置入搜索 FSM，下条文字消息会被 user_search 接住
+        try:
+            from bot.keyboards.user_kb import search_cancel_kb
+            from bot.states.user_states import SearchStates
+            if state is not None:
+                await state.set_state(SearchStates.waiting_query)
+            await message.answer(body, reply_markup=search_cancel_kb())
+        except Exception as e:
+            logger.debug("进入 search_entry FSM 失败，回退到主菜单: %s", e)
+            await message.answer(body, reply_markup=user_main_menu_kb())
         return
 
     # Phase 7.3：群内快捷入口 deep link → 落地为带 CTA 按钮的页面

@@ -14,7 +14,6 @@ Callbacks:
 频道 14:00 自动发布 / 群组关键词响应 不走详情页，行为不变。
 """
 
-import json
 import logging
 from datetime import datetime
 
@@ -30,7 +29,6 @@ from bot.database import (
     get_teacher_daily_status,
     get_user,
     is_checked_in,
-    is_effective_featured,
     is_favorited,
     list_recent_teacher_views,
     record_teacher_view,
@@ -43,7 +41,6 @@ from bot.keyboards.user_kb import (
     back_to_user_main_kb,
     recent_views_kb,
     teacher_detail_kb,
-    teacher_detail_list_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,82 +54,10 @@ def _today_str() -> str:
     return datetime.now(_tz).strftime("%Y-%m-%d")
 
 
-def _parse_tags(teacher: dict) -> list:
-    """从 teacher.tags JSON 安全解析为列表"""
-    try:
-        raw = teacher.get("tags") if isinstance(teacher, dict) else None
-        if not raw:
-            return []
-        parsed = json.loads(raw)
-        if not isinstance(parsed, list):
-            return []
-        return [str(t) for t in parsed if t]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return []
-
-
-def _derive_hot_text(teacher: dict, fav_count: int, today_str: str) -> str:
-    """Phase 7.1：热度展示规则
-
-    优先级：
-        1. 有效推荐 → "近期推荐"
-        2. hot_score >= 100 → "近期热门"
-        3. fav_count >= 5 → "多人收藏"
-        4. 否则 → "普通展示"
-
-    任何字段缺失 / 异常 → 安全退回到 "普通展示"。
-    """
-    try:
-        if is_effective_featured(teacher, today_str):
-            return "近期推荐"
-    except Exception:
-        pass
-    try:
-        if int(teacher.get("hot_score") or 0) >= 100:
-            return "近期热门"
-    except (ValueError, TypeError):
-        pass
-    if fav_count >= 5:
-        return "多人收藏"
-    return "普通展示"
-
-
-def _derive_fit_text(teacher: dict, tags: list) -> str:
-    """Phase 7.1：适合人群模板（无 AI，纯规则拼装）
-
-    输入：
-        teacher: dict（含 region / price）
-        tags:    list[str]（已解析）
-
-    规则：
-        - 标签含"御姐" → 喜欢成熟气质
-        - 标签含"甜妹" → 喜欢甜美亲和风格
-        - 标签含"高颜值" 或 "颜值" → 看重颜值表现
-        - 有 price → 预算在 {price} 左右
-        - 有 region → 想找 {region} 附近
-        - 全部缺失 → 兜底文案
-    """
-    parts: list[str] = []
-    tag_set = {str(t).strip() for t in tags if t and str(t).strip()}
-
-    if "御姐" in tag_set:
-        parts.append("喜欢成熟气质")
-    if "甜妹" in tag_set:
-        parts.append("喜欢甜美亲和风格")
-    if "高颜值" in tag_set or "颜值" in tag_set:
-        parts.append("看重颜值表现")
-
-    price = (teacher.get("price") or "").strip() if isinstance(teacher, dict) else ""
-    if price:
-        parts.append(f"预算在 {price} 左右")
-
-    region = (teacher.get("region") or "").strip() if isinstance(teacher, dict) else ""
-    if region:
-        parts.append(f"想找 {region} 附近")
-
-    if not parts:
-        return "适合想快速了解并联系老师的用户。"
-    return "适合" + "、".join(parts) + "的用户。"
+# Phase 8.1：纯渲染逻辑迁移到 bot.utils.teacher_format，本文件保持 BC 包装。
+from bot.utils.teacher_format import (
+    format_teacher_private_detail as _format_teacher_private_detail,
+)
 
 
 def format_teacher_detail_text(
@@ -146,87 +71,17 @@ def format_teacher_detail_text(
 ) -> str:
     """Phase 7.1：决策型信息层级（spec §三）
 
-    结构：
-        👤 {display_name}
-
-        📍 地区：...
-        💰 价格：...
-        📅 今日：...
-        ⏰ 可约时间：...
-        🔥 热度：...
-        ⭐ 你的状态：...
-
-        🏷 特点：
-        {tags 用 ｜ 连接}
-
-        📌 适合：
-        {fit_text}
-
-    daily_status_row（Phase 5）字段：
-        status: available / full / unavailable / unknown
-        available_time: 全天 / 下午 / 晚上 / 自定义 / 未设置 / NULL
-        note: 自由文本 / NULL
+    Phase 8.1：纯渲染抽到 bot.utils.teacher_format.format_teacher_private_detail，
+    保留本函数签名供向后兼容。
     """
-    tags = _parse_tags(teacher)
-    tags_text = " ｜ ".join(tags) if tags else "暂无标签"
-
-    status_val = (daily_status_row or {}).get("status") if daily_status_row else None
-    avt_val = (daily_status_row or {}).get("available_time") if daily_status_row else None
-    note_val = (daily_status_row or {}).get("note") if daily_status_row else None
-
-    # 今日状态
-    if not is_signed_in_today and status_val != "unavailable":
-        today_status_text = "今日暂未开课"
-    elif status_val == "unavailable":
-        today_status_text = "❌ 今日已取消"
-    elif status_val == "full":
-        today_status_text = "🈵 今日已满"
-    elif status_val == "available":
-        today_status_text = "✅ 今日可约"
-    else:
-        # 已签到但无 daily_status → spec：视为可约
-        today_status_text = "✅ 今日可约"
-
-    # 可约时间
-    if not is_signed_in_today or status_val == "unavailable":
-        available_time_text = "未设置"
-    else:
-        avt = (avt_val or "").strip()
-        note_clean = (note_val or "").strip()
-        if avt == "全天":
-            available_time_text = "全天"
-        elif avt == "下午":
-            available_time_text = "下午"
-        elif avt == "晚上":
-            available_time_text = "晚上"
-        elif avt == "自定义":
-            available_time_text = note_clean if note_clean else "自定义"
-        elif not avt:
-            available_time_text = "未设置"
-        else:
-            available_time_text = avt
-
-    hot_text = _derive_hot_text(teacher, fav_count, today_str)
-    favorite_text = "已收藏" if is_fav else "未收藏"
-    fit_text = _derive_fit_text(teacher, tags)
-
-    lines = [
-        f"👤 {teacher['display_name']}",
-        "",
-        f"📍 地区：{teacher.get('region') or '未设置'}",
-        f"💰 价格：{teacher.get('price') or '未设置'}",
-        f"📅 今日：{today_status_text}",
-        f"⏰ 可约时间：{available_time_text}",
-        f"🔥 热度：{hot_text}",
-        f"⭐ 你的状态：{favorite_text}",
-        "",
-        "🏷 特点：",
-        tags_text,
-        "",
-        "📌 适合：",
-        fit_text,
-    ]
-    return "\n".join(lines)
+    return _format_teacher_private_detail(
+        teacher,
+        is_signed_in_today=is_signed_in_today,
+        is_fav=is_fav,
+        daily_status_row=daily_status_row,
+        fav_count=fav_count,
+        today_str=today_str,
+    )
 
 
 async def _build_detail_payload(
