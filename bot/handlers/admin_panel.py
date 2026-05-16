@@ -832,6 +832,8 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "rreview_reject": "驳回报告",
     "points_query": "查询用户积分",
     "points_grant": "手动加扣积分",
+    "lottery_create": "创建抽奖",
+    "lottery_cancel": "取消抽奖",
 }
 
 

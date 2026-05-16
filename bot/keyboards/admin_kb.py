@@ -42,6 +42,9 @@ def main_menu_kb(
             InlineKeyboardButton(text=rreview_label, callback_data="rreview:enter"),
             InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points"),
         ])
+        rows.append([
+            InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery"),
+        ])
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
         [
@@ -904,4 +907,59 @@ def rreview_approve_points_kb(review_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💬 自定义", callback_data=f"rreview:approve_custom:{review_id}"),
         ],
         [InlineKeyboardButton(text="🔙 取消通过，返回审核", callback_data=f"rreview:show:{review_id}")],
+    ])
+
+
+# ============ 抽奖管理（Phase L.1） ============
+
+def admin_lottery_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
+    """[🎲 抽奖管理] 子菜单"""
+    list_label = f"📋 抽奖列表 ({pending_count})" if pending_count else "📋 抽奖列表"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ 创建新抽奖", callback_data="admin:lottery:create")],
+        [InlineKeyboardButton(text=list_label,    callback_data="admin:lottery:list")],
+        [InlineKeyboardButton(text="🔙 返回主面板", callback_data="menu:main")],
+    ])
+
+
+def admin_lottery_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
+    """抽奖列表：每条按钮"""
+    from bot.database import LOTTERY_STATUSES
+    status_emoji = {s["key"]: s["emoji"] for s in LOTTERY_STATUSES}
+    rows: list[list[InlineKeyboardButton]] = []
+    for it in items[:30]:
+        emoji = status_emoji.get(it.get("status", ""), "❓")
+        name = it.get("name") or "(未命名)"
+        if len(name) > 25:
+            name = name[:24] + "…"
+        rows.append([InlineKeyboardButton(
+            text=f"{emoji} {name}",
+            callback_data=f"admin:lottery:item:{it['id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="🔙 返回抽奖管理", callback_data="admin:lottery")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_lottery_detail_kb(lottery: dict) -> InlineKeyboardMarkup:
+    """抽奖详情页操作按钮（本 phase 仅 draft 可取消）"""
+    rows: list[list[InlineKeyboardButton]] = []
+    if lottery.get("status") == "draft":
+        rows.append([InlineKeyboardButton(
+            text="❌ 取消草稿",
+            callback_data=f"admin:lottery:cancel:{lottery['id']}",
+        )])
+    rows.append([
+        InlineKeyboardButton(text="🔙 返回列表",     callback_data="admin:lottery:list"),
+        InlineKeyboardButton(text="🏠 返回抽奖管理", callback_data="admin:lottery"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_lottery_cancel_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
+    """取消草稿二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认取消", callback_data=f"admin:lottery:cancel_ok:{lottery_id}"),
+            InlineKeyboardButton(text="🔙 不取消", callback_data=f"admin:lottery:item:{lottery_id}"),
+        ],
     ])

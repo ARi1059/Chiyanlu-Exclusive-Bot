@@ -307,6 +307,53 @@ async def init_db():
                 ON point_transactions(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_point_tx_related
                 ON point_transactions(reason, related_id);
+
+            CREATE TABLE IF NOT EXISTS lotteries (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                name                    TEXT NOT NULL,
+                description             TEXT NOT NULL,
+                cover_file_id           TEXT,
+                entry_method            TEXT NOT NULL,
+                entry_code              TEXT UNIQUE,
+                prize_count             INTEGER NOT NULL,
+                prize_description       TEXT NOT NULL,
+                required_chat_ids       TEXT NOT NULL,
+                publish_at              TEXT NOT NULL,
+                draw_at                 TEXT NOT NULL,
+                published_at            TEXT,
+                drawn_at                TEXT,
+                channel_chat_id         INTEGER,
+                channel_msg_id          INTEGER,
+                result_msg_id           INTEGER,
+                status                  TEXT NOT NULL DEFAULT 'draft',
+                created_by              INTEGER NOT NULL,
+                created_at              TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at              TEXT DEFAULT CURRENT_TIMESTAMP,
+                CHECK (entry_method IN ('button','code')),
+                CHECK (status IN ('draft','scheduled','active','drawn','cancelled','no_entries')),
+                CHECK (prize_count BETWEEN 1 AND 1000)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_lotteries_status
+                ON lotteries(status);
+            CREATE INDEX IF NOT EXISTS idx_lotteries_publish_at
+                ON lotteries(publish_at, status);
+            CREATE INDEX IF NOT EXISTS idx_lotteries_draw_at
+                ON lotteries(draw_at, status);
+
+            CREATE TABLE IF NOT EXISTS lottery_entries (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                lottery_id  INTEGER NOT NULL,
+                user_id     INTEGER NOT NULL,
+                entered_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+                won         INTEGER DEFAULT 0,
+                notified_at TEXT,
+                UNIQUE(lottery_id, user_id),
+                FOREIGN KEY (lottery_id) REFERENCES lotteries(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_lottery_entries_won
+                ON lottery_entries(lottery_id, won);
         """)
         await db.execute(
             """INSERT INTO admins (user_id, username, is_super)
@@ -4783,5 +4830,253 @@ async def sum_total_points_earned() -> int:
         )
         row = await cur.fetchone()
         return int(row["s"]) if row else 0
+    finally:
+        await db.close()
+
+
+# ============ 抽奖 (Phase L.1) ============
+
+# 抽奖状态机（spec §7）
+LOTTERY_STATUSES: list[dict] = [
+    {"key": "draft",       "label": "📝 草稿",     "emoji": "📝"},
+    {"key": "scheduled",   "label": "⏰ 已计划",   "emoji": "⏰"},
+    {"key": "active",      "label": "🎯 进行中",   "emoji": "🎯"},
+    {"key": "drawn",       "label": "🏆 已开奖",   "emoji": "🏆"},
+    {"key": "cancelled",   "label": "❌ 已取消",   "emoji": "❌"},
+    {"key": "no_entries",  "label": "⚪ 无人参与", "emoji": "⚪"},
+]
+
+# 终态：不允许变更
+LOTTERY_TERMINAL_STATUSES: set[str] = {"drawn", "cancelled", "no_entries"}
+
+# 字段白名单（update_lottery_fields 用）
+LOTTERY_EDITABLE_FIELDS: set[str] = {
+    "name", "description", "cover_file_id",
+    "entry_method", "entry_code",
+    "prize_count", "prize_description",
+    "required_chat_ids",
+    "publish_at", "draw_at",
+    "published_at", "drawn_at",
+    "channel_chat_id", "channel_msg_id", "result_msg_id",
+    "status",
+}
+
+
+async def create_lottery(data: dict) -> Optional[int]:
+    """创建抽奖记录（默认 status='draft'）
+
+    必填字段：name / description / entry_method / prize_count / prize_description /
+              required_chat_ids (list 自动 JSON) / publish_at / draw_at / created_by
+
+    返回 lottery_id；entry_code 冲突 / CHECK 越界 / 缺字段时返回 None。
+    """
+    required = ["name", "description", "entry_method", "prize_count",
+                "prize_description", "required_chat_ids",
+                "publish_at", "draw_at", "created_by"]
+    for f in required:
+        if data.get(f) is None:
+            return None
+
+    rc = data["required_chat_ids"]
+    if isinstance(rc, list):
+        rc_json = json.dumps(rc, ensure_ascii=False)
+    elif isinstance(rc, str):
+        rc_json = rc
+    else:
+        return None
+
+    db = await get_db()
+    try:
+        try:
+            cur = await db.execute(
+                """INSERT INTO lotteries (
+                    name, description, cover_file_id,
+                    entry_method, entry_code,
+                    prize_count, prize_description,
+                    required_chat_ids,
+                    publish_at, draw_at,
+                    status, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(data["name"]).strip(),
+                    str(data["description"]).strip(),
+                    data.get("cover_file_id"),
+                    str(data["entry_method"]),
+                    data.get("entry_code"),
+                    int(data["prize_count"]),
+                    str(data["prize_description"]).strip(),
+                    rc_json,
+                    str(data["publish_at"]),
+                    str(data["draw_at"]),
+                    data.get("status", "draft"),
+                    int(data["created_by"]),
+                ),
+            )
+        except Exception as e:
+            logger.warning("create_lottery 失败: %s", e)
+            return None
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+def _parse_lottery_row(row: Optional[dict]) -> Optional[dict]:
+    """统一解析 required_chat_ids JSON"""
+    if row is None:
+        return None
+    data = dict(row)
+    raw = data.get("required_chat_ids")
+    ids: list[int] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                ids = [int(x) for x in parsed]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            ids = []
+    data["required_chat_ids"] = ids
+    return data
+
+
+async def get_lottery(lottery_id: int) -> Optional[dict]:
+    """单条抽奖（解析 required_chat_ids JSON）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM lotteries WHERE id = ?", (lottery_id,)
+        )
+        row = await cur.fetchone()
+        return _parse_lottery_row(dict(row) if row else None)
+    finally:
+        await db.close()
+
+
+async def find_lottery_by_entry_code(code: str) -> Optional[dict]:
+    """口令抽奖反查：active 状态优先；大小写不敏感（spec §2.2）"""
+    if not code:
+        return None
+    c = str(code).strip()
+    if not c:
+        return None
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM lotteries "
+            "WHERE LOWER(entry_code) = LOWER(?) "
+            "  AND status = 'active' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (c,),
+        )
+        row = await cur.fetchone()
+        return _parse_lottery_row(dict(row) if row else None)
+    finally:
+        await db.close()
+
+
+async def list_lotteries_by_status(
+    status: Optional[str] = None,
+    limit: int = 30,
+    offset: int = 0,
+) -> list[dict]:
+    """列出抽奖；status=None 表示全部，按 created_at DESC"""
+    db = await get_db()
+    try:
+        if status:
+            cur = await db.execute(
+                "SELECT * FROM lotteries WHERE status = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (status, int(limit), int(offset)),
+            )
+        else:
+            cur = await db.execute(
+                "SELECT * FROM lotteries "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (int(limit), int(offset)),
+            )
+        rows = await cur.fetchall()
+        return [_parse_lottery_row(dict(r)) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_lotteries_by_status(status: Optional[str] = None) -> int:
+    db = await get_db()
+    try:
+        if status:
+            cur = await db.execute(
+                "SELECT COUNT(*) AS c FROM lotteries WHERE status = ?",
+                (status,),
+            )
+        else:
+            cur = await db.execute("SELECT COUNT(*) AS c FROM lotteries")
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def update_lottery_fields(lottery_id: int, **fields) -> bool:
+    """按白名单更新抽奖字段；终态拒绝更新（除非显式改 status）
+
+    list 自动 JSON 序列化（required_chat_ids 等）。
+    """
+    if not fields:
+        return False
+    # 白名单 + 类型转换
+    sets: list[str] = []
+    params: list = []
+    for k, v in fields.items():
+        if k not in LOTTERY_EDITABLE_FIELDS:
+            continue
+        if k == "required_chat_ids" and isinstance(v, list):
+            v = json.dumps(v, ensure_ascii=False)
+        sets.append(f"{k} = ?")
+        params.append(v)
+    if not sets:
+        return False
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(lottery_id)
+    db = await get_db()
+    try:
+        await db.execute(
+            f"UPDATE lotteries SET {', '.join(sets)} WHERE id = ?",
+            params,
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def cancel_lottery(lottery_id: int) -> bool:
+    """取消抽奖（仅 draft / scheduled / active 可改）
+
+    终态（drawn / cancelled / no_entries）不变。
+    """
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE lotteries SET status = 'cancelled', "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status IN ('draft','scheduled','active')",
+            (lottery_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def count_lottery_entries(lottery_id: int) -> int:
+    """统计某抽奖的参与人数（用于列表角标 / 详情显示）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM lottery_entries WHERE lottery_id = ?",
+            (lottery_id,),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
     finally:
         await db.close()
