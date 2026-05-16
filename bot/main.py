@@ -15,6 +15,7 @@ from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.report_settings import router as report_settings_router
+from bot.handlers.review_submit import router as review_submit_router
 from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.subreq_admin import router as subreq_admin_router
 from bot.handlers.start_router import router as start_router
@@ -147,6 +148,10 @@ async def main():
     #   - user:search_history / user:continue_last / user:reminders
     #   - SearchHistoryStates 仅在自身 FSM 状态下截获 /cancel
     dp.include_router(user_history_router)
+    # Phase 9.3：review_submit_router 在 user_search 之前
+    # - review:start:<id> / review:rating:* / review:score:* / review:submit / review:cancel
+    # - ReviewSubmitStates FSM 状态过滤保证文字消息只在评价 FSM 中被截获
+    dp.include_router(review_submit_router)
     dp.include_router(user_search_router)
     dp.include_router(keyword_router)  # keyword 放最后，避免拦截其他消息
 

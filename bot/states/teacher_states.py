@@ -49,6 +49,30 @@ class SubReqAddStates(StatesGroup):
     waiting_invite_link  = State()
 
 
+class ReviewSubmitStates(StatesGroup):
+    """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
+
+    本 phase 仅从 teacher_detail [📝 写评价] 入口（teacher_id 已知），
+    Step A 选老师留给 9.5。state.data 累加：
+        teacher_id / booking_screenshot_file_id / gesture_photo_file_id /
+        rating / score_humanphoto / score_appearance / score_body /
+        score_service / score_attitude / score_environment / overall_score /
+        summary（可空）/ jump_back（确认页跳回时为 True）
+    """
+    waiting_booking_screenshot = State()  # Step B
+    waiting_gesture_photo      = State()  # Step C
+    waiting_rating             = State()  # Step 1
+    waiting_score_humanphoto   = State()  # Step 2
+    waiting_score_appearance   = State()  # Step 3
+    waiting_score_body         = State()  # Step 4
+    waiting_score_service      = State()  # Step 5
+    waiting_score_attitude     = State()  # Step 6
+    waiting_score_environment  = State()  # Step 7
+    waiting_overall_score      = State()  # Step 8
+    waiting_summary            = State()  # Step 9
+    waiting_confirm            = State()
+
+
 class SetGroupStates(StatesGroup):
     """设置响应群组状态"""
     waiting_group_id = State()

@@ -165,7 +165,15 @@ def teacher_detail_kb(
         ),
     ])
 
-    # 第四行：返回主菜单
+    # 第四行：写评价 (Phase 9.3)
+    rows.append([
+        InlineKeyboardButton(
+            text="📝 写评价",
+            callback_data=f"review:start:{teacher_id}",
+        ),
+    ])
+
+    # 第五行：返回主菜单
     rows.append([
         InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
     ])
@@ -268,3 +276,110 @@ def suggestion_result_back_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main"),
         ],
     ])
+
+
+# ============ 评价 FSM 键盘（Phase 9.3） ============
+
+def review_cancel_kb() -> InlineKeyboardMarkup:
+    """评价 FSM 各步的取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")],
+    ])
+
+
+def review_subscribe_links_kb(items: list[dict]) -> InlineKeyboardMarkup:
+    """关注校验失败时：展示必关链接列表 + 返回详情"""
+    rows: list[list[InlineKeyboardButton]] = []
+    for it in items:
+        rows.append([InlineKeyboardButton(
+            text=f"📺 {it['display_name']}",
+            url=it["invite_link"],
+        )])
+    rows.append([InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def review_rating_kb() -> InlineKeyboardMarkup:
+    """Step 1 评级：3 个按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👍 好评", callback_data="review:rating:positive"),
+            InlineKeyboardButton(text="😐 中评", callback_data="review:rating:neutral"),
+            InlineKeyboardButton(text="👎 差评", callback_data="review:rating:negative"),
+        ],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")],
+    ])
+
+
+def review_score_kb(
+    dim_key: str,
+    quick_buttons: list[float],
+    *,
+    per_row: int = 5,
+) -> InlineKeyboardMarkup:
+    """评分快捷按钮（6 维 / 综合通用）
+
+    dim_key: humanphoto/appearance/.../overall
+    quick_buttons: 数字列表（不同维度可能不同）
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    cur: list[InlineKeyboardButton] = []
+    for v in quick_buttons:
+        # 整数显示为 "8"，否则保留 1 位小数 "8.5"
+        label = f"{v:.0f}" if v == int(v) else f"{v:.1f}"
+        cur.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"review:score:{dim_key}:{v}",
+        ))
+        if len(cur) >= per_row:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    rows.append([InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def review_summary_skip_cancel_kb() -> InlineKeyboardMarkup:
+    """Step 9 过程描述：[⏭ 跳过] [❌ 取消]"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⏭ 跳过", callback_data="review:summary_skip"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel"),
+        ],
+    ])
+
+
+_REVIEW_EDIT_KEYS: list[tuple[str, str]] = [
+    ("booking", "约课截图"),
+    ("gesture", "手势照片"),
+    ("rating", "评级"),
+    ("overall", "综合"),
+    ("humanphoto", "人照"),
+    ("appearance", "颜值"),
+    ("body", "身材"),
+    ("service", "服务"),
+    ("attitude", "态度"),
+    ("environment", "环境"),
+    ("summary", "过程"),
+]
+
+
+def review_confirm_kb() -> InlineKeyboardMarkup:
+    """确认页：[✅ 提交] + 11 个 [✏️ 修改:xxx] + [❌ 取消]"""
+    rows: list[list[InlineKeyboardButton]] = []
+    rows.append([InlineKeyboardButton(text="✅ 提交审核", callback_data="review:submit")])
+    # 每行 2 个修改按钮
+    cur: list[InlineKeyboardButton] = []
+    for key, label in _REVIEW_EDIT_KEYS:
+        cur.append(InlineKeyboardButton(
+            text=f"✏️ 修改：{label}",
+            callback_data=f"review:edit:{key}",
+        ))
+        if len(cur) >= 2:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    rows.append([InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
