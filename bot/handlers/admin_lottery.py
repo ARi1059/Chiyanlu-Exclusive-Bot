@@ -32,16 +32,23 @@ from bot.database import (
     create_lottery,
     find_lottery_by_entry_code,
     get_lottery,
+    get_users_first_names,
     is_super_admin,
     list_lotteries_by_status,
+    list_lottery_entries_paged,
     log_admin_audit,
+    set_config,
+    update_lottery_fields,
 )
 from bot.keyboards.admin_kb import (
     admin_lottery_cancel_confirm_kb,
     admin_lottery_detail_kb,
+    admin_lottery_entries_pagination_kb,
     admin_lottery_list_kb,
     admin_lottery_menu_kb,
     admin_lottery_publish_confirm_kb,
+    admin_lottery_repost_confirm_kb,
+    lottery_contact_cancel_kb,
     lottery_create_cancel_kb,
     lottery_create_confirm_kb,
     lottery_create_method_kb,
@@ -50,7 +57,11 @@ from bot.keyboards.admin_kb import (
     lottery_create_required_kb,
     lottery_create_skip_cancel_kb,
 )
-from bot.states.teacher_states import LotteryCreateStates
+from bot.states.teacher_states import (
+    LotteryContactUrlStates,
+    LotteryCreateStates,
+    LotteryEditStates,
+)
 from bot.utils.required_channels import precheck_required_chat
 
 logger = logging.getLogger(__name__)
@@ -342,6 +353,283 @@ async def cb_admin_lottery_publish_ok(callback: types.CallbackQuery, state: FSMC
     # 回到详情页
     callback.data = f"admin:lottery:item:{lid}"
     await cb_admin_lottery_item(callback, state)
+
+
+# ============ 参与人员列表（Phase L.4.1）============
+
+# 参与人员分页每页条数
+_ENTRIES_PAGE_SIZE = 20
+
+
+def _anon_uid_short(uid: int) -> str:
+    """半匿名：****<uid 后 4>"""
+    s = str(uid)
+    if len(s) <= 4:
+        return "****"
+    return "*" * 4 + s[-4:]
+
+
+@router.callback_query(F.data.startswith("admin:lottery:entries:"))
+@_super_admin_required
+async def cb_admin_lottery_entries(callback: types.CallbackQuery, state: FSMContext):
+    """[👥 查看参与人员] 分页列表（半匿名 + 🏆 中奖标记）"""
+    await state.clear()
+    parts = callback.data.split(":")
+    # admin:lottery:entries:<lid> or :<lid>:<page>
+    if len(parts) < 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    page = 0
+    if len(parts) >= 5:
+        try:
+            page = max(0, int(parts[4]))
+        except ValueError:
+            page = 0
+
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("抽奖不存在", show_alert=True)
+        return
+    total = await count_lottery_entries(lid)
+    if total == 0:
+        text = (
+            f"👥 抽奖 #{lid}「{lottery.get('name', '')}」参与人员\n\n"
+            "ℹ️ 暂无参与者。"
+        )
+        try:
+            await callback.message.edit_text(
+                text, reply_markup=admin_lottery_detail_kb(lottery),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    total_pages = (total + _ENTRIES_PAGE_SIZE - 1) // _ENTRIES_PAGE_SIZE
+    if page >= total_pages:
+        page = total_pages - 1
+    offset = page * _ENTRIES_PAGE_SIZE
+    entries = await list_lottery_entries_paged(lid, _ENTRIES_PAGE_SIZE, offset)
+
+    # 批量取 first_name 做半匿名
+    uids = list({int(e["user_id"]) for e in entries})
+    names = await get_users_first_names(uids)
+
+    lines = [
+        f"👥 抽奖 #{lid}「{lottery.get('name', '')}」参与人员",
+        f"共 {total} 人 · 第 {page + 1}/{total_pages} 页",
+        "─" * 20,
+    ]
+    for i, e in enumerate(entries, start=offset + 1):
+        uid = int(e["user_id"])
+        first = names.get(uid) or ""
+        initial = first[0] if first else "匿"
+        won_mark = "🏆" if e.get("won") == 1 else "  "
+        entered = (e.get("entered_at") or "")[:16]
+        notif = "✉" if e.get("notified_at") else "  "
+        lines.append(
+            f"{i}. {won_mark} {initial}* {_anon_uid_short(uid)}  {notif}  — {entered}"
+        )
+    lines.append("─" * 20)
+    lines.append("说明：🏆=中奖  ✉=已私聊通知")
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…(截断)"
+
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=admin_lottery_entries_pagination_kb(lid, page, total_pages),
+        )
+    except Exception:
+        # 同样内容 BadRequest 静默
+        pass
+    await callback.answer()
+
+
+# ============ 重发抽奖帖（Phase L.4.1）============
+
+@router.callback_query(F.data.startswith("admin:lottery:repost:"))
+@_super_admin_required
+async def cb_admin_lottery_repost(callback: types.CallbackQuery, state: FSMContext):
+    """[🔄 重发抽奖帖] 二次确认（仅 active 状态）"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("抽奖不存在", show_alert=True)
+        return
+    if lottery.get("status") != "active":
+        await callback.answer("仅 active 状态可重发", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"🔄 重发抽奖帖 #{lid}「{lottery.get('name', '')}」？\n\n"
+        "原帖在频道里如果被删除（或 chat_id 改了），点确认将重新 send_message 一份；\n"
+        "channel_msg_id 会更新为新消息 id，原帖（如仍在）保留不删。\n\n"
+        "如果原帖还在频道，重发会让频道出现两条相同抽奖（旧的不删）。",
+        reply_markup=admin_lottery_repost_confirm_kb(lid),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:lottery:repost_ok:"))
+@_super_admin_required
+async def cb_admin_lottery_repost_ok(callback: types.CallbackQuery, state: FSMContext):
+    """实际重发：临时改 status='draft' → publish_lottery_to_channel → 恢复 active"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("抽奖不存在", show_alert=True)
+        return
+    if lottery.get("status") != "active":
+        await callback.answer("仅 active 状态可重发", show_alert=True)
+        return
+
+    # 临时降级到 draft 让 publish_lottery_to_channel 不报 not_publishable
+    await update_lottery_fields(lid, status="draft")
+    from bot.utils.lottery_publish import (
+        LotteryPublishError, publish_lottery_to_channel,
+    )
+    try:
+        result = await publish_lottery_to_channel(callback.bot, lid)
+    except LotteryPublishError as e:
+        # 失败时回滚 status
+        await update_lottery_fields(lid, status="active")
+        await callback.answer(f"❌ {e}", show_alert=True)
+        return
+    # publish 成功后内部已 mark_lottery_published → status=active；这里防御性再确认
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="lottery_repost",
+        target_type="lottery",
+        target_id=str(lid),
+        detail={"chat_id": result["chat_id"], "msg_id": result["msg_id"]},
+    )
+    await callback.answer(f"✅ 重发成功（新 msg_id={result['msg_id']}）")
+    callback.data = f"admin:lottery:item:{lid}"
+    await cb_admin_lottery_item(callback, state)
+
+
+# ============ 客服链接配置（Phase L.4.1）============
+
+async def _enter_contact_url_fsm(
+    target_message: types.Message, state: FSMContext, *, edit: bool = True,
+):
+    """统一进 FSM 文案（系统设置 + 抽奖管理双入口复用）"""
+    from bot.database import get_config
+    current = await get_config("lottery_contact_url")
+    current_line = (
+        f"当前值：{current}" if current else "当前值：（未配置）"
+    )
+    await state.set_state(LotteryContactUrlStates.waiting_url)
+    text = (
+        "👨‍💼 抽奖客服链接配置\n\n"
+        f"{current_line}\n\n"
+        "请输入 t.me 链接（如 https://t.me/admin）或 @username。\n"
+        "回复 0 清空配置（中奖通知将不带按钮）。\n"
+        "/cancel 取消。"
+    )
+    kb = lottery_contact_cancel_kb()
+    if edit:
+        try:
+            await target_message.edit_text(text, reply_markup=kb)
+            return
+        except Exception:
+            pass
+    await target_message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "admin:lottery:contact")
+@_super_admin_required
+async def cb_admin_lottery_contact(callback: types.CallbackQuery, state: FSMContext):
+    """[👨‍💼 抽奖客服链接] 入口（抽奖管理子菜单）"""
+    await _enter_contact_url_fsm(callback.message, state, edit=True)
+    await callback.answer()
+
+
+@router.message(F.text == "/cancel", LotteryContactUrlStates())
+@_super_admin_required
+async def cmd_cancel_contact_url(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "❌ 已取消。",
+        reply_markup=admin_lottery_menu_kb(await count_lotteries_by_status()),
+    )
+
+
+@router.message(LotteryContactUrlStates.waiting_url, F.text)
+@_super_admin_required
+async def on_lottery_contact_url(message: types.Message, state: FSMContext):
+    """接收客服链接 URL；存 config + audit"""
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel_contact_url(message, state)
+    # 清空
+    if text == "0":
+        await set_config("lottery_contact_url", "")
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="lottery_contact_set",
+            target_type="config",
+            target_id="lottery_contact_url",
+            detail={"value": ""},
+        )
+        await state.clear()
+        await message.answer(
+            "✅ 已清空客服链接。中奖通知将不附按钮，文字提示用户联系频道管理员。",
+            reply_markup=admin_lottery_menu_kb(await count_lotteries_by_status()),
+        )
+        return
+    # @username → t.me/xxx
+    candidate = text
+    if candidate.startswith("@"):
+        name = candidate.lstrip("@")
+        if name and name.replace("_", "").isalnum():
+            candidate = f"https://t.me/{name}"
+    # URL 校验
+    from bot.utils.url import normalize_url
+    url = normalize_url(candidate)
+    if not url or not url.startswith("https://t.me/") and not url.startswith("http://t.me/"):
+        await message.reply(
+            "❌ 请输入 t.me 链接（如 https://t.me/admin 或 @admin），"
+            "回复 0 清空，或 /cancel 取消。"
+        )
+        return
+    await set_config("lottery_contact_url", url)
+    await log_admin_audit(
+        admin_id=message.from_user.id,
+        action="lottery_contact_set",
+        target_type="config",
+        target_id="lottery_contact_url",
+        detail={"value": url},
+    )
+    await state.clear()
+    await message.answer(
+        f"✅ 客服链接已设置：{url}\n"
+        "中奖通知将附 [👨‍💼 联系管理员] 按钮跳转此链接。",
+        reply_markup=admin_lottery_menu_kb(await count_lotteries_by_status()),
+    )
 
 
 # ============ 创建 10 步 FSM (Phase L.1.2) ============

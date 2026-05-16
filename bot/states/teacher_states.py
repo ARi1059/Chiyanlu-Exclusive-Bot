@@ -86,6 +86,20 @@ class AdminPointsGrantStates(StatesGroup):
     waiting_confirm       = State()
 
 
+class LotteryContactUrlStates(StatesGroup):
+    """Phase L.4.1：客服链接配置 FSM"""
+    waiting_url = State()
+
+
+class LotteryEditStates(StatesGroup):
+    """Phase L.4.2：active 抽奖编辑 FSM
+
+    state.data: {"lottery_id": int, "field_key": str}
+    """
+    waiting_field_choice = State()
+    waiting_new_value    = State()
+
+
 class LotteryCreateStates(StatesGroup):
     """Phase L.1：超管创建抽奖 10 步 FSM（spec §3.3）
 

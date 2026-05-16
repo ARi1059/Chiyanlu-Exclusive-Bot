@@ -505,6 +505,7 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏰ 修改发布时间", callback_data="system:publish_time")],
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
         [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
+        [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="system:lottery_contact")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 
@@ -916,9 +917,10 @@ def admin_lottery_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
     """[🎲 抽奖管理] 子菜单"""
     list_label = f"📋 抽奖列表 ({pending_count})" if pending_count else "📋 抽奖列表"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ 创建新抽奖", callback_data="admin:lottery:create")],
-        [InlineKeyboardButton(text=list_label,    callback_data="admin:lottery:list")],
-        [InlineKeyboardButton(text="🔙 返回主面板", callback_data="menu:main")],
+        [InlineKeyboardButton(text="➕ 创建新抽奖",   callback_data="admin:lottery:create")],
+        [InlineKeyboardButton(text=list_label,       callback_data="admin:lottery:list")],
+        [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="admin:lottery:contact")],
+        [InlineKeyboardButton(text="🔙 返回主面板",   callback_data="menu:main")],
     ])
 
 
@@ -943,8 +945,10 @@ def admin_lottery_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
 def admin_lottery_detail_kb(lottery: dict) -> InlineKeyboardMarkup:
     """抽奖详情页操作按钮
 
-    L.1：draft → [❌ 取消草稿]
-    L.2：draft → [📤 立即发布]；scheduled → [❌ 取消计划] (复用 cancel)
+    draft     → [📤 立即发布] [❌ 取消草稿]
+    scheduled → [❌ 取消计划]
+    active    → [✏️ 编辑] [🔄 重发抽奖帖] [👥 查看参与] [❌ 取消抽奖]
+    drawn / no_entries → [👥 查看参与]
     """
     rows: list[list[InlineKeyboardButton]] = []
     lid = lottery["id"]
@@ -958,11 +962,66 @@ def admin_lottery_detail_kb(lottery: dict) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(text="❌ 取消计划", callback_data=f"admin:lottery:cancel:{lid}"),
         ])
+    elif status == "active":
+        rows.append([
+            InlineKeyboardButton(text="✏️ 编辑抽奖",   callback_data=f"admin:lottery:edit:{lid}"),
+            InlineKeyboardButton(text="🔄 重发抽奖帖", callback_data=f"admin:lottery:repost:{lid}"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="👥 查看参与", callback_data=f"admin:lottery:entries:{lid}"),
+            InlineKeyboardButton(text="❌ 取消抽奖", callback_data=f"admin:lottery:cancel:{lid}"),
+        ])
+    elif status in ("drawn", "no_entries"):
+        rows.append([
+            InlineKeyboardButton(text="👥 查看参与", callback_data=f"admin:lottery:entries:{lid}"),
+        ])
     rows.append([
         InlineKeyboardButton(text="🔙 返回列表",     callback_data="admin:lottery:list"),
         InlineKeyboardButton(text="🏠 返回抽奖管理", callback_data="admin:lottery"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_lottery_entries_pagination_kb(
+    lottery_id: int, page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    """参与人员分页按钮（仿 9.6 / P.2）"""
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页",
+            callback_data=f"admin:lottery:entries:{lottery_id}:{page - 1}",
+        ))
+    nav.append(InlineKeyboardButton(
+        text=f"📄 {page + 1}/{max(1, total_pages)}",
+        callback_data="noop:lottery_entries_page",
+    ))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="➡️ 下一页",
+            callback_data=f"admin:lottery:entries:{lottery_id}:{page + 1}",
+        ))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        nav,
+        [InlineKeyboardButton(text="🔙 返回详情", callback_data=f"admin:lottery:item:{lottery_id}")],
+    ])
+
+
+def admin_lottery_repost_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
+    """[🔄 重发抽奖帖] 二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认重发", callback_data=f"admin:lottery:repost_ok:{lottery_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:lottery:item:{lottery_id}"),
+        ],
+    ])
+
+
+def lottery_contact_cancel_kb() -> InlineKeyboardMarkup:
+    """客服链接 FSM 取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:lottery")],
+    ])
 
 
 def admin_lottery_publish_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:

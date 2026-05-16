@@ -5199,6 +5199,23 @@ async def list_lottery_entries_for_draw(lottery_id: int) -> list[dict]:
         await db.close()
 
 
+async def list_lottery_entries_paged(
+    lottery_id: int, limit: int = 20, offset: int = 0,
+) -> list[dict]:
+    """分页取参与人员（admin 查看用，按 entered_at DESC）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM lottery_entries WHERE lottery_id = ? "
+            "ORDER BY entered_at DESC, id DESC LIMIT ? OFFSET ?",
+            (lottery_id, int(limit), int(offset)),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
 async def mark_lottery_entries_won(entry_ids: list[int]) -> int:
     """标记 winners（won=1）；返回更新行数"""
     if not entry_ids:

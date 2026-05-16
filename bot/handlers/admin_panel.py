@@ -700,6 +700,15 @@ async def cb_toggle_reminder(callback: types.CallbackQuery):
     await callback.message.edit_text("⚙️ 系统设置", reply_markup=system_menu_kb())
 
 
+@router.callback_query(F.data == "system:lottery_contact")
+@super_admin_required
+async def cb_set_lottery_contact_from_system(callback: types.CallbackQuery, state: FSMContext):
+    """[👨‍💼 抽奖客服链接] 入口（系统设置）；与抽奖管理入口共用 FSM"""
+    from bot.handlers.admin_lottery import _enter_contact_url_fsm
+    await _enter_contact_url_fsm(callback.message, state, edit=True)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "system:publish_time")
 @admin_required
 async def cb_set_publish_time(callback: types.CallbackQuery, state: FSMContext):
@@ -836,6 +845,8 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "lottery_cancel": "取消抽奖",
     "lottery_publish": "发布抽奖到频道",
     "lottery_entry": "参与抽奖",
+    "lottery_repost": "重发抽奖帖",
+    "lottery_contact_set": "设置抽奖客服链接",
 }
 
 
