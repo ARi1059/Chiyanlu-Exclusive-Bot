@@ -118,10 +118,43 @@ async def _build_detail_payload(
         fav_count=fav_count,
         today_str=today,
     )
+
+    # Phase 9.6：详情页底部追加"评价统计 + 最近 3 条"（在按钮组之上）
+    review_count = 0
+    try:
+        from bot.database import (
+            get_teacher_channel_post,
+            list_approved_reviews,
+        )
+        from bot.utils.review_detail_render import (
+            RECENT_REVIEWS_COUNT,
+            fetch_signer_names,
+            format_recent_reviews_block,
+            format_review_stats_block,
+        )
+        post = await get_teacher_channel_post(teacher["user_id"])
+        stats_block = format_review_stats_block(post)
+        if stats_block:
+            review_count = int(post.get("review_count") or 0)
+            recents = await list_approved_reviews(
+                teacher["user_id"], limit=RECENT_REVIEWS_COUNT, offset=0,
+            )
+            signer_names = await fetch_signer_names(recents)
+            recents_block = format_recent_reviews_block(recents, signer_names)
+            text = f"{text}\n\n{stats_block}"
+            if recents_block:
+                text = f"{text}\n\n{recents_block}"
+    except Exception as e:
+        logger.warning(
+            "_build_detail_payload 拼接评价区块失败 teacher=%s: %s",
+            teacher.get("user_id"), e,
+        )
+
     kb = teacher_detail_kb(
         teacher,
         is_favorited=is_fav,
         notify_enabled=notify_enabled,
+        review_count=review_count,
     )
     return text, kb
 

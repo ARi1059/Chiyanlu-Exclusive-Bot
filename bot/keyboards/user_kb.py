@@ -110,13 +110,16 @@ def teacher_detail_kb(
     *,
     is_favorited: bool,
     notify_enabled: bool = True,
+    review_count: int = 0,
 ) -> InlineKeyboardMarkup:
-    """老师详情页按钮组（Phase 7.3：4 行布局，含相似推荐 + 动态提醒态）
+    """老师详情页按钮组（Phase 9.6：5 行布局，新增 [📖 查看全部评价]）
 
     布局：
         [📩 联系老师]                              ← button_url 有效时显示
         [⭐ 收藏 / ✅ 已收藏，点击取消] [🔔/🔕 提醒按钮]
+        [📖 查看全部评价 (N)]                       ← review_count > 0 时显示（9.6）
         [✨ 相似推荐]
+        [📝 写评价]                                 ← 9.3 已加
         [🔙 返回主菜单]
 
     提醒按钮 3 态（Phase 7.3 §四）：
@@ -157,7 +160,16 @@ def teacher_detail_kb(
         ),
     ])
 
-    # 第三行：相似推荐
+    # 查看全部评价 (Phase 9.6) —— 仅在已有评价时显示
+    if review_count and review_count > 0:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"📖 查看全部评价 ({review_count})",
+                callback_data=f"teacher:reviews:{teacher_id}",
+            ),
+        ])
+
+    # 相似推荐
     rows.append([
         InlineKeyboardButton(
             text="✨ 相似推荐",
@@ -165,7 +177,7 @@ def teacher_detail_kb(
         ),
     ])
 
-    # 第四行：写评价 (Phase 9.3)
+    # 写评价 (Phase 9.3)
     rows.append([
         InlineKeyboardButton(
             text="📝 写评价",
@@ -173,7 +185,7 @@ def teacher_detail_kb(
         ),
     ])
 
-    # 第五行：返回主菜单
+    # 返回主菜单
     rows.append([
         InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
     ])

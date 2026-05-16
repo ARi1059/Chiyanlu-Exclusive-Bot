@@ -4431,3 +4431,64 @@ async def find_teacher_post_by_channel_msg(
         return dict(row) if row else None
     finally:
         await db.close()
+
+
+# ============ 详情页评价展示 (Phase 9.6) ============
+
+
+async def list_approved_reviews(
+    teacher_id: int, limit: int = 10, offset: int = 0,
+) -> list[dict]:
+    """列出某老师已通过的评价（用于详情页 / 分页列表）
+
+    按 created_at DESC（最新在前）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teacher_reviews "
+            "WHERE teacher_id = ? AND status = 'approved' "
+            "ORDER BY created_at DESC, id DESC "
+            "LIMIT ? OFFSET ?",
+            (teacher_id, int(limit), int(offset)),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_approved_reviews(teacher_id: int) -> int:
+    """统计某老师已通过的评价总数"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM teacher_reviews "
+            "WHERE teacher_id = ? AND status = 'approved'",
+            (teacher_id,),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def get_users_first_names(user_ids: list[int]) -> dict[int, Optional[str]]:
+    """批量取 users.first_name → 用于详情页评价半匿名签名
+
+    Returns: {user_id: first_name or None}；不存在的 user_id 不在 dict 中。
+    """
+    if not user_ids:
+        return {}
+    db = await get_db()
+    try:
+        # 注意：sqlite 不接受空 placeholder 列表，上面已 guard
+        placeholders = ",".join("?" * len(user_ids))
+        cur = await db.execute(
+            f"SELECT user_id, first_name FROM users WHERE user_id IN ({placeholders})",
+            user_ids,
+        )
+        rows = await cur.fetchall()
+        return {int(r["user_id"]): r["first_name"] for r in rows}
+    finally:
+        await db.close()
