@@ -23,10 +23,12 @@ from pytz import timezone
 
 from bot.config import config
 from bot.database import (
+    add_point_transaction,
     create_lottery_entry,
     find_lottery_by_entry_code,
     get_lottery,
     get_lottery_entry,
+    get_user_total_points,
     log_admin_audit,
 )
 from bot.utils.lottery_subscribe_check import (
@@ -65,11 +67,12 @@ async def try_enter_lottery(
     """尝试参与抽奖（统一入口；deep link / 口令命中共用）
 
     Returns: (status, extra)
-        ok                 → entry 创建成功
+        ok                 → entry 创建成功（含 cost_deducted 字段）
         not_active         → 抽奖非 active
         time_window        → 未到 publish_at 或已过 draw_at
         already_entered    → 已参与
         need_subscribe     → 未关注必关频道（extra={'missing': list}）
+        need_points        → 积分不足（extra={'required': int, 'current': int}）
 
     source：deep_link / code（写 audit detail）
     """
@@ -99,11 +102,32 @@ async def try_enter_lottery(
         if not ok:
             return "need_subscribe", {"missing": missing}
 
+    # 积分门槛校验
+    cost = int(lottery.get("entry_cost_points") or 0)
+    if cost > 0:
+        current_points = await get_user_total_points(user_id)
+        if current_points < cost:
+            return "need_points", {"required": cost, "current": current_points}
+
     # 创建 entry
     entry_id = await create_lottery_entry(lid, user_id)
     if entry_id is None:
         # UNIQUE 冲突（并发场景）
         return "already_entered", {}
+
+    # 扣分（entry 创建成功后，避免「扣完发现已参与」）
+    if cost > 0:
+        try:
+            tx_id = await add_point_transaction(
+                user_id=user_id, delta=-cost,
+                reason="lottery_entry",
+                related_id=lid,
+                note=lottery.get("name") or "",
+            )
+            if tx_id is None:
+                logger.warning("lottery_entry 扣分失败 lid=%s uid=%s", lid, user_id)
+        except Exception as e:
+            logger.warning("lottery_entry 扣分异常 lid=%s uid=%s: %s", lid, user_id, e)
 
     # audit
     try:
@@ -112,7 +136,7 @@ async def try_enter_lottery(
             action="lottery_entry",
             target_type="lottery",
             target_id=str(lid),
-            detail={"source": source, "entry_id": entry_id},
+            detail={"source": source, "entry_id": entry_id, "cost": cost},
         )
     except Exception:
         pass
@@ -124,7 +148,7 @@ async def try_enter_lottery(
     except Exception as e:
         logger.warning("update_lottery_entry_count schedule 失败 lid=%s: %s", lid, e)
 
-    return "ok", {"entry_id": entry_id, "lottery_id": lid}
+    return "ok", {"entry_id": entry_id, "lottery_id": lid, "cost_deducted": cost}
 
 
 async def _render_entry_result(
@@ -139,8 +163,11 @@ async def _render_entry_result(
     lid = lottery.get("id")
     name = lottery.get("name", "?")
     if status == "ok":
+        cost = int(extra.get("cost_deducted") or 0)
+        cost_line = f"💰 已扣除：{cost} 积分\n" if cost > 0 else ""
         text = (
             f"✅ 你已参与「{name}」抽奖\n\n"
+            f"{cost_line}"
             f"开奖时间：{lottery.get('draw_at')}\n"
             "请耐心等待，中奖会私聊通知。"
         )
@@ -173,6 +200,22 @@ async def _render_entry_result(
         text = f"参与「{name}」抽奖前\n\n" + text
         await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb,
                                disable_web_page_preview=True)
+        return
+    if status == "need_points":
+        required = int(extra.get("required") or 0)
+        current = int(extra.get("current") or 0)
+        diff = required - current
+        text = (
+            f"⚠️ 积分不足，无法参与「{name}」抽奖\n\n"
+            f"参与需要：{required} 积分\n"
+            f"你的余额：{current} 积分\n"
+            f"还差：{diff} 积分\n\n"
+            "可通过提交评价等方式获得积分。"
+        )
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="💰 查看我的积分", callback_data="user:points")],
+        ])
+        await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb)
         return
     # 未知 status
     await bot.send_message(chat_id=chat_id, text=f"⚠️ 处理失败：{status}")

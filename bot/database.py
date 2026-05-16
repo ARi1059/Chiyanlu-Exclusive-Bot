@@ -318,6 +318,7 @@ async def init_db():
                 prize_count             INTEGER NOT NULL,
                 prize_description       TEXT NOT NULL,
                 required_chat_ids       TEXT NOT NULL,
+                entry_cost_points       INTEGER NOT NULL DEFAULT 0,
                 publish_at              TEXT NOT NULL,
                 draw_at                 TEXT NOT NULL,
                 published_at            TEXT,
@@ -331,7 +332,8 @@ async def init_db():
                 updated_at              TEXT DEFAULT CURRENT_TIMESTAMP,
                 CHECK (entry_method IN ('button','code')),
                 CHECK (status IN ('draft','scheduled','active','drawn','cancelled','no_entries')),
-                CHECK (prize_count BETWEEN 1 AND 1000)
+                CHECK (prize_count BETWEEN 1 AND 1000),
+                CHECK (entry_cost_points BETWEEN 0 AND 1000000)
             );
 
             CREATE INDEX IF NOT EXISTS idx_lotteries_status
@@ -374,6 +376,8 @@ async def init_db():
         await _migrate_teacher_profile_columns(db)
         # Phase P.1 schema 增量：users 表新增 total_points
         await _migrate_users_total_points(db)
+        # 抽奖参与积分门槛：lotteries 表新增 entry_cost_points
+        await _migrate_lotteries_entry_cost(db)
 
         await db.commit()
     finally:
@@ -464,6 +468,25 @@ async def _migrate_users_total_points(db: aiosqlite.Connection) -> None:
         )
     except Exception as e:
         logger.warning("total_points 字段迁移失败（不阻断启动）: %s", e)
+
+
+async def _migrate_lotteries_entry_cost(db: aiosqlite.Connection) -> None:
+    """lotteries 表添加 entry_cost_points（参与所需积分，默认 0 表示免费）
+
+    PRAGMA 检测后再 ADD，幂等可重入。无法回填 CHECK 约束（SQLite ALTER 限制），
+    校验交由 create_lottery / update_lottery_fields 业务层兜底。
+    """
+    try:
+        cur = await db.execute("PRAGMA table_info(lotteries)")
+        rows = await cur.fetchall()
+        existing = {row["name"] for row in rows}
+        if "entry_cost_points" in existing:
+            return
+        await db.execute(
+            "ALTER TABLE lotteries ADD COLUMN entry_cost_points INTEGER NOT NULL DEFAULT 0"
+        )
+    except Exception as e:
+        logger.warning("entry_cost_points 字段迁移失败（不阻断启动）: %s", e)
 
 
 async def _migrate_teacher_profile_columns(db: aiosqlite.Connection) -> None:
@@ -4864,6 +4887,7 @@ LOTTERY_EDITABLE_FIELDS: set[str] = {
     "entry_method", "entry_code",
     "prize_count", "prize_description",
     "required_chat_ids",
+    "entry_cost_points",
     "publish_at", "draw_at",
     "published_at", "drawn_at",
     "channel_chat_id", "channel_msg_id", "result_msg_id",
@@ -4903,9 +4927,10 @@ async def create_lottery(data: dict) -> Optional[int]:
                     entry_method, entry_code,
                     prize_count, prize_description,
                     required_chat_ids,
+                    entry_cost_points,
                     publish_at, draw_at,
                     status, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(data["name"]).strip(),
                     str(data["description"]).strip(),
@@ -4915,6 +4940,7 @@ async def create_lottery(data: dict) -> Optional[int]:
                     int(data["prize_count"]),
                     str(data["prize_description"]).strip(),
                     rc_json,
+                    int(data.get("entry_cost_points") or 0),
                     str(data["publish_at"]),
                     str(data["draw_at"]),
                     data.get("status", "draft"),

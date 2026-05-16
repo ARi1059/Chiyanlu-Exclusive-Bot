@@ -98,6 +98,10 @@ def format_points_detail_line(
         body = f"管理员加分：{note}" if note else "管理员加分"
     elif reason == "admin_revoke":
         body = f"管理员扣分：{note}" if note else "管理员扣分"
+    elif reason == "lottery_entry":
+        body = f"抽奖参与扣分：{note}" if note else "抽奖参与扣分"
+    elif reason == "lottery_refund":
+        body = f"抽奖取消退款：{note}" if note else "抽奖取消退款"
     else:
         body = f"{reason}：{note}" if note else reason
 

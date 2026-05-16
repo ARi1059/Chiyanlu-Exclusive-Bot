@@ -52,6 +52,7 @@ from bot.keyboards.admin_kb import (
     lottery_contact_cancel_kb,
     lottery_create_cancel_kb,
     lottery_create_confirm_kb,
+    lottery_create_cost_cancel_kb,
     lottery_create_method_kb,
     lottery_create_prize_count_kb,
     lottery_create_publish_mode_kb,
@@ -192,6 +193,7 @@ async def _render_lottery_detail(lottery: dict) -> str:
         f"📋 规则：{lottery.get('description', '?')}",
         f"🎁 奖品：{lottery.get('prize_description', '?')}",
         f"🏆 中奖人数：{lottery.get('prize_count', '?')}",
+        f"💰 参与消耗：{lottery.get('entry_cost_points', 0)} 积分",
         f"🎯 参与方式：{method_label}",
     ]
     if entry_method == "code" and lottery.get("entry_code"):
@@ -642,6 +644,7 @@ _EDITABLE_FIELDS: dict[str, dict] = {
     "description":        {"label": "活动规则",   "type": "str",      "max": 500},
     "prize_description":  {"label": "奖品描述",   "type": "str",      "max": 100},
     "prize_count":        {"label": "中奖人数",   "type": "int_range", "min": 1, "max": 1000},
+    "entry_cost_points":  {"label": "参与所需积分", "type": "int_range", "min": 0, "max": 1000000},
     "required_chat_ids":  {"label": "必关频道/群组", "type": "chat_ids"},
     "draw_at":            {"label": "开奖时间",   "type": "datetime"},
 }
@@ -1409,9 +1412,12 @@ async def _enter_confirm_step(msg_or_cb, state: FSMContext):
     ]
     if method == "code":
         lines.append(f"🔑 口令：{data.get('entry_code', '?')}")
+    cost = int(data.get("entry_cost_points") or 0)
+    cost_text = f"{cost} 积分" if cost > 0 else "免费"
     lines.extend([
         f"🎁 奖品：{data.get('prize_description', '?')}",
         f"🏆 中奖人数：{data.get('prize_count', '?')}",
+        f"💰 参与消耗：{cost_text}",
         f"📡 必关频道：{len(chats)} 项",
         f"⏰ 发布方式：{pub_label}",
         f"⏰ 发布时间：{data.get('publish_at', '?')}",
@@ -1429,6 +1435,52 @@ async def _enter_confirm_step(msg_or_cb, state: FSMContext):
             await msg_or_cb.message.answer(text, reply_markup=kb)
     else:
         await msg_or_cb.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "admin:lottery:c_set_cost")
+@_super_admin_required
+async def cb_lottery_c_set_cost(callback: types.CallbackQuery, state: FSMContext):
+    """Step 10 确认页 [💰 设置参与所需积分] → 进 waiting_entry_cost_input"""
+    data = await state.get_data()
+    current = int(data.get("entry_cost_points") or 0)
+    await state.set_state(LotteryCreateStates.waiting_entry_cost_input)
+    text = (
+        "💰 设置参与所需积分\n\n"
+        f"当前值：{current if current > 0 else '免费（0 积分）'}\n\n"
+        "请输入整数（0-1000000；0 = 免费）。\n"
+        "用户点击参与时会自动扣分，余额不足无法参与。"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=lottery_create_cost_cancel_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=lottery_create_cost_cancel_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:lottery:c_cost_back")
+@_super_admin_required
+async def cb_lottery_c_cost_back(callback: types.CallbackQuery, state: FSMContext):
+    """设置参与积分子流程取消 → 回 Step 10 确认页"""
+    await _enter_confirm_step(callback, state)
+    await callback.answer()
+
+
+@router.message(LotteryCreateStates.waiting_entry_cost_input, F.text)
+@_super_admin_required
+async def on_entry_cost_input(message: types.Message, state: FSMContext):
+    """接收参与积分数值，回 Step 10"""
+    text = (message.text or "").strip()
+    if not text.lstrip("-").isdigit():
+        await message.reply("❌ 请输入整数（0-1000000）。")
+        return
+    n = int(text)
+    if not (0 <= n <= 1000000):
+        await message.reply("❌ 取值范围 0-1000000。")
+        return
+    await state.update_data(entry_cost_points=n)
+    label = f"{n} 积分" if n > 0 else "免费"
+    await message.answer(f"✅ 参与所需积分已设为：{label}")
+    await _enter_confirm_step(message, state)
 
 
 @router.callback_query(F.data == "admin:lottery:c_save")

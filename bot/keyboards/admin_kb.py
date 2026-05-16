@@ -1027,8 +1027,8 @@ def lottery_contact_cancel_kb() -> InlineKeyboardMarkup:
 def admin_lottery_edit_field_kb(lottery_id: int) -> InlineKeyboardMarkup:
     """active 抽奖编辑字段选择（Phase L.4.2）
 
-    6 个可编辑字段：name / description / prize_description / prize_count /
-                    required_chat_ids / draw_at
+    7 个可编辑字段：name / description / prize_description / prize_count /
+                    entry_cost_points / required_chat_ids / draw_at
     （cover / entry_method / entry_code 不可改 — admin 重新建抽奖即可）
     """
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1041,10 +1041,11 @@ def admin_lottery_edit_field_kb(lottery_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏆 中奖人数", callback_data=f"admin:lottery:edit_field:{lottery_id}:prize_count"),
         ],
         [
-            InlineKeyboardButton(text="📡 必关频道", callback_data=f"admin:lottery:edit_field:{lottery_id}:required_chat_ids"),
-            InlineKeyboardButton(text="⏰ 开奖时间", callback_data=f"admin:lottery:edit_field:{lottery_id}:draw_at"),
+            InlineKeyboardButton(text="💰 参与所需积分", callback_data=f"admin:lottery:edit_field:{lottery_id}:entry_cost_points"),
+            InlineKeyboardButton(text="📡 必关频道",   callback_data=f"admin:lottery:edit_field:{lottery_id}:required_chat_ids"),
         ],
         [
+            InlineKeyboardButton(text="⏰ 开奖时间", callback_data=f"admin:lottery:edit_field:{lottery_id}:draw_at"),
             InlineKeyboardButton(text="🔙 返回详情", callback_data=f"admin:lottery:item:{lottery_id}"),
         ],
     ])
@@ -1151,10 +1152,18 @@ def lottery_create_publish_mode_kb() -> InlineKeyboardMarkup:
 
 
 def lottery_create_confirm_kb() -> InlineKeyboardMarkup:
-    """Step 10：保存草稿 / 取消"""
+    """Step 10：保存草稿 / 设置参与所需积分 / 取消"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 设置参与所需积分", callback_data="admin:lottery:c_set_cost")],
         [
             InlineKeyboardButton(text="✅ 保存草稿", callback_data="admin:lottery:c_save"),
             InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
         ],
+    ])
+
+
+def lottery_create_cost_cancel_kb() -> InlineKeyboardMarkup:
+    """设置参与积分 FSM 取消（回 Step 10 确认页）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:lottery:c_cost_back")],
     ])

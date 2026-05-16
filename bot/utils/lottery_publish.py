@@ -107,6 +107,7 @@ def render_lottery_caption(
     entry_method = lottery.get("entry_method") or "?"
     entry_code = lottery.get("entry_code")
     required_chat_ids = lottery.get("required_chat_ids") or []
+    cost_points = int(lottery.get("entry_cost_points") or 0)
 
     def _build(desc_limit: Optional[int] = None, prize_limit: Optional[int] = None) -> str:
         d = _truncate(description, desc_limit) if desc_limit else description
@@ -121,6 +122,8 @@ def render_lottery_caption(
         lines.append("")
         lines.append(f"🏆 中奖人数：{prize_count}")
         lines.append(f"⏰ 开奖时间：{draw_at}")
+        if cost_points > 0:
+            lines.append(f"💰 参与消耗：{cost_points} 积分")
         lines.append("")
         lines.append("📌 参与方式：")
         if entry_method == "button":

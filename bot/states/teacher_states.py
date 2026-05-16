@@ -124,6 +124,7 @@ class LotteryCreateStates(StatesGroup):
     waiting_publish_at        = State()
     waiting_draw_at           = State()
     waiting_confirm           = State()
+    waiting_entry_cost_input  = State()  # Step 10 确认页 [💰 设置参与所需积分] 子流程
 
 
 class ReviewSubmitStates(StatesGroup):
