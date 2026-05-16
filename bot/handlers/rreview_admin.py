@@ -28,13 +28,29 @@ from bot.database import (
     is_super_admin,
     list_pending_reviews,
     log_admin_audit,
+    reject_teacher_review,
     REVIEW_RATINGS,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
     rreview_action_kb,
     rreview_empty_kb,
+    rreview_reject_choice_kb,
 )
+from bot.states.teacher_states import RReviewRejectStates
+from bot.utils.rreview_notify import (
+    notify_review_approved,
+    notify_review_rejected,
+)
+
+
+# 4 条驳回预设原因（与 rreview_reject_choice_kb 顺序一致）
+REJECT_PRESETS: list[str] = [
+    "证据不充分",
+    "内容违规",
+    "重复提交",
+    "评分明显不合理",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +140,16 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
         target_id=str(review_id),
         detail={"teacher_id": review["teacher_id"], "user_id": review["user_id"]},
     )
+
+    # 私聊通知评价者（容错，不阻塞）
+    teacher = await get_teacher(review["teacher_id"])
+    teacher_name = teacher["display_name"] if teacher else None
+    try:
+        await notify_review_approved(
+            callback.bot, review_id, teacher_name=teacher_name,
+        )
+    except Exception as e:
+        logger.warning("notify_review_approved 失败 review=%s: %s", review_id, e)
 
     # 删除当前审核的 2 条消息 + 推下一条 / 空列表
     await _cleanup_messages(callback.bot, callback.message.chat.id, state)
@@ -322,3 +348,308 @@ def _render_review_text(review: dict, teacher: Optional[dict], idx: int, total: 
         "────────────────────",
     ]
     return "\n".join(lines)
+
+
+# ============ 翻页 ============
+
+@router.callback_query(F.data.startswith("rreview:nav:"))
+@_super_admin_required
+async def cb_rreview_nav(callback: types.CallbackQuery, state: FSMContext):
+    """上一条 / 下一条：rreview:nav:prev:<id> / rreview:nav:next:<id>"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    direction = parts[2]
+    try:
+        cur_id = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    pending = await list_pending_reviews(limit=50)
+    cur_idx = next((i for i, r in enumerate(pending) if r["id"] == cur_id), -1)
+    if cur_idx == -1:
+        # 当前 review 已被其他超管处理掉了 → 退回展示当前队列第 0 条
+        if not pending:
+            await _show_empty(callback)
+            return
+        await _show_review_at_index(callback, state, pending, 0)
+        return
+    new_idx = cur_idx - 1 if direction == "prev" else cur_idx + 1
+    if new_idx < 0 or new_idx >= len(pending):
+        await callback.answer("已到边界", show_alert=True)
+        return
+    await _show_review_at_index(callback, state, pending, new_idx)
+
+
+# ============ 重看截图 / 手势照片 ============
+
+@router.callback_query(F.data.startswith("rreview:photo:"))
+@_super_admin_required
+async def cb_rreview_photo(callback: types.CallbackQuery):
+    """[🖼 重看约课截图] / [✋ 重看手势照片]：单独 send_photo 不破坏当前视图"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    kind = parts[2]
+    try:
+        review_id = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    review = await get_teacher_review(review_id)
+    if not review:
+        await callback.answer("评价不存在", show_alert=True)
+        return
+    if kind == "booking":
+        fid = review["booking_screenshot_file_id"]
+        caption = "📸 约课记录"
+    elif kind == "gesture":
+        fid = review["gesture_photo_file_id"]
+        caption = "✋ 现场手势"
+    else:
+        await callback.answer("未知类型", show_alert=True)
+        return
+    try:
+        await callback.bot.send_photo(
+            chat_id=callback.message.chat.id, photo=fid, caption=caption,
+        )
+    except Exception as e:
+        logger.warning("rreview:photo send_photo 失败 review=%s kind=%s: %s",
+                       review_id, kind, e)
+        await callback.answer(f"⚠️ 重看失败：{e}", show_alert=True)
+        return
+    await callback.answer()
+
+
+# ============ 驳回流程 ============
+
+@router.callback_query(F.data.startswith("rreview:reject:"))
+@_super_admin_required
+async def cb_rreview_reject_ask(callback: types.CallbackQuery, state: FSMContext):
+    """[❌ 驳回] → 显示 4 预设 / 自定义 / 跳过 / 取消"""
+    try:
+        review_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    review = await get_teacher_review(review_id)
+    if not review:
+        await callback.answer("评价不存在", show_alert=True)
+        return
+    if review["status"] != "pending":
+        await callback.answer(f"该评价已是 {review['status']}", show_alert=True)
+        return
+    teacher = await get_teacher(review["teacher_id"])
+    name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
+    text = (
+        f"❌ 驳回评价 #{review_id} - {name}\n\n"
+        "请选择驳回原因：\n"
+        "- 4 个预设原因（点击即驳回）\n"
+        "- 📝 自定义原因（手输一段文字）\n"
+        '- ⏭ 跳过原因（私聊提示评价者 "未填写"）'
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=rreview_reject_choice_kb(review_id))
+    except Exception:
+        await callback.message.answer(text, reply_markup=rreview_reject_choice_kb(review_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rreview:reject_preset:"))
+@_super_admin_required
+async def cb_rreview_reject_preset(callback: types.CallbackQuery, state: FSMContext):
+    """选某条预设原因 → 直接驳回"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        review_id = int(parts[2])
+        preset_idx = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    if not (0 <= preset_idx < len(REJECT_PRESETS)):
+        await callback.answer("未知预设原因", show_alert=True)
+        return
+    reason = REJECT_PRESETS[preset_idx]
+    await _perform_reject(callback, state, review_id, reason)
+
+
+@router.callback_query(F.data.startswith("rreview:reject_skip:"))
+@_super_admin_required
+async def cb_rreview_reject_skip(callback: types.CallbackQuery, state: FSMContext):
+    """[⏭ 跳过原因] → reason=None 驳回"""
+    try:
+        review_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await _perform_reject(callback, state, review_id, None)
+
+
+@router.callback_query(F.data.startswith("rreview:reject_custom:"))
+@_super_admin_required
+async def cb_rreview_reject_custom(callback: types.CallbackQuery, state: FSMContext):
+    """[📝 自定义原因] → 进 FSM 等输入"""
+    try:
+        review_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await state.set_state(RReviewRejectStates.waiting_custom_reason)
+    await state.update_data(reject_review_id=review_id)
+    await callback.message.edit_text(
+        "📝 请回复驳回原因（一段文字）。\n\n"
+        "/cancel 取消（回到该报告的查看页）。",
+    )
+    await callback.answer()
+
+
+@router.message(F.text == "/cancel", RReviewRejectStates.waiting_custom_reason)
+@_super_admin_required
+async def cmd_cancel_custom_reason(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    review_id = data.get("reject_review_id")
+    await state.clear()
+    if not review_id:
+        await message.answer("已取消。")
+        return
+    # 回到该 review 的展示页（通过 list 拿索引）
+    pending = await list_pending_reviews(limit=50)
+    idx = next((i for i, r in enumerate(pending) if r["id"] == review_id), -1)
+    if idx == -1:
+        await message.answer("✅ 当前没有待审核的报告。", reply_markup=rreview_empty_kb())
+        return
+    await _cleanup_messages(message.bot, message.chat.id, state)
+    await _send_review_at_index(message.bot, message.chat.id, state, pending, idx)
+
+
+@router.message(RReviewRejectStates.waiting_custom_reason, F.text)
+@_super_admin_required
+async def on_custom_reason(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text:
+        await message.reply("❌ 请回复非空原因，或 /cancel 取消。")
+        return
+    if len(text) > 200:
+        await message.reply("❌ 原因过长（≤ 200 字），请精简。")
+        return
+    data = await state.get_data()
+    review_id = data.get("reject_review_id")
+    if not review_id:
+        await state.clear()
+        await message.reply("⚠️ 状态丢失，请重新进入审核。")
+        return
+    # _perform_reject 不能用 callback；构造一个简单封装
+    await _do_reject(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        reviewer_id=message.from_user.id,
+        review_id=int(review_id),
+        reason=text,
+        state=state,
+        ack_text=f"✅ 已驳回评价 #{review_id}（原因已私聊评价者）",
+    )
+
+
+async def _perform_reject(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    review_id: int,
+    reason: Optional[str],
+):
+    """callback 驱动的驳回入口（预设 / 跳过）"""
+    await _do_reject(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        reviewer_id=callback.from_user.id,
+        review_id=review_id,
+        reason=reason,
+        state=state,
+        ack_text=(
+            f"✅ 已驳回评价 #{review_id}"
+            + (f"（原因：{reason}）" if reason else "（未填写原因）")
+        ),
+        trigger_message=callback.message,
+    )
+    await callback.answer()
+
+
+async def _do_reject(
+    *,
+    bot,
+    chat_id: int,
+    reviewer_id: int,
+    review_id: int,
+    reason: Optional[str],
+    state: FSMContext,
+    ack_text: str,
+    trigger_message: Optional[types.Message] = None,
+):
+    """实际驳回执行 + 通知 + 推下一条"""
+    review = await get_teacher_review(review_id)
+    if not review:
+        if trigger_message:
+            try:
+                await trigger_message.edit_text("⚠️ 该评价不存在或已被处理")
+            except Exception:
+                pass
+        return
+    if review["status"] != "pending":
+        if trigger_message:
+            try:
+                await trigger_message.edit_text(f"⚠️ 该评价已是 {review['status']}")
+            except Exception:
+                pass
+        return
+
+    ok = await reject_teacher_review(review_id, reviewer_id=reviewer_id, reason=reason)
+    if not ok:
+        return
+
+    await log_admin_audit(
+        admin_id=reviewer_id,
+        action="rreview_reject",
+        target_type="teacher_review",
+        target_id=str(review_id),
+        detail={
+            "teacher_id": review["teacher_id"],
+            "user_id": review["user_id"],
+            "reason": reason or "",
+        },
+    )
+
+    teacher = await get_teacher(review["teacher_id"])
+    teacher_name = teacher["display_name"] if teacher else None
+    try:
+        await notify_review_rejected(
+            bot, review_id, teacher_name=teacher_name, reason=reason,
+        )
+    except Exception as e:
+        logger.warning("notify_review_rejected 失败 review=%s: %s", review_id, e)
+
+    # 清旧消息 + 推下一条 / 队列空
+    await _cleanup_messages(bot, chat_id, state)
+    pending = await list_pending_reviews(limit=50)
+    if not pending:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"{ack_text}\n\n✅ 当前已无待审核的报告。",
+                reply_markup=main_menu_kb(
+                    pending_count=0,
+                    pending_review_count=0,
+                    is_super=True,
+                ),
+            )
+        except Exception as e:
+            logger.warning("driver_reject empty msg 失败: %s", e)
+        return
+    try:
+        await bot.send_message(chat_id=chat_id, text=ack_text)
+    except Exception:
+        pass
+    await _send_review_at_index(bot, chat_id, state, pending, 0)

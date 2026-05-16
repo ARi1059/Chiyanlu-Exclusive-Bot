@@ -49,6 +49,14 @@ class SubReqAddStates(StatesGroup):
     waiting_invite_link  = State()
 
 
+class RReviewRejectStates(StatesGroup):
+    """Phase 9.4：超管驳回报告时填写自定义原因 FSM
+
+    state.data：{"review_id": int}
+    """
+    waiting_custom_reason = State()
+
+
 class ReviewSubmitStates(StatesGroup):
     """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
 
