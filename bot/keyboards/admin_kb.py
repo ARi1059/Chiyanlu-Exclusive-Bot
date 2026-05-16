@@ -482,7 +482,65 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="⏰ 修改发布时间", callback_data="system:publish_time")],
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
+        [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+# ============ 必关频道/群组（Phase 9.3） ============
+
+def subreq_menu_kb() -> InlineKeyboardMarkup:
+    """[📋 必关频道/群组] 子菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ 添加", callback_data="admin:subreq:add")],
+        [InlineKeyboardButton(text="📋 列表", callback_data="admin:subreq")],
+        [InlineKeyboardButton(text="🔙 返回系统设置", callback_data="menu:system")],
+    ])
+
+
+def subreq_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
+    """必关项列表：每条一行"""
+    rows: list[list[InlineKeyboardButton]] = []
+    for it in items:
+        mark = "✅" if it.get("is_active") else "⛔"
+        text = f"{mark} {it['display_name']} ({it['chat_id']})"
+        if len(text) > 60:
+            text = text[:57] + "…"
+        rows.append([InlineKeyboardButton(
+            text=text,
+            callback_data=f"admin:subreq:item:{it['id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="➕ 添加", callback_data="admin:subreq:add")])
+    rows.append([InlineKeyboardButton(text="🔙 返回系统设置", callback_data="menu:system")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subreq_item_action_kb(item_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """单项操作面板"""
+    toggle_label = "⛔ 停用" if is_active else "✅ 启用"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=toggle_label, callback_data=f"admin:subreq:toggle:{item_id}"),
+            InlineKeyboardButton(text="❌ 删除", callback_data=f"admin:subreq:remove:{item_id}"),
+        ],
+        [InlineKeyboardButton(text="🔙 返回列表", callback_data="admin:subreq")],
+    ])
+
+
+def subreq_remove_confirm_kb(item_id: int) -> InlineKeyboardMarkup:
+    """删除二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认删除", callback_data=f"admin:subreq:remove_confirm:{item_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:subreq:item:{item_id}"),
+        ],
+    ])
+
+
+def subreq_cancel_kb() -> InlineKeyboardMarkup:
+    """添加 FSM 取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:subreq")],
     ])
 
 

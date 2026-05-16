@@ -36,6 +36,19 @@ class SetArchiveChannelStates(StatesGroup):
     waiting_chat_id = State()
 
 
+class SubReqAddStates(StatesGroup):
+    """Phase 9.3：添加必关频道/群组 3 步 FSM
+
+    state.data 累加：
+        waiting_chat_id    → chat_id (int) + precheck 结果（chat_type/title）
+        waiting_display_name → display_name (str)
+        waiting_invite_link  → invite_link (str)
+    """
+    waiting_chat_id     = State()
+    waiting_display_name = State()
+    waiting_invite_link  = State()
+
+
 class SetGroupStates(StatesGroup):
     """设置响应群组状态"""
     waiting_group_id = State()

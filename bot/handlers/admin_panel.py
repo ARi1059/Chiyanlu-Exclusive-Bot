@@ -806,6 +806,9 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "teacher_channel_repost": "重发档案帖",
     "teacher_channel_caption_update": "同步档案 caption",
     "teacher_channel_post_delete": "删除频道档案帖",
+    "subreq_add": "添加必关频道/群组",
+    "subreq_remove": "删除必关频道/群组",
+    "subreq_toggle": "启停必关频道/群组",
 }
 
 
