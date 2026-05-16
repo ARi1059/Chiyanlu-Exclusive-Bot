@@ -108,9 +108,7 @@ def render_teacher_channel_caption(
                         '@CDCChiYanLog @ChiYanLog'）。
 
     Returns:
-        caption 字符串。超过 1024 字符时仅 tags 个数限制 + 末尾兜底硬截断。
-        （新模板已不含可截断的长文本字段如 description/service_content/
-        taboos/price_detail，超长极少出现。）
+        caption 字符串。超过 1024 字符时按 服务/禁忌 截断 → 标签缩减 → 兜底硬截断。
 
     Raises:
         ValueError: 必填字段缺失。
@@ -129,17 +127,31 @@ def render_teacher_channel_caption(
     price_tag = _extract_price_tag(price_raw)
     region = (teacher.get("region") or "").strip()
     contact = str(teacher.get("contact_telegram", "")).strip()
+    service = (teacher.get("service_content") or "").strip()
+    taboos = (teacher.get("taboos") or "").strip()
 
-    def _build(tags_count: int = 20) -> str:
-        # 标签 + 价位 tag（价位 tag 排末尾）
-        tag_items = []
+    def _build(
+        tags_count: int = 20,
+        svc_limit: Optional[int] = None,
+        taboos_limit: Optional[int] = None,
+    ) -> str:
+        # 标签 + 价位 tag（去重：若 tags 已含 #8P 等同款，不重复追加）
+        existing_norm = {
+            str(t).strip().lstrip("#").upper() for t in tags if str(t).strip()
+        }
+        tag_items: list[str] = []
         for t in tags[:tags_count]:
             s = str(t).strip().lstrip("#")
             if s:
                 tag_items.append(f"#{s}")
         if price_tag:
-            tag_items.append(price_tag)
+            price_norm = price_tag.lstrip("#").upper()
+            if price_norm not in existing_norm:
+                tag_items.append(price_tag)
         tag_line = " ".join(tag_items)
+
+        svc = _truncate(service, svc_limit) if svc_limit else service
+        tb  = _truncate(taboos, taboos_limit) if taboos_limit else taboos
 
         lines: list[str] = []
         lines.append(f"👤 {teacher['display_name']}")
@@ -148,8 +160,20 @@ def render_teacher_channel_caption(
             f"{teacher['age']} 岁 · {teacher['height_cm']}cm · "
             f"{teacher['weight_kg']}kg · 胸 {teacher['bra_size']}"
         )
-        lines.append("")
-        lines.append(f"课费：{price_raw}")
+
+        # 「评价统计前」字段块：地区 / 价格 / 服务 / 禁忌
+        detail_lines: list[str] = []
+        if region:
+            detail_lines.append(f"📍 地区：{region}")
+        detail_lines.append(f"💰 价格：{price_raw}")
+        if svc:
+            detail_lines.append(f"📋 服务：{svc}")
+        if tb:
+            detail_lines.append(f"🚫 禁忌：{tb}")
+        if detail_lines:
+            lines.append("")
+            lines.extend(detail_lines)
+
         lines.append("")
         lines.append(_format_stats_block(stats))
         lines.append("")
@@ -160,7 +184,7 @@ def render_teacher_channel_caption(
         lines.append("")
         lines.append(f"✳ 报告提交： @{bot_username}")
 
-        # 末行品牌
+        # 末行品牌：{region} · {brand_name}：{brand_channels}
         brand_line_parts: list[str] = []
         if region:
             brand_line_parts.append(region)
@@ -178,11 +202,23 @@ def render_teacher_channel_caption(
     cap = _build()
     if len(cap) <= CAPTION_MAX_LEN:
         return cap
-    # 标签缩减
-    cap = _build(tags_count=10)
+    # 1) 禁忌缩到 100 字
+    cap = _build(taboos_limit=100)
     if len(cap) <= CAPTION_MAX_LEN:
         return cap
-    cap = _build(tags_count=5)
+    # 2) 服务缩到 200 字
+    cap = _build(taboos_limit=100, svc_limit=200)
+    if len(cap) <= CAPTION_MAX_LEN:
+        return cap
+    # 3) 服务 / 禁忌 进一步压缩
+    cap = _build(taboos_limit=60, svc_limit=120)
+    if len(cap) <= CAPTION_MAX_LEN:
+        return cap
+    # 4) 标签缩减
+    cap = _build(tags_count=10, taboos_limit=60, svc_limit=120)
+    if len(cap) <= CAPTION_MAX_LEN:
+        return cap
+    cap = _build(tags_count=5, taboos_limit=60, svc_limit=120)
     if len(cap) > CAPTION_MAX_LEN:
         cap = cap[: CAPTION_MAX_LEN - 1].rstrip() + "…"
     return cap
