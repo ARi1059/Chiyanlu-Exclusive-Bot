@@ -558,6 +558,16 @@ async def cb_review_submit(callback: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.warning("add_user_tag 失败 user=%s: %s", user_id, e)
 
+    # Phase 9.4.3：推送给所有超管（不阻塞用户响应；失败仅 logger）
+    try:
+        import asyncio as _asyncio
+        from bot.utils.rreview_notify import notify_super_admins_new_review
+        _asyncio.create_task(
+            notify_super_admins_new_review(callback.bot, review_id)
+        )
+    except Exception as e:
+        logger.warning("notify_super_admins schedule 失败 review=%s: %s", review_id, e)
+
     await state.clear()
     await callback.message.edit_text(
         f"✅ 评价 #{review_id} 已提交，等待管理员审核。\n"
