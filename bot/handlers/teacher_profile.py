@@ -946,6 +946,97 @@ async def cb_album_remove_idx(callback: types.CallbackQuery, state: FSMContext):
     await _show_album_menu(callback.message, state, target, via_edit=True)
 
 
+# ============ 预览 caption ============
+
+@router.callback_query(F.data == "tprofile:preview")
+@admin_required
+async def cb_preview_start(callback: types.CallbackQuery, state: FSMContext):
+    """[👁 预览档案 caption] 入口：选老师"""
+    from bot.database import get_all_teachers
+    teachers = await get_all_teachers(active_only=False)
+    if not teachers:
+        await callback.answer("当前没有老师", show_alert=True)
+        return
+    await state.clear()
+    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)[:20]
+    await callback.message.edit_text(
+        "👁 选择要预览档案 caption 的老师：",
+        reply_markup=teacher_profile_select_kb(teachers, action="preview"),
+    )
+    await callback.answer()
+
+
+_FIELD_LABEL_CN: dict = {
+    "display_name":     "艺名",
+    "age":              "年龄",
+    "height_cm":        "身高",
+    "weight_kg":        "体重",
+    "bra_size":         "罩杯",
+    "price_detail":     "价格详述",
+    "contact_telegram": "联系电报",
+    "region":           "地区",
+    "price":            "价格(排序)",
+    "tags":             "标签",
+    "button_url":       "跳转链接",
+    "photo_album":      "照片相册（≥1 张）",
+}
+
+
+@router.callback_query(F.data.startswith("tprofile:select:preview:"))
+@admin_required
+async def cb_preview_show(callback: types.CallbackQuery):
+    """渲染 caption 并发送，附必填齐备性提示"""
+    try:
+        target = int(callback.data.split(":")[3])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.database import (
+        get_teacher_full_profile, is_teacher_profile_complete,
+    )
+    from bot.utils.teacher_profile_render import render_teacher_channel_caption
+
+    profile = await get_teacher_full_profile(target)
+    if not profile:
+        await callback.answer("老师不存在", show_alert=True)
+        return
+
+    ok, missing = await is_teacher_profile_complete(target)
+
+    # 必填字段不全时 caption 可能抛 ValueError，单独处理
+    try:
+        caption = render_teacher_channel_caption(profile)
+        caption_block = (
+            "─── 档案 caption 预览 ───\n"
+            f"{caption}\n"
+            "───────────────────"
+        )
+    except ValueError as e:
+        caption_block = (
+            "─── 档案 caption 预览 ───\n"
+            f"⚠️ 无法渲染：{e}\n"
+            "请先补全必填字段后再预览。\n"
+            "───────────────────"
+        )
+
+    if ok:
+        status_line = "✅ 必填齐备，可发布频道（Phase 9.2 启用后）"
+    else:
+        labels = [_FIELD_LABEL_CN.get(f, f) for f in missing]
+        status_line = (
+            "⚠️ 仍缺以下必填字段（先补全才能发频道）：\n"
+            "  · " + "\n  · ".join(labels)
+        )
+
+    text = f"{caption_block}\n\n{status_line}"
+    # caption 本身可能很长，避免单条超过 Telegram 4096 字符
+    if len(text) > 4000:
+        text = text[:3990] + "\n…(截断)"
+
+    await callback.message.edit_text(text, reply_markup=teacher_profile_menu_kb())
+    await callback.answer()
+
+
 # ============ /cancel 文本退出（编辑 / 相册 FSM）============
 
 @router.message(F.text == "/cancel", TeacherProfileEditStates())

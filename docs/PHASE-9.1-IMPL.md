@@ -1,8 +1,10 @@
 # Phase 9.1 实施指南：老师档案数据扩展 + 后台录入 FSM
 
-> 状态：**待开工**
+> 状态：**✅ 已完成**（2026-05-16）
 > 创建：2026-05-16
+> 完成 commit：9.1.1 / 9.1.2 / 9.1.3 / 9.1.4
 > 关联 spec：[REVIEW-FEATURE-DRAFT.md §10 Phase 9.1](./REVIEW-FEATURE-DRAFT.md)
+> 后续：[PHASE-9.2-IMPL.md](./PHASE-9.2-IMPL.md)（待编写）
 
 ---
 
