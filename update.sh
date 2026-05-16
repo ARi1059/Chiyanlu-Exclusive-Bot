@@ -33,10 +33,19 @@ trap 'err "脚本执行出错（行 $LINENO）。请检查上方输出。"' ERR
 
 # ============ 服务控制子命令 ============
 
+_has_service_unit() {
+    # systemctl cat 比 list-unit-files | grep 更稳：直接读取服务定义
+    # 存在返回 0；不存在返回非 0 且不抛 stderr
+    systemctl cat "$SERVICE_NAME" >/dev/null 2>&1
+}
+
 _check_service_unit() {
-    if ! systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
+    if ! _has_service_unit; then
         err "未找到 systemd 服务单元：${SERVICE_NAME}.service"
-        err "请确认服务已配置，或在脚本顶部修改 SERVICE_NAME 变量"
+        err "诊断命令："
+        err "  systemctl cat $SERVICE_NAME"
+        err "  systemctl list-unit-files | grep -i ${SERVICE_NAME%-*}"
+        err "或在脚本顶部修改 SERVICE_NAME 变量"
         exit 1
     fi
 }
@@ -192,7 +201,7 @@ else
 fi
 
 # 5. 停止服务
-if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+if _has_service_unit; then
     info "停止服务 $SERVICE_NAME ..."
     systemctl stop "$SERVICE_NAME" || warn "停止服务失败，继续执行"
 else
@@ -240,7 +249,7 @@ info "执行语法检查..."
 ok "语法检查通过"
 
 # 9. 启动服务
-if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+if _has_service_unit; then
     info "启动服务 $SERVICE_NAME ..."
     systemctl start "$SERVICE_NAME"
     sleep 2
