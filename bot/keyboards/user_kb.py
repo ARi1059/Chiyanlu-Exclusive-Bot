@@ -405,6 +405,18 @@ def review_summary_skip_cancel_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def review_reimbursement_choice_kb(amount: int) -> InlineKeyboardMarkup:
+    """报销意愿询问：[💰 是，申请 X 元] [否，不申请]"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💰 是，申请 {amount} 元",
+                              callback_data="review:reimburse_yes")],
+        [InlineKeyboardButton(text="否，不申请",
+                              callback_data="review:reimburse_no")],
+        [InlineKeyboardButton(text="❌ 取消评价",
+                              callback_data="review:cancel")],
+    ])
+
+
 _REVIEW_EDIT_KEYS: list[tuple[str, str]] = [
     ("booking", "约课截图"),
     ("gesture", "手势照片"),

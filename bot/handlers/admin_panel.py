@@ -890,6 +890,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "reimburse_reject": "驳回报销",
     "reimburse_reset": "重置周报销配额",
     "reimburse_pool_set": "设置报销池",
+    "reimburse_created": "自动创建报销申请",
 }
 
 

@@ -56,6 +56,8 @@ async def notify_review_approved(
     delta: Optional[int] = None,
     new_total: Optional[int] = None,
     package_label: Optional[str] = None,
+    reimb_amount: int = 0,
+    reimb_pending: bool = False,
 ) -> None:
     """通知评价者：审核通过（Phase P.1：可选附积分增量 + 当前总积分）
 
@@ -63,6 +65,8 @@ async def notify_review_approved(
         delta: 本次获得积分（None 表示不附积分信息，向后兼容 9.4 调用）
         new_total: 当前总积分（与 delta 配对使用）
         package_label: 套餐标签（如 "包夜"）；若提供则展示"本次获得：+5 积分（包夜）"
+        reimb_amount: 报销金额（元）；reimb_pending=True 时显示提交提示
+        reimb_pending: 是否已创建 pending reimbursement（评价勾选了报销且满足资格）
     """
     review = await get_teacher_review(review_id)
     if not review:
@@ -87,6 +91,9 @@ async def notify_review_approved(
             lines.append(f"本次获得：+{delta} 积分")
         if new_total is not None:
             lines.append(f"当前总积分：{new_total}")
+    if reimb_pending and reimb_amount > 0:
+        lines.append("")
+        lines.append(f"💰 报销申请已提交：{reimb_amount} 元，正在等待超管审核。")
     lines.append("")
     lines.append("感谢你的反馈！")
     text = "\n".join(lines)

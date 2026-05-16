@@ -153,6 +153,7 @@ class ReviewSubmitStates(StatesGroup):
     waiting_score_environment  = State()  # Step 7
     waiting_overall_score      = State()  # Step 8
     waiting_summary            = State()  # Step 9
+    waiting_reimbursement_choice = State()  # 报销意愿（条件可见）
     waiting_confirm            = State()
 
 

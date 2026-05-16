@@ -27,6 +27,9 @@ from bot.database import (
     count_recent_user_reviews,
     count_recent_user_teacher_reviews,
     add_user_tag,
+    compute_reimbursement_amount,
+    get_config,
+    get_user_total_points,
     parse_review_score,
     REVIEW_DIMENSIONS,
     REVIEW_RATINGS,
@@ -42,6 +45,7 @@ from bot.keyboards.user_kb import (
     review_cancel_kb,
     review_subscribe_links_kb,
     review_rating_kb,
+    review_reimbursement_choice_kb,
     review_score_kb,
     review_summary_skip_cancel_kb,
     review_confirm_kb,
@@ -418,7 +422,7 @@ async def cb_summary_skip(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     if data.get("jump_back"):
         await state.update_data(jump_back=False)
-    await _enter_confirm(callback.message, state, via_edit=True)
+    await _enter_reimbursement_step(callback.message, state, via_edit=True)
     await callback.answer("已跳过")
 
 
@@ -439,7 +443,75 @@ async def msg_summary(message: types.Message, state: FSMContext):
     data = await state.get_data()
     if data.get("jump_back"):
         await state.update_data(jump_back=False)
-    await _enter_confirm(message, state, via_edit=False)
+    await _enter_reimbursement_step(message, state, via_edit=False)
+
+
+# ============ 报销意愿（条件可见）============
+
+
+async def _enter_reimbursement_step(
+    msg, state: FSMContext, *, via_edit: bool = False,
+):
+    """检查是否满足报销资格；满足则显示询问，否则透传到 _enter_confirm
+
+    资格：user.total_points >= reimbursement_min_points (config，默认 5)
+         AND compute_reimbursement_amount(teacher.price) > 0
+
+    user_id 来源（私聊）：msg.chat.id（与用户 user_id 相同；callback.message 时
+    msg.from_user 是 bot，不能用）。
+    """
+    data = await state.get_data()
+    teacher_id = int(data.get("teacher_id"))
+    teacher = await get_teacher(teacher_id)
+    amount = compute_reimbursement_amount(teacher.get("price") if teacher else None)
+
+    min_pts_raw = await get_config("reimbursement_min_points")
+    try:
+        min_pts = int(min_pts_raw) if min_pts_raw else 5
+    except (TypeError, ValueError):
+        min_pts = 5
+
+    user_id = msg.chat.id if msg.chat else 0
+    points = await get_user_total_points(int(user_id))
+
+    if amount <= 0 or points < min_pts:
+        # 不满足资格：直接进确认页
+        await state.update_data(request_reimbursement=0, _reimburse_amount=0)
+        await _enter_confirm(msg, state, via_edit=via_edit)
+        return
+
+    await state.set_state(ReviewSubmitStates.waiting_reimbursement_choice)
+    await state.update_data(_reimburse_amount=amount)
+    text = (
+        "💰 报销申请\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"你当前积分：{points}（门槛 {min_pts}）\n"
+        f"本次可申请报销：{amount} 元（基于老师价位）\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "是否对本条评价申请报销？\n"
+        "（评价审核通过后由超管二次审核）"
+    )
+    await _show(msg, text, review_reimbursement_choice_kb(amount), via_edit=via_edit)
+
+
+@router.callback_query(
+    F.data == "review:reimburse_yes",
+    ReviewSubmitStates.waiting_reimbursement_choice,
+)
+async def cb_review_reimburse_yes(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(request_reimbursement=1)
+    await _enter_confirm(callback.message, state, via_edit=True)
+    await callback.answer("已勾选申请报销")
+
+
+@router.callback_query(
+    F.data == "review:reimburse_no",
+    ReviewSubmitStates.waiting_reimbursement_choice,
+)
+async def cb_review_reimburse_no(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(request_reimbursement=0)
+    await _enter_confirm(callback.message, state, via_edit=True)
+    await callback.answer("已选择不申请")
 
 
 # ============ 确认页 ============
@@ -474,6 +546,15 @@ async def _enter_confirm(msg, state: FSMContext, *, via_edit: bool = False):
     if data.get("summary"):
         lines.append("")
         lines.append(f"📝 过程：{data['summary']}")
+    # 报销申请状态
+    req_reimb = int(data.get("request_reimbursement") or 0)
+    reimb_amount = int(data.get("_reimburse_amount") or 0)
+    if reimb_amount > 0:
+        lines.append("")
+        if req_reimb == 1:
+            lines.append(f"💰 报销申请：✅ 是，{reimb_amount} 元（待超管审核）")
+        else:
+            lines.append("💰 报销申请：❌ 否")
     lines.append("━━━━━━━━━━━━━━━")
     lines.append("确认无误点 [✅ 提交审核]，或修改某项。")
 
@@ -581,6 +662,7 @@ async def cb_review_submit(callback: types.CallbackQuery, state: FSMContext):
         "score_environment": data["score_environment"],
         "overall_score": data["overall_score"],
         "summary": data.get("summary"),
+        "request_reimbursement": int(data.get("request_reimbursement") or 0),
     }
     review_id = await create_teacher_review(review_data)
     if review_id is None:

@@ -23,7 +23,12 @@ from bot.config import config
 from bot.database import (
     add_point_transaction,
     approve_teacher_review,
+    compute_reimbursement_amount,
     count_pending_reviews,
+    create_reimbursement,
+    current_month_key,
+    current_week_key,
+    get_config,
     get_teacher,
     get_teacher_review,
     get_user_total_points,
@@ -381,6 +386,47 @@ async def _do_approve_inner(
         },
     )
 
+    # 2.5 报销联动：若用户在评价时勾选了报销 + 满足条件 → 创建 pending reimbursement
+    reimb_created_id: Optional[int] = None
+    reimb_amount: int = 0
+    try:
+        teacher_id_for_reimb = review["teacher_id"]
+        if int(review.get("request_reimbursement") or 0) == 1:
+            teacher_obj = await get_teacher(teacher_id_for_reimb)
+            reimb_amount = compute_reimbursement_amount(
+                teacher_obj.get("price") if teacher_obj else None
+            )
+            # 用 new_total（含本次加分后）做门槛校验
+            min_pts_raw = await get_config("reimbursement_min_points")
+            try:
+                min_pts = int(min_pts_raw) if min_pts_raw else 5
+            except (TypeError, ValueError):
+                min_pts = 5
+            effective_pts = new_total if new_total is not None else 0
+            if reimb_amount > 0 and effective_pts >= min_pts:
+                reimb_created_id = await create_reimbursement(
+                    user_id=user_id,
+                    review_id=review_id,
+                    teacher_id=teacher_id_for_reimb,
+                    amount=reimb_amount,
+                    week_key=current_week_key(),
+                    month_key=current_month_key(),
+                )
+                if reimb_created_id:
+                    await log_admin_audit(
+                        admin_id=reviewer_id,
+                        action="reimburse_created",
+                        target_type="reimbursement",
+                        target_id=str(reimb_created_id),
+                        detail={
+                            "user_id": user_id,
+                            "review_id": review_id,
+                            "amount": reimb_amount,
+                        },
+                    )
+    except Exception as e:
+        logger.warning("报销联动失败 review=%s: %s", review_id, e)
+
     # 3-4. 9.5 链：recalc + caption + 讨论群评论
     teacher_id = review["teacher_id"]
     try:
@@ -414,6 +460,8 @@ async def _do_approve_inner(
             delta=delta,
             new_total=new_total,
             package_label=package_label,
+            reimb_amount=reimb_amount,
+            reimb_pending=(reimb_created_id is not None),
         )
     except Exception as e:
         logger.warning("notify_review_approved 失败 review=%s: %s", review_id, e)

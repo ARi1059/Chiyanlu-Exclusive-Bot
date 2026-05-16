@@ -4302,8 +4302,8 @@ async def create_teacher_review(data: dict) -> Optional[int]:
                     rating,
                     score_humanphoto, score_appearance, score_body,
                     score_service, score_attitude, score_environment,
-                    overall_score, summary, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                    overall_score, summary, status, request_reimbursement
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
                 (
                     int(data["teacher_id"]), int(data["user_id"]),
                     data["booking_screenshot_file_id"],
@@ -4317,6 +4317,7 @@ async def create_teacher_review(data: dict) -> Optional[int]:
                     float(data["score_environment"]),
                     float(data["overall_score"]),
                     data.get("summary"),
+                    int(data.get("request_reimbursement") or 0),
                 ),
             )
         except Exception as e:
