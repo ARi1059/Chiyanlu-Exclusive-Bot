@@ -14,6 +14,7 @@ from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
+from bot.handlers.discussion_anchor_listener import router as discussion_anchor_router
 from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.review_submit import router as review_submit_router
 from bot.handlers.rreview_admin import router as rreview_admin_router
@@ -158,6 +159,10 @@ async def main():
     # - ReviewSubmitStates FSM 状态过滤保证文字消息只在评价 FSM 中被截获
     dp.include_router(review_submit_router)
     dp.include_router(user_search_router)
+    # Phase 9.5.2：discussion_anchor_listener 监听讨论群 is_automatic_forward 消息
+    # 必须在 keyword 之前（keyword 是 catch-all）；F.is_automatic_forward 过滤
+    # 保证只对自动转发消息触发，不与正常群组关键词冲突
+    dp.include_router(discussion_anchor_router)
     dp.include_router(keyword_router)  # keyword 放最后，避免拦截其他消息
 
     # 注册生命周期钩子
