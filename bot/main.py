@@ -23,6 +23,7 @@ from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.subreq_admin import router as subreq_admin_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
+from bot.handlers.review_list import router as review_list_router
 from bot.handlers.teacher_detail import router as teacher_detail_router
 from bot.handlers.user_tags import router as user_tags_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
@@ -98,6 +99,10 @@ async def main():
     # 位置：favorite 之后、user_panel 之前。三个 callback 命名空间互不重叠，
     # keyword 也不会拦截（keyword 处理 group message，详情页全是 callback）
     dp.include_router(teacher_detail_router)
+    # review_list_router (Phase 9.6.2)：teacher:reviews:<id> / teacher:reviews:<id>:<page>
+    # 注册在 teacher_detail_router 之后；callback 命名空间 teacher:reviews:* 与
+    # teacher:view:* / teacher:toggle_fav:* 等独立，分隔符明确
+    dp.include_router(review_list_router)
     # hot_teachers_router（Phase 3）：user:hot / admin:hot_manage / admin:hot:*
     # FSM 状态 HotManageStates 保证文字消息只在该状态下被截获，
     # 与 admin_panel / teacher_self / user_search / keyword 的 message handler 不冲突

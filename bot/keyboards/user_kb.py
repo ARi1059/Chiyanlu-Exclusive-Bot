@@ -280,6 +280,40 @@ def search_suggestion_kb(keywords: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def review_list_pagination_kb(
+    teacher_id: int,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """评价列表分页按钮（Phase 9.6.2）
+
+    [⬅️ 上一页] [📄 X/Y] [➡️ 下一页]
+    [🔙 返回老师详情]
+    """
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页",
+            callback_data=f"teacher:reviews:{teacher_id}:{page - 1}",
+        ))
+    nav.append(InlineKeyboardButton(
+        text=f"📄 {page + 1}/{max(1, total_pages)}",
+        callback_data="noop:page",
+    ))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="➡️ 下一页",
+            callback_data=f"teacher:reviews:{teacher_id}:{page + 1}",
+        ))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        nav,
+        [InlineKeyboardButton(
+            text="🔙 返回老师详情",
+            callback_data=f"teacher:view:{teacher_id}",
+        )],
+    ])
+
+
 def suggestion_result_back_kb() -> InlineKeyboardMarkup:
     """推荐子页（今日 / 热门 / 单关键词）的返回按钮"""
     return InlineKeyboardMarkup(inline_keyboard=[
