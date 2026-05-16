@@ -941,18 +941,38 @@ def admin_lottery_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
 
 
 def admin_lottery_detail_kb(lottery: dict) -> InlineKeyboardMarkup:
-    """抽奖详情页操作按钮（本 phase 仅 draft 可取消）"""
+    """抽奖详情页操作按钮
+
+    L.1：draft → [❌ 取消草稿]
+    L.2：draft → [📤 立即发布]；scheduled → [❌ 取消计划] (复用 cancel)
+    """
     rows: list[list[InlineKeyboardButton]] = []
-    if lottery.get("status") == "draft":
-        rows.append([InlineKeyboardButton(
-            text="❌ 取消草稿",
-            callback_data=f"admin:lottery:cancel:{lottery['id']}",
-        )])
+    lid = lottery["id"]
+    status = lottery.get("status")
+    if status == "draft":
+        rows.append([
+            InlineKeyboardButton(text="📤 立即发布",  callback_data=f"admin:lottery:publish:{lid}"),
+            InlineKeyboardButton(text="❌ 取消草稿", callback_data=f"admin:lottery:cancel:{lid}"),
+        ])
+    elif status == "scheduled":
+        rows.append([
+            InlineKeyboardButton(text="❌ 取消计划", callback_data=f"admin:lottery:cancel:{lid}"),
+        ])
     rows.append([
         InlineKeyboardButton(text="🔙 返回列表",     callback_data="admin:lottery:list"),
         InlineKeyboardButton(text="🏠 返回抽奖管理", callback_data="admin:lottery"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_lottery_publish_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
+    """[📤 立即发布] 二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认发布", callback_data=f"admin:lottery:publish_ok:{lottery_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:lottery:item:{lottery_id}"),
+        ],
+    ])
 
 
 def admin_lottery_cancel_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:

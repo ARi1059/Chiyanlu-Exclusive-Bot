@@ -41,6 +41,7 @@ from bot.keyboards.admin_kb import (
     admin_lottery_detail_kb,
     admin_lottery_list_kb,
     admin_lottery_menu_kb,
+    admin_lottery_publish_confirm_kb,
     lottery_create_cancel_kb,
     lottery_create_confirm_kb,
     lottery_create_method_kb,
@@ -265,6 +266,75 @@ async def cb_admin_lottery_cancel_ok(callback: types.CallbackQuery, state: FSMCo
     # 回到列表
     callback.data = "admin:lottery:list"
     await cb_admin_lottery_list(callback, state)
+
+
+# ============ 立即发布（Phase L.2.1）============
+
+@router.callback_query(F.data.startswith("admin:lottery:publish:"))
+@_super_admin_required
+async def cb_admin_lottery_publish(callback: types.CallbackQuery, state: FSMContext):
+    """[📤 立即发布] 二次确认"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    lottery = await get_lottery(lid)
+    if not lottery:
+        await callback.answer("该抽奖不存在", show_alert=True)
+        return
+    if lottery.get("status") != "draft":
+        await callback.answer(
+            f"仅 draft 状态可立即发布；当前 {lottery.get('status')}",
+            show_alert=True,
+        )
+        return
+    await callback.message.edit_text(
+        f"📤 立即发布抽奖 #{lid}「{lottery.get('name', '')}」？\n\n"
+        "发布后 status 变为 active，频道立即出现抽奖帖；用户可开始参与。\n"
+        "⚠️ 频道必须已配置 publish_channel_id。",
+        reply_markup=admin_lottery_publish_confirm_kb(lid),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:lottery:publish_ok:"))
+@_super_admin_required
+async def cb_admin_lottery_publish_ok(callback: types.CallbackQuery, state: FSMContext):
+    """实际发布"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        lid = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.utils.lottery_publish import (
+        LotteryPublishError,
+        publish_lottery_to_channel,
+    )
+    try:
+        result = await publish_lottery_to_channel(callback.bot, lid)
+    except LotteryPublishError as e:
+        await callback.answer(f"❌ {e}", show_alert=True)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="lottery_publish",
+        target_type="lottery",
+        target_id=str(lid),
+        detail={"chat_id": result["chat_id"], "msg_id": result["msg_id"]},
+    )
+    await callback.answer(f"✅ 已发布到频道（msg_id={result['msg_id']}）")
+    # 回到详情页
+    callback.data = f"admin:lottery:item:{lid}"
+    await cb_admin_lottery_item(callback, state)
 
 
 # ============ 创建 10 步 FSM (Phase L.1.2) ============

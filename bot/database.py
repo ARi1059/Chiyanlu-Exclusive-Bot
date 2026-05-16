@@ -5080,3 +5080,106 @@ async def count_lottery_entries(lottery_id: int) -> int:
         return int(row["c"]) if row else 0
     finally:
         await db.close()
+
+
+async def create_lottery_entry(lottery_id: int, user_id: int) -> Optional[int]:
+    """创建参与记录；UNIQUE(lottery_id, user_id) 冲突时返回 None"""
+    db = await get_db()
+    try:
+        try:
+            cur = await db.execute(
+                "INSERT INTO lottery_entries (lottery_id, user_id) VALUES (?, ?)",
+                (int(lottery_id), int(user_id)),
+            )
+        except Exception:
+            return None
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_lottery_entry(lottery_id: int, user_id: int) -> Optional[dict]:
+    """查询用户在某抽奖的参与记录"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM lottery_entries WHERE lottery_id = ? AND user_id = ?",
+            (int(lottery_id), int(user_id)),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def mark_lottery_published(
+    lottery_id: int,
+    channel_chat_id: int,
+    channel_msg_id: int,
+) -> bool:
+    """标记抽奖已发布到频道：status → active + published_at + 记录 msg id"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE lotteries SET "
+            "status = 'active', "
+            "published_at = CURRENT_TIMESTAMP, "
+            "channel_chat_id = ?, "
+            "channel_msg_id = ?, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status IN ('draft','scheduled')",
+            (channel_chat_id, channel_msg_id, lottery_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def touch_lottery(lottery_id: int) -> bool:
+    """仅刷新 updated_at（用于计数 debounce 时间戳）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE lotteries SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (lottery_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def seconds_since_lottery_updated(lottery_id: int) -> Optional[float]:
+    """距上次 lotteries.updated_at 经过的秒数（用于计数 60s debounce）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT (julianday('now') - julianday(updated_at)) * 86400.0 AS sec "
+            "FROM lotteries WHERE id = ?",
+            (lottery_id,),
+        )
+        row = await cur.fetchone()
+    finally:
+        await db.close()
+    if not row or row["sec"] is None:
+        return None
+    try:
+        return max(0.0, float(row["sec"]))
+    except (TypeError, ValueError):
+        return None
+
+
+async def list_active_or_scheduled_lotteries() -> list[dict]:
+    """列出所有 scheduled / active 抽奖（bot 重启时扫描重注册定时任务）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM lotteries WHERE status IN ('scheduled','active') "
+            "ORDER BY publish_at"
+        )
+        rows = await cur.fetchall()
+        return [_parse_lottery_row(dict(r)) for r in rows]
+    finally:
+        await db.close()

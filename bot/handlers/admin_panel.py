@@ -834,6 +834,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "points_grant": "手动加扣积分",
     "lottery_create": "创建抽奖",
     "lottery_cancel": "取消抽奖",
+    "lottery_publish": "发布抽奖到频道",
 }
 
 
