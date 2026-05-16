@@ -4225,3 +4225,59 @@ async def list_pending_reviews(limit: int = 50, offset: int = 0) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         await db.close()
+
+
+async def approve_teacher_review(review_id: int, reviewer_id: int) -> bool:
+    """超管通过评价：仅 pending → approved（含 reviewer_id + reviewed_at）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_reviews SET status = 'approved', "
+            "reviewer_id = ?, reviewed_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'pending'",
+            (reviewer_id, review_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def reject_teacher_review(
+    review_id: int, reviewer_id: int, reason: Optional[str] = None,
+) -> bool:
+    """超管驳回评价：仅 pending → rejected（reason 可空，私聊提示用户）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_reviews SET status = 'rejected', "
+            "reviewer_id = ?, reviewed_at = CURRENT_TIMESTAMP, "
+            "reject_reason = ? "
+            "WHERE id = ? AND status = 'pending'",
+            (reviewer_id, reason, review_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def list_super_admins() -> list[int]:
+    """所有 super_admin user_id（含主超管 config.super_admin_id + DB is_super=1），去重
+
+    返回 list[int]；用于 Phase 9.4 新评价推送。
+    """
+    user_ids: set[int] = set()
+    if config.super_admin_id:
+        user_ids.add(int(config.super_admin_id))
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT user_id FROM admins WHERE is_super = 1"
+        )
+        rows = await cur.fetchall()
+        for r in rows:
+            user_ids.add(int(r["user_id"]))
+    finally:
+        await db.close()
+    return sorted(user_ids)

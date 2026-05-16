@@ -16,6 +16,7 @@ from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.review_submit import router as review_submit_router
+from bot.handlers.rreview_admin import router as rreview_admin_router
 from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.subreq_admin import router as subreq_admin_router
 from bot.handlers.start_router import router as start_router
@@ -121,6 +122,10 @@ async def main():
     # admin_review_router 在 admin_panel 之前：review:* callback 不会和老师管理 callback 冲突，
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)
+    # rreview_admin_router (Phase 9.4)：rreview:* 报告审核 callback + FSM
+    # 在 admin_review 之后、admin_panel 之前：callback 命名空间 rreview:* 与
+    # review:* 完全独立，FSM 状态保证文字消息只在 RReviewRejectStates 中被截获
+    dp.include_router(rreview_admin_router)
     dp.include_router(admin_panel_router)
     # subreq_admin_router (Phase 9.3)：admin:subreq:* callback + SubReqAddStates
     # 必须在 admin_panel 之后（系统设置子菜单已含 admin:subreq 入口），

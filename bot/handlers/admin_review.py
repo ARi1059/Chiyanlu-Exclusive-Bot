@@ -357,10 +357,9 @@ async def cmd_cancel_reject(message: types.Message, state: FSMContext):
     )
     if request_id:
         # 给个返回主菜单的 keyboard，方便用户继续
-        n = await _count_pending()
         await message.answer(
             "🔧 痴颜录管理面板",
-            reply_markup=main_menu_kb(pending_count=n),
+            reply_markup=await _build_user_aware_menu(message.from_user.id),
         )
 
 
@@ -484,13 +483,29 @@ async def _perform_reject_from_message(
             await message.answer("⚠️ 驳回操作失败")
 
     # 返回管理面板（带最新角标）
-    n = await _count_pending()
     await message.answer(
         "🔧 痴颜录管理面板",
-        reply_markup=main_menu_kb(pending_count=n),
+        reply_markup=await _build_user_aware_menu(message.from_user.id),
     )
 
 
 async def _count_pending() -> int:
     """内部辅助：取待审核数，用于刷新主菜单角标"""
     return await count_pending_edits()
+
+
+async def _build_user_aware_menu(user_id: int):
+    """根据 user_id 是否超管返回带 [📝 报告审核] 的主菜单（Phase 9.4）"""
+    from bot.database import is_super_admin, count_pending_reviews
+    from bot.config import config as _cfg
+    n = await count_pending_edits()
+    rcount = 0
+    is_super = False
+    if user_id == _cfg.super_admin_id or await is_super_admin(user_id):
+        is_super = True
+        rcount = await count_pending_reviews()
+    return main_menu_kb(
+        pending_count=n,
+        pending_review_count=rcount,
+        is_super=is_super,
+    )

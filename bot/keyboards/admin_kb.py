@@ -3,16 +3,23 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ============ 主菜单 ============
 
-def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
+def main_menu_kb(
+    pending_count: int = 0,
+    *,
+    pending_review_count: int = 0,
+    is_super: bool = False,
+) -> InlineKeyboardMarkup:
     """管理员主菜单面板
 
     Args:
-        pending_count: 待审核数量；> 0 时在"待审核"按钮文本上显示徽标
+        pending_count: 老师改资料待审核数量
+        pending_review_count: 用户评价待审核数量（Phase 9.4）
+        is_super: 是否超管；仅超管可见 [📝 报告审核 (M)] 行
     """
     review_label = (
         f"📝 待审核 ({pending_count})" if pending_count > 0 else "📝 待审核"
     )
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="menu:teacher"),
             InlineKeyboardButton(text="👥 管理员管理", callback_data="menu:admin"),
@@ -25,6 +32,14 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
             InlineKeyboardButton(text=review_label, callback_data="review:enter"),
         ],
+    ]
+    if is_super:
+        rreview_label = (
+            f"📝 报告审核 ({pending_review_count})"
+            if pending_review_count > 0 else "📝 报告审核"
+        )
+        rows.append([InlineKeyboardButton(text=rreview_label, callback_data="rreview:enter")])
+    rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
         [
             InlineKeyboardButton(text="🔗 推广链接", callback_data="admin:promo_links"),
@@ -39,6 +54,7 @@ def main_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📨 报表设置", callback_data="admin:report_settings"),
         ],
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ============ 报表设置（Phase 6.3） ============
@@ -700,4 +716,63 @@ def review_empty_kb() -> InlineKeyboardMarkup:
     """审核队列为空时的返回按钮"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+# ============ 报告审核中心（Phase 9.4） ============
+
+def rreview_action_kb(
+    review_id: int,
+    *,
+    has_prev: bool,
+    has_next: bool,
+) -> InlineKeyboardMarkup:
+    """单条报告审核详情页操作按钮（spec §4.2）"""
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="✅ 通过", callback_data=f"rreview:approve:{review_id}"),
+            InlineKeyboardButton(text="❌ 驳回", callback_data=f"rreview:reject:{review_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🖼 重看约课截图", callback_data=f"rreview:photo:booking:{review_id}"),
+            InlineKeyboardButton(text="✋ 重看手势照片", callback_data=f"rreview:photo:gesture:{review_id}"),
+        ],
+    ]
+    nav: list[InlineKeyboardButton] = []
+    if has_prev:
+        nav.append(InlineKeyboardButton(text="⬅️ 上一条", callback_data=f"rreview:nav:prev:{review_id}"))
+    if has_next:
+        nav.append(InlineKeyboardButton(text="➡️ 下一条", callback_data=f"rreview:nav:next:{review_id}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔙 返回主面板", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rreview_reject_choice_kb(review_id: int) -> InlineKeyboardMarkup:
+    """点 [❌ 驳回] 后的选项：4 预设 + 自定义 + 跳过 + 取消"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="证据不充分", callback_data=f"rreview:reject_preset:{review_id}:0")],
+        [InlineKeyboardButton(text="内容违规", callback_data=f"rreview:reject_preset:{review_id}:1")],
+        [InlineKeyboardButton(text="重复提交", callback_data=f"rreview:reject_preset:{review_id}:2")],
+        [InlineKeyboardButton(text="评分明显不合理", callback_data=f"rreview:reject_preset:{review_id}:3")],
+        [
+            InlineKeyboardButton(text="📝 自定义原因", callback_data=f"rreview:reject_custom:{review_id}"),
+            InlineKeyboardButton(text="⏭ 跳过原因", callback_data=f"rreview:reject_skip:{review_id}"),
+        ],
+        [InlineKeyboardButton(text="🔙 取消", callback_data=f"rreview:show:{review_id}")],
+    ])
+
+
+def rreview_empty_kb() -> InlineKeyboardMarkup:
+    """报告审核队列为空"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回主面板", callback_data="menu:main")],
+    ])
+
+
+def rreview_push_action_kb() -> InlineKeyboardMarkup:
+    """新评价推送给超管时附带的按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 前往审核", callback_data="rreview:enter")],
     ])

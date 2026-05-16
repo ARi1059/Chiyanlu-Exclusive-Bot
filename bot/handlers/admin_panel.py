@@ -1,3 +1,5 @@
+from typing import Optional
+
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -22,6 +24,8 @@ from bot.database import (
     list_recent_admin_audits,
     set_archive_channel_id,
     get_archive_channel_id,
+    is_super_admin,
+    count_pending_reviews,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
@@ -58,10 +62,24 @@ def _today_str() -> str:
     return datetime.now(timezone(config.timezone)).strftime("%Y-%m-%d")
 
 
-async def _build_main_menu_kb():
-    """构造主菜单 keyboard，带待审核角标（v2 §2.3.4）"""
+async def _build_main_menu_kb(user_id: Optional[int] = None):
+    """构造主菜单 keyboard，带待审核角标 + 仅超管可见的 [📝 报告审核]（Phase 9.4）
+
+    Args:
+        user_id: 调用方 user_id；用于判断 is_super；None 时按非超管渲染
+    """
     n = await count_pending_edits()
-    return main_menu_kb(pending_count=n)
+    is_super = False
+    rcount = 0
+    if user_id is not None:
+        if user_id == config.super_admin_id or await is_super_admin(user_id):
+            is_super = True
+            rcount = await count_pending_reviews()
+    return main_menu_kb(
+        pending_count=n,
+        pending_review_count=rcount,
+        is_super=is_super,
+    )
 
 
 def _format_teacher_names(teachers: list[dict], limit: int = 20) -> str:
@@ -97,7 +115,7 @@ async def cmd_admin(message: types.Message, state: FSMContext):
     管理员从 /start 进入也会走 start_router，最终调用 main_menu_kb。
     """
     await state.clear()
-    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(message.from_user.id))
 
 
 @router.callback_query(F.data == "menu:main")
@@ -105,7 +123,7 @@ async def cmd_admin(message: types.Message, state: FSMContext):
 async def cb_main_menu(callback: types.CallbackQuery, state: FSMContext):
     """返回主菜单"""
     await state.clear()
-    await callback.message.edit_text("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await callback.message.edit_text("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(callback.from_user.id))
     await callback.answer()
 
 
@@ -184,7 +202,7 @@ async def on_admin_user_id(message: types.Message, state: FSMContext):
         await message.answer(f"⚠️ 该用户已是管理员: {user_id}")
 
     await state.clear()
-    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(message.from_user.id))
 
 
 @router.callback_query(F.data == "admin:remove")
@@ -283,7 +301,7 @@ async def on_publish_channel_id(message: types.Message, state: FSMContext):
     )
     await message.answer(f"✅ 发布目标已设置为: {chat_ids}")
     await state.clear()
-    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(message.from_user.id))
 
 
 @router.callback_query(F.data == "channel:set_archive")
@@ -339,7 +357,7 @@ async def on_archive_channel_id(message: types.Message, state: FSMContext):
         )
         await message.answer(f"✅ 档案频道已设置为: {chat_id}")
     await state.clear()
-    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(message.from_user.id))
 
 
 @router.callback_query(F.data == "channel:set_response")
@@ -378,7 +396,7 @@ async def on_response_group_id(message: types.Message, state: FSMContext):
     )
     await message.answer(f"✅ 响应群组已设置: {group_ids}")
     await state.clear()
-    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(message.from_user.id))
 
 
 @router.callback_query(F.data == "channel:view")
@@ -783,7 +801,7 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
         await message.answer("⚠️ 未知设置项")
 
     await state.clear()
-    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(message.from_user.id))
 
 
 # ============ 数据看板（Phase 1） ============
@@ -809,6 +827,9 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "subreq_add": "添加必关频道/群组",
     "subreq_remove": "删除必关频道/群组",
     "subreq_toggle": "启停必关频道/群组",
+    "rreview_view": "查看报告",
+    "rreview_approve": "通过报告",
+    "rreview_reject": "驳回报告",
 }
 
 
@@ -926,5 +947,5 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
 async def cb_cancel(callback: types.CallbackQuery, state: FSMContext):
     """取消当前操作"""
     await state.clear()
-    await callback.message.edit_text("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+    await callback.message.edit_text("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb(callback.from_user.id))
     await callback.answer("已取消")

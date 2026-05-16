@@ -423,7 +423,22 @@ async def _route_by_role(
         text = "🔧 痴颜录管理面板"
         if extra_text:
             text = f"{extra_text}\n\n{text}"
-        await message.answer(text, reply_markup=main_menu_kb())
+        # Phase 9.4：超管用户能看到 [📝 报告审核] 入口
+        from bot.database import is_super_admin, count_pending_reviews, count_pending_edits
+        n_edits = await count_pending_edits()
+        rcount = 0
+        is_super = False
+        if user_id == config.super_admin_id or await is_super_admin(user_id):
+            is_super = True
+            rcount = await count_pending_reviews()
+        await message.answer(
+            text,
+            reply_markup=main_menu_kb(
+                pending_count=n_edits,
+                pending_review_count=rcount,
+                is_super=is_super,
+            ),
+        )
         return
 
     # 2. 老师（含停用，v2 §2.5.5 决策 15）
