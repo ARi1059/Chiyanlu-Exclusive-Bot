@@ -95,3 +95,51 @@ class ReportSettingsStates(StatesGroup):
     waiting_weekly_time = State()
     waiting_weekly_day = State()
     waiting_chat_id = State()
+
+
+class TeacherProfileAddStates(StatesGroup):
+    """Phase 9.1：完整老师档案录入 FSM（13 步）
+
+    state.data 会累加：display_name/age/height_cm/weight_kg/bra_size/description/
+    service_content/price_detail/taboos/contact_telegram/region/price/tags/
+    button_url/button_text/photos(list[str])。
+    """
+    waiting_user_id          = State()  # 复用 Telegram user_id（新建必须）
+    waiting_username         = State()  # @ username
+    waiting_display_name     = State()
+    waiting_basic_info       = State()  # 一行 "年龄 身高 体重 罩杯"
+    waiting_description      = State()  # 可跳过
+    waiting_service_content  = State()  # 可跳过
+    waiting_price_detail     = State()  # 必填
+    waiting_taboos           = State()  # 可跳过
+    waiting_contact_telegram = State()  # 必须含 @
+    waiting_region           = State()
+    waiting_price            = State()
+    waiting_tags             = State()
+    waiting_button_url       = State()
+    waiting_button_text      = State()  # 可跳过
+    waiting_photos           = State()  # 多图 + 回复 "完成"
+    waiting_confirm          = State()
+
+
+class TeacherProfileEditStates(StatesGroup):
+    """Phase 9.1：单字段编辑 FSM
+
+    state.data：{"target_user_id": int, "field_key": str}
+    waiting_field_value 通用接收新值；photo_album / tags 走对应解析分支。
+    """
+    waiting_target_teacher = State()
+    waiting_field_choice   = State()
+    waiting_field_value    = State()
+
+
+class TeacherProfileAlbumStates(StatesGroup):
+    """Phase 9.1：相册管理 FSM
+
+    state.data：{"target_user_id": int, "mode": "add"|"replace", "buffer": list[str]}
+    """
+    waiting_target_teacher = State()
+    waiting_album_action   = State()  # 选 add/remove/replace
+    waiting_add_photos     = State()  # 收图
+    waiting_remove_index   = State()  # 选 index 删除
+    waiting_replace_photos = State()  # 收图（整体替换）

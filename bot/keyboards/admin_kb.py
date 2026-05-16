@@ -231,16 +231,157 @@ def dashboard_audit_back_kb() -> InlineKeyboardMarkup:
 # ============ 老师管理子面板 ============
 
 def teacher_menu_kb() -> InlineKeyboardMarkup:
-    """老师管理子面板"""
+    """老师管理子面板
+
+    Phase 9.1：新增 [📋 老师档案管理] 入口，进入完整档案的录入/编辑/相册/预览。
+    旧 [➕ 添加老师] / [✏️ 编辑老师]（简版录入）保留，向后兼容。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ 添加老师", callback_data="teacher:add")],
-        [InlineKeyboardButton(text="✏️ 编辑老师", callback_data="teacher:edit")],
+        [InlineKeyboardButton(text="➕ 添加老师 (简版)", callback_data="teacher:add")],
+        [InlineKeyboardButton(text="✏️ 编辑老师 (简版)", callback_data="teacher:edit")],
+        [InlineKeyboardButton(text="📋 老师档案管理", callback_data="tprofile:menu")],
         [
             InlineKeyboardButton(text="停用老师", callback_data="teacher:delete"),
             InlineKeyboardButton(text="启用老师", callback_data="teacher:enable"),
         ],
         [InlineKeyboardButton(text="📋 老师列表", callback_data="teacher:list")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+# ============ 老师档案管理（Phase 9.1） ============
+
+def teacher_profile_menu_kb() -> InlineKeyboardMarkup:
+    """[📋 老师档案管理] 子菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ 完整档案录入", callback_data="tprofile:add")],
+        [InlineKeyboardButton(text="✏️ 编辑老师档案", callback_data="tprofile:edit")],
+        [InlineKeyboardButton(text="🖼 管理照片相册", callback_data="tprofile:album")],
+        [InlineKeyboardButton(text="👁 预览档案 caption", callback_data="tprofile:preview")],
+        [InlineKeyboardButton(text="🔙 返回老师管理", callback_data="menu:teacher")],
+    ])
+
+
+def teacher_profile_cancel_kb() -> InlineKeyboardMarkup:
+    """档案录入 FSM 各步的取消按钮（返回档案管理主面板）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ 取消", callback_data="tprofile:cancel")],
+    ])
+
+
+def teacher_profile_skip_cancel_kb() -> InlineKeyboardMarkup:
+    """可选字段步骤的 [跳过] + [取消] 按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⏭️ 跳过", callback_data="tprofile:skip"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="tprofile:cancel"),
+        ],
+    ])
+
+
+def teacher_profile_photos_done_kb() -> InlineKeyboardMarkup:
+    """照片上传步：完成 / 撤销最后一张 / 取消"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 完成上传", callback_data="tprofile:photos_done"),
+            InlineKeyboardButton(text="↩️ 撤销最后一张", callback_data="tprofile:photos_undo"),
+        ],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="tprofile:cancel")],
+    ])
+
+
+def teacher_profile_confirm_kb() -> InlineKeyboardMarkup:
+    """确认页：保存 / 取消（修改某项的入口由 Commit 3 编辑流程承担）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 保存到 DB", callback_data="tprofile:save"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="tprofile:cancel"),
+        ],
+    ])
+
+
+def teacher_profile_select_kb(
+    teachers: list[dict],
+    *,
+    action: str,
+    per_row: int = 2,
+) -> InlineKeyboardMarkup:
+    """选择老师列表（用于编辑 / 相册 / 预览）
+
+    action: "edit" / "album" / "preview"
+        callback: tprofile:select:{action}:{user_id}
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    cur: list[InlineKeyboardButton] = []
+    for t in teachers[:30]:
+        cur.append(InlineKeyboardButton(
+            text=t["display_name"],
+            callback_data=f"tprofile:select:{action}:{t['user_id']}",
+        ))
+        if len(cur) >= per_row:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    rows.append([InlineKeyboardButton(text="🔙 返回", callback_data="tprofile:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def teacher_profile_edit_field_kb(user_id: int) -> InlineKeyboardMarkup:
+    """老师档案字段编辑面板（12 个字段）"""
+    def btn(label: str, key: str) -> InlineKeyboardButton:
+        return InlineKeyboardButton(
+            text=label,
+            callback_data=f"tprofile:editfield:{user_id}:{key}",
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [btn("✏️ 艺名", "display_name"),       btn("✏️ 基本信息", "basic_info")],
+        [btn("✏️ 描述", "description"),         btn("✏️ 服务", "service_content")],
+        [btn("✏️ 价格详述", "price_detail"),    btn("✏️ 禁忌", "taboos")],
+        [btn("✏️ 联系电报", "contact_telegram"), btn("✏️ 地区", "region")],
+        [btn("✏️ 价格(排序)", "price"),         btn("✏️ 标签", "tags")],
+        [btn("✏️ 跳转链接", "button_url"),      btn("✏️ 按钮文字", "button_text")],
+        [InlineKeyboardButton(text="🔙 返回", callback_data="tprofile:edit")],
+    ])
+
+
+def teacher_profile_album_menu_kb(user_id: int) -> InlineKeyboardMarkup:
+    """相册管理主操作面板（已选定老师后）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➕ 添加照片", callback_data=f"tprofile:album_add:{user_id}"),
+            InlineKeyboardButton(text="❌ 删除照片", callback_data=f"tprofile:album_remove:{user_id}"),
+        ],
+        [InlineKeyboardButton(text="🔄 整体替换", callback_data=f"tprofile:album_replace:{user_id}")],
+        [InlineKeyboardButton(text="🔙 返回选老师", callback_data="tprofile:album")],
+    ])
+
+
+def teacher_profile_album_remove_kb(user_id: int, photo_count: int) -> InlineKeyboardMarkup:
+    """选择要删除的照片 index（1-based）"""
+    rows: list[list[InlineKeyboardButton]] = []
+    cur: list[InlineKeyboardButton] = []
+    for i in range(1, photo_count + 1):
+        cur.append(InlineKeyboardButton(
+            text=f"{i}",
+            callback_data=f"tprofile:album_remove_idx:{user_id}:{i}",
+        ))
+        if len(cur) >= 5:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    rows.append([InlineKeyboardButton(text="🔙 取消", callback_data=f"tprofile:album_back:{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def teacher_profile_album_collect_kb(user_id: int) -> InlineKeyboardMarkup:
+    """相册新增 / 替换 收图过程中的"完成"按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 完成", callback_data=f"tprofile:album_collect_done:{user_id}"),
+            InlineKeyboardButton(text="❌ 取消", callback_data=f"tprofile:album_back:{user_id}"),
+        ],
     ])
 
 

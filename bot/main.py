@@ -21,6 +21,7 @@ from bot.handlers.teacher_daily_status import router as teacher_daily_status_rou
 from bot.handlers.teacher_detail import router as teacher_detail_router
 from bot.handlers.user_tags import router as user_tags_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
+from bot.handlers.teacher_profile import router as teacher_profile_router
 from bot.handlers.teacher_checkin import router as checkin_router
 from bot.handlers.teacher_self import router as teacher_self_router
 from bot.handlers.user_filter import router as user_filter_router
@@ -119,6 +120,10 @@ async def main():
     # FSM 状态 (ReviewStates.waiting_reject_reason) 保证文字消息只在该状态下被接住
     dp.include_router(admin_review_router)
     dp.include_router(admin_panel_router)
+    # teacher_profile_router (Phase 9.1)：tprofile:* callback + 完整档案录入 FSM
+    # 必须在 teacher_flow_router 之前注册，避免 teacher_flow 通用 message handler
+    # 拦截 TeacherProfileAddStates 的输入。callback 命名空间独立 (tprofile:*)。
+    dp.include_router(teacher_profile_router)
     dp.include_router(teacher_flow_router)
     dp.include_router(checkin_router)
     # teacher_self_router 在 user_panel 之前：teacher_self:* callback 仅对老师角色有意义
