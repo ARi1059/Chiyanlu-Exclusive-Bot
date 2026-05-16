@@ -68,15 +68,39 @@ async def publish_job(bot: Bot, lottery_id: int) -> None:
 
 
 async def draw_job(bot: Bot, lottery_id: int) -> None:
-    """定时任务回调：到 draw_at 时开奖（L.3 实现）
+    """定时任务回调：到 draw_at 时开奖（Phase L.3 实际执行）
 
-    本 phase 占位：log 记录触发 + 不做实际开奖。
-    L.3 将替换为：run_lottery_draw(bot, lottery_id) 含 secrets.SystemRandom 抽签。
+    使用 secrets.SystemRandom 等概率抽 winners + 频道追发结果 + 私聊通知。
+    drawn / cancelled / no_entries 状态自动跳过（防重复抽）。
+    异常仅 log warning，不让定时任务循环异常。
     """
-    logger.info(
-        "lottery draw 触发 lid=%s（L.3 待实现实际开奖逻辑）",
-        lottery_id,
-    )
+    try:
+        from bot.utils.lottery_draw import run_lottery_draw, LotteryDrawError
+        result = await run_lottery_draw(bot, lottery_id)
+        if result.get("skipped"):
+            logger.info(
+                "draw_job skip lid=%s reason=%s",
+                lottery_id, result.get("reason"),
+            )
+            return
+        if result.get("no_entries"):
+            logger.info("draw_job no_entries lid=%s", lottery_id)
+            return
+        logger.info(
+            "draw_job done lid=%s winners=%d/%d notified=%d result_msg=%s",
+            lottery_id,
+            result.get("winners_count", 0),
+            result.get("total_entries", 0),
+            result.get("notified", 0),
+            result.get("result_msg_id"),
+        )
+    except LotteryDrawError as e:
+        logger.warning(
+            "draw_job LotteryDrawError lid=%s reason=%s: %s",
+            lottery_id, e.reason, e,
+        )
+    except Exception as e:
+        logger.warning("draw_job 异常 lid=%s: %s", lottery_id, e)
 
 
 def schedule_lottery_publish(
