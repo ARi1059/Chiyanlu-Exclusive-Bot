@@ -71,13 +71,20 @@ async def _build_main_menu_kb(user_id: Optional[int] = None):
     n = await count_pending_edits()
     is_super = False
     rcount = 0
+    reimb_count = 0
     if user_id is not None:
         if user_id == config.super_admin_id or await is_super_admin(user_id):
             is_super = True
             rcount = await count_pending_reviews()
+            try:
+                from bot.database import count_pending_reimbursements
+                reimb_count = await count_pending_reimbursements()
+            except Exception:
+                reimb_count = 0
     return main_menu_kb(
         pending_count=n,
         pending_review_count=rcount,
+        pending_reimburse_count=reimb_count,
         is_super=is_super,
     )
 
@@ -737,6 +744,21 @@ async def cb_set_cooldown(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "system:reimburse_pool")
+@super_admin_required
+async def cb_set_reimburse_pool(callback: types.CallbackQuery, state: FSMContext):
+    """[💰 报销池设置]：设置月度池总额（元，0 = 不限）"""
+    current = await get_config("reimbursement_monthly_pool") or "0"
+    await state.set_state(SystemSettingStates.waiting_value)
+    await state.set_data({"setting": "reimburse_pool"})
+    await callback.message.edit_text(
+        f"💰 报销池设置\n\n"
+        f"当前月度池：{current} 元（0 = 不限）\n\n"
+        "请输入新的月度池总额（非负整数，单位元；0 = 不限）：",
+    )
+    await callback.answer()
+
+
 @router.message(SystemSettingStates.waiting_value)
 @admin_required
 async def on_system_setting_value(message: types.Message, state: FSMContext):
@@ -806,6 +828,21 @@ async def on_system_setting_value(message: types.Message, state: FSMContext):
         )
         await message.answer(f"✅ 冷却时间已修改为: {text} 秒")
 
+    elif setting == "reimburse_pool":
+        if not text.isdigit():
+            await message.reply("❌ 请输入非负整数（元；0 = 不限）")
+            return
+        await set_config("reimbursement_monthly_pool", text)
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="reimburse_pool_set",
+            target_type="config",
+            target_id="reimbursement_monthly_pool",
+            detail={"value": text},
+        )
+        label = f"{text} 元" if int(text) > 0 else "不限"
+        await message.answer(f"✅ 报销月度池已设为：{label}")
+
     else:
         await message.answer("⚠️ 未知设置项")
 
@@ -849,6 +886,10 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "lottery_contact_set": "设置抽奖客服链接",
     "lottery_edit": "编辑抽奖",
     "lottery_refund": "退还参与积分",
+    "reimburse_approve": "通过报销",
+    "reimburse_reject": "驳回报销",
+    "reimburse_reset": "重置周报销配额",
+    "reimburse_pool_set": "设置报销池",
 }
 
 

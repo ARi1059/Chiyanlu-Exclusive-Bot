@@ -16,6 +16,7 @@ from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.admin_lottery import router as admin_lottery_router
 from bot.handlers.admin_points import router as admin_points_router
+from bot.handlers.admin_reimburse import router as admin_reimburse_router
 from bot.handlers.discussion_anchor_listener import router as discussion_anchor_router
 from bot.handlers.lottery_entry import router as lottery_entry_router
 from bot.handlers.noop_handlers import router as noop_router
@@ -160,6 +161,8 @@ async def main():
     # admin_lottery_router (Phase L.1)：admin:lottery:* 超管抽奖管理
     # 在 admin_panel 之后，与 admin_points 命名空间独立
     dp.include_router(admin_lottery_router)
+    # admin_reimburse_router (报销审核子系统)：reimburse:* 超管报销审批
+    dp.include_router(admin_reimburse_router)
     # subreq_admin_router (Phase 9.3)：admin:subreq:* callback + SubReqAddStates
     # 必须在 admin_panel 之后（系统设置子菜单已含 admin:subreq 入口），
     # SubReqAddStates FSM 保证文字消息仅在状态中被截获

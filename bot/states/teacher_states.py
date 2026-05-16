@@ -91,6 +91,11 @@ class LotteryContactUrlStates(StatesGroup):
     waiting_url = State()
 
 
+class ReimburseRejectStates(StatesGroup):
+    """报销驳回原因输入"""
+    waiting_reason = State()
+
+
 class LotteryEditStates(StatesGroup):
     """Phase L.4.2：active 抽奖编辑 FSM
 

@@ -253,6 +253,7 @@ async def init_db():
                 reject_reason               TEXT,
                 discussion_chat_id          INTEGER,
                 discussion_msg_id           INTEGER,
+                request_reimbursement       INTEGER NOT NULL DEFAULT 0,
                 created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
                 reviewed_at                 TEXT,
                 published_at                TEXT,
@@ -307,6 +308,44 @@ async def init_db():
                 ON point_transactions(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_point_tx_related
                 ON point_transactions(reason, related_id);
+
+            CREATE TABLE IF NOT EXISTS reimbursements (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL,
+                review_id     INTEGER NOT NULL UNIQUE,
+                teacher_id    INTEGER NOT NULL,
+                amount        INTEGER NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                week_key      TEXT NOT NULL,
+                month_key     TEXT NOT NULL,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                decided_at    TEXT,
+                decided_by    INTEGER,
+                reject_reason TEXT,
+                notified_at   TEXT,
+                FOREIGN KEY (review_id) REFERENCES teacher_reviews(id),
+                CHECK (status IN ('pending','approved','rejected','cancelled'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reimb_user_week
+                ON reimbursements(user_id, week_key);
+            CREATE INDEX IF NOT EXISTS idx_reimb_status
+                ON reimbursements(status);
+            CREATE INDEX IF NOT EXISTS idx_reimb_month
+                ON reimbursements(month_key);
+
+            CREATE TABLE IF NOT EXISTS reimbursement_resets (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id           INTEGER NOT NULL,
+                granted_by        INTEGER NOT NULL,
+                granted_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+                consumed          INTEGER NOT NULL DEFAULT 0,
+                consumed_at       TEXT,
+                consumed_reimb_id INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reset_user_unused
+                ON reimbursement_resets(user_id, consumed);
 
             CREATE TABLE IF NOT EXISTS lotteries (
                 id                      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -378,6 +417,8 @@ async def init_db():
         await _migrate_users_total_points(db)
         # 抽奖参与积分门槛：lotteries 表新增 entry_cost_points
         await _migrate_lotteries_entry_cost(db)
+        # 报销子系统：teacher_reviews 表新增 request_reimbursement
+        await _migrate_reviews_request_reimbursement(db)
 
         await db.commit()
     finally:
@@ -487,6 +528,24 @@ async def _migrate_lotteries_entry_cost(db: aiosqlite.Connection) -> None:
         )
     except Exception as e:
         logger.warning("entry_cost_points 字段迁移失败（不阻断启动）: %s", e)
+
+
+async def _migrate_reviews_request_reimbursement(db: aiosqlite.Connection) -> None:
+    """teacher_reviews 表添加 request_reimbursement（报销意愿，默认 0 不申请）
+
+    PRAGMA 检测后再 ADD，幂等可重入。老评价默认 0，不会触发自动创建报销记录。
+    """
+    try:
+        cur = await db.execute("PRAGMA table_info(teacher_reviews)")
+        rows = await cur.fetchall()
+        existing = {row["name"] for row in rows}
+        if "request_reimbursement" in existing:
+            return
+        await db.execute(
+            "ALTER TABLE teacher_reviews ADD COLUMN request_reimbursement INTEGER NOT NULL DEFAULT 0"
+        )
+    except Exception as e:
+        logger.warning("request_reimbursement 字段迁移失败（不阻断启动）: %s", e)
 
 
 async def _migrate_teacher_profile_columns(db: aiosqlite.Connection) -> None:
@@ -5343,6 +5402,290 @@ async def update_lottery_result_msg(
             "UPDATE lotteries SET result_msg_id = ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ?",
             (int(result_msg_id), lottery_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+# ============ 报销子系统 ============
+
+
+def compute_reimbursement_amount(price: Optional[str]) -> int:
+    """根据老师 price 字段（如 '1000P' / '900P'）返回报销金额（元）
+
+    规则（按 displayed price = digits // 100）：
+        displayed <= 0  → 0（不报销）
+        displayed <= 8  → 100
+        displayed == 9  → 150
+        displayed >= 10 → 200
+        无法解析 → 0
+    """
+    if price is None:
+        return 0
+    s = str(price).strip()
+    if not s:
+        return 0
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return 0
+    hundreds = int(digits) // 100
+    if hundreds <= 0:
+        return 0
+    if hundreds <= 8:
+        return 100
+    if hundreds == 9:
+        return 150
+    return 200
+
+
+def current_week_key(now=None) -> str:
+    """返回 ISO 周 key 'YYYY-Www'（如 '2026-W20'）"""
+    from datetime import datetime
+    from pytz import timezone as _tz
+    if now is None:
+        now = datetime.now(_tz(config.timezone))
+    iso_year, iso_week, _ = now.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+def current_month_key(now=None) -> str:
+    """返回 'YYYY-MM'"""
+    from datetime import datetime
+    from pytz import timezone as _tz
+    if now is None:
+        now = datetime.now(_tz(config.timezone))
+    return now.strftime("%Y-%m")
+
+
+async def create_reimbursement(
+    user_id: int,
+    review_id: int,
+    teacher_id: int,
+    amount: int,
+    week_key: str,
+    month_key: str,
+) -> Optional[int]:
+    """创建 pending 报销记录；UNIQUE(review_id) 冲突返 None"""
+    db = await get_db()
+    try:
+        try:
+            cur = await db.execute(
+                """INSERT INTO reimbursements
+                (user_id, review_id, teacher_id, amount, status, week_key, month_key)
+                VALUES (?, ?, ?, ?, 'pending', ?, ?)""",
+                (int(user_id), int(review_id), int(teacher_id),
+                 int(amount), week_key, month_key),
+            )
+        except Exception as e:
+            logger.warning("create_reimbursement 失败: %s", e)
+            return None
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_reimbursement(reimb_id: int) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM reimbursements WHERE id = ?", (int(reimb_id),),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_reimbursement_by_review(review_id: int) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM reimbursements WHERE review_id = ?", (int(review_id),),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def count_pending_reimbursements() -> int:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM reimbursements WHERE status = 'pending'"
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def list_pending_reimbursements(limit: int = 50) -> list[dict]:
+    """按 created_at ASC 取 pending（先来先审）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM reimbursements WHERE status = 'pending' "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            (int(limit),),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_approved_reimbursements_in_week(
+    user_id: int, week_key: str,
+) -> int:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM reimbursements "
+            "WHERE user_id = ? AND week_key = ? AND status = 'approved'",
+            (int(user_id), week_key),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def sum_approved_reimbursements_in_month(month_key: str) -> int:
+    """当月已批准报销总额（元）；用于池配额校验"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS s FROM reimbursements "
+            "WHERE month_key = ? AND status = 'approved'",
+            (month_key,),
+        )
+        row = await cur.fetchone()
+        return int(row["s"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def approve_reimbursement(reimb_id: int, admin_id: int) -> bool:
+    """仅 pending → approved；返回是否生效"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE reimbursements SET status = 'approved', "
+            "decided_at = CURRENT_TIMESTAMP, decided_by = ? "
+            "WHERE id = ? AND status = 'pending'",
+            (int(admin_id), int(reimb_id)),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def reject_reimbursement(
+    reimb_id: int, admin_id: int, reason: str,
+) -> bool:
+    """仅 pending → rejected；返回是否生效"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE reimbursements SET status = 'rejected', "
+            "decided_at = CURRENT_TIMESTAMP, decided_by = ?, reject_reason = ? "
+            "WHERE id = ? AND status = 'pending'",
+            (int(admin_id), str(reason), int(reimb_id)),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def mark_reimbursement_notified(reimb_id: int) -> bool:
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE reimbursements SET notified_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (int(reimb_id),),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def list_user_reimbursements_paged(
+    user_id: int, limit: int = 20, offset: int = 0,
+) -> list[dict]:
+    """用户「我的报销」分页（按 created_at DESC）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM reimbursements WHERE user_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (int(user_id), int(limit), int(offset)),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_user_reimbursements(user_id: int) -> int:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM reimbursements WHERE user_id = ?",
+            (int(user_id),),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def grant_reimbursement_reset(user_id: int, admin_id: int) -> Optional[int]:
+    """超管给某用户发一张「本周报销额度」一次性 voucher；返回 reset_id"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "INSERT INTO reimbursement_resets (user_id, granted_by) VALUES (?, ?)",
+            (int(user_id), int(admin_id)),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def get_unused_reimbursement_reset(user_id: int) -> Optional[dict]:
+    """取该用户最早一张未消耗的 reset voucher"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM reimbursement_resets "
+            "WHERE user_id = ? AND consumed = 0 "
+            "ORDER BY id ASC LIMIT 1",
+            (int(user_id),),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def consume_reimbursement_reset(reset_id: int, reimb_id: int) -> bool:
+    """消耗一张 reset voucher（绑到某条 reimbursement）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE reimbursement_resets SET consumed = 1, "
+            "consumed_at = CURRENT_TIMESTAMP, consumed_reimb_id = ? "
+            "WHERE id = ? AND consumed = 0",
+            (int(reimb_id), int(reset_id)),
         )
         await db.commit()
         return db.total_changes > 0

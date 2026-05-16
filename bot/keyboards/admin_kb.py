@@ -7,6 +7,7 @@ def main_menu_kb(
     pending_count: int = 0,
     *,
     pending_review_count: int = 0,
+    pending_reimburse_count: int = 0,
     is_super: bool = False,
 ) -> InlineKeyboardMarkup:
     """管理员主菜单面板
@@ -14,6 +15,7 @@ def main_menu_kb(
     Args:
         pending_count: 老师改资料待审核数量
         pending_review_count: 用户评价待审核数量（Phase 9.4）
+        pending_reimburse_count: 待审核报销数量
         is_super: 是否超管；仅超管可见 [📝 报告审核 (M)] 行
     """
     review_label = (
@@ -42,8 +44,13 @@ def main_menu_kb(
             InlineKeyboardButton(text=rreview_label, callback_data="rreview:enter"),
             InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points"),
         ])
+        reimburse_label = (
+            f"💰 报销审核 ({pending_reimburse_count})"
+            if pending_reimburse_count > 0 else "💰 报销审核"
+        )
         rows.append([
             InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery"),
+            InlineKeyboardButton(text=reimburse_label, callback_data="reimburse:enter"),
         ])
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
@@ -506,6 +513,7 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
         [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
         [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="system:lottery_contact")],
+        [InlineKeyboardButton(text="💰 报销池设置", callback_data="system:reimburse_pool")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 
@@ -1194,4 +1202,53 @@ def lottery_create_cost_cancel_kb() -> InlineKeyboardMarkup:
     """设置参与积分 FSM 取消（回 Step 10 确认页）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 取消", callback_data="admin:lottery:c_cost_back")],
+    ])
+
+
+# ============ 报销审核子系统 ============
+
+
+def reimburse_action_kb(reimb_id: int, user_id: int) -> InlineKeyboardMarkup:
+    """报销详情页操作按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 通过",   callback_data=f"reimburse:approve:{reimb_id}"),
+            InlineKeyboardButton(text="❌ 驳回",   callback_data=f"reimburse:reject:{reimb_id}"),
+        ],
+        [InlineKeyboardButton(text="🔄 重置该用户本周",
+                              callback_data=f"reimburse:reset:{user_id}:{reimb_id}")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def reimburse_empty_kb() -> InlineKeyboardMarkup:
+    """无待审核报销时显示"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def reimburse_reject_cancel_kb(reimb_id: int) -> InlineKeyboardMarkup:
+    """驳回 FSM 取消（回详情）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data=f"reimburse:item:{reimb_id}")],
+    ])
+
+
+def reimburse_reset_confirm_kb(user_id: int, reimb_id: int) -> InlineKeyboardMarkup:
+    """重置某用户本周配额的二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认重置",
+                                 callback_data=f"reimburse:reset_ok:{user_id}:{reimb_id}"),
+            InlineKeyboardButton(text="🔙 取消",
+                                 callback_data=f"reimburse:item:{reimb_id}"),
+        ],
+    ])
+
+
+def reimburse_pool_cancel_kb() -> InlineKeyboardMarkup:
+    """报销池设置 FSM 取消"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="menu:system")],
     ])
