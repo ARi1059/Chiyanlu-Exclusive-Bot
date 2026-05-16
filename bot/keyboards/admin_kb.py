@@ -963,3 +963,86 @@ def admin_lottery_cancel_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔙 不取消", callback_data=f"admin:lottery:item:{lottery_id}"),
         ],
     ])
+
+
+# ============ 抽奖创建 FSM 键盘（Phase L.1.2） ============
+
+def lottery_create_cancel_kb() -> InlineKeyboardMarkup:
+    """创建抽奖 FSM 通用取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
+    ])
+
+
+def lottery_create_skip_cancel_kb() -> InlineKeyboardMarkup:
+    """Step 3 [⏭ 跳过封面] + 取消"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⏭ 跳过封面", callback_data="admin:lottery:c_skip_cover"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
+        ],
+    ])
+
+
+def lottery_create_method_kb() -> InlineKeyboardMarkup:
+    """Step 4：参与方式（按键 / 口令）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎲 按键抽奖", callback_data="admin:lottery:c_method:button"),
+            InlineKeyboardButton(text="🔑 口令抽奖", callback_data="admin:lottery:c_method:code"),
+        ],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
+    ])
+
+
+def lottery_create_prize_count_kb() -> InlineKeyboardMarkup:
+    """Step 5：中奖人数预设 + 自定义"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1",  callback_data="admin:lottery:c_count:1"),
+            InlineKeyboardButton(text="3",  callback_data="admin:lottery:c_count:3"),
+            InlineKeyboardButton(text="5",  callback_data="admin:lottery:c_count:5"),
+        ],
+        [
+            InlineKeyboardButton(text="10", callback_data="admin:lottery:c_count:10"),
+            InlineKeyboardButton(text="20", callback_data="admin:lottery:c_count:20"),
+            InlineKeyboardButton(text="50", callback_data="admin:lottery:c_count:50"),
+        ],
+        [
+            InlineKeyboardButton(text="💬 自定义", callback_data="admin:lottery:c_count_custom"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
+        ],
+    ])
+
+
+def lottery_create_required_kb(n_added: int) -> InlineKeyboardMarkup:
+    """Step 7：必关频道子循环"""
+    done_label = f"✅ 完成添加 ({n_added})" if n_added > 0 else "✅ 完成添加"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➕ 添加",  callback_data="admin:lottery:c_req_add"),
+            InlineKeyboardButton(text=done_label, callback_data="admin:lottery:c_req_done"),
+        ],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
+    ])
+
+
+def lottery_create_publish_mode_kb() -> InlineKeyboardMarkup:
+    """Step 8：发布模式"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚡ 立即发布", callback_data="admin:lottery:c_pub:immediate"),
+            InlineKeyboardButton(text="⏰ 定时发布", callback_data="admin:lottery:c_pub:scheduled"),
+        ],
+        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
+    ])
+
+
+def lottery_create_confirm_kb() -> InlineKeyboardMarkup:
+    """Step 10：保存草稿 / 取消"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 保存草稿", callback_data="admin:lottery:c_save"),
+            InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
+        ],
+    ])

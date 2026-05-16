@@ -86,6 +86,32 @@ class AdminPointsGrantStates(StatesGroup):
     waiting_confirm       = State()
 
 
+class LotteryCreateStates(StatesGroup):
+    """Phase L.1：超管创建抽奖 10 步 FSM（spec §3.3）
+
+    state.data 累加：
+        name / description / cover_file_id /
+        entry_method ('button'|'code') / entry_code (仅 code) /
+        prize_count / prize_description /
+        required_chat_ids (list[int]) /
+        publish_mode ('immediate'|'scheduled') / publish_at / draw_at
+    """
+    waiting_name              = State()
+    waiting_description       = State()
+    waiting_cover             = State()
+    waiting_entry_method      = State()
+    waiting_entry_code        = State()
+    waiting_prize_count       = State()
+    waiting_prize_count_input = State()
+    waiting_prize_description = State()
+    waiting_required_chats    = State()
+    waiting_required_chat_id  = State()
+    waiting_publish_mode      = State()
+    waiting_publish_at        = State()
+    waiting_draw_at           = State()
+    waiting_confirm           = State()
+
+
 class ReviewSubmitStates(StatesGroup):
     """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
 
