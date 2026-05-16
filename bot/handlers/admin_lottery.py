@@ -255,6 +255,13 @@ async def cb_admin_lottery_cancel_ok(callback: types.CallbackQuery, state: FSMCo
     if not ok:
         await callback.answer("⚠️ 取消失败（可能已是终态）", show_alert=True)
         return
+    # Phase L.2.2：取消已注册的定时任务
+    try:
+        from bot.scheduler.lottery_tasks import unschedule_lottery
+        from bot.main import scheduler as _scheduler
+        unschedule_lottery(_scheduler, lid)
+    except Exception as e:
+        logger.warning("unschedule_lottery 失败 lid=%s: %s", lid, e)
     await log_admin_audit(
         admin_id=callback.from_user.id,
         action="lottery_cancel",
@@ -879,10 +886,15 @@ async def cb_lottery_c_save(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("口令抽奖必须填口令", show_alert=True)
         return
 
+    # 立即发布模式：保存为 draft 后立即调 publish_lottery_to_channel
+    # 定时发布模式：保存为 scheduled + 注册 APScheduler publish job
+    publish_mode = data.get("publish_mode") or "scheduled"
+    init_status = "draft" if publish_mode == "immediate" else "scheduled"
+
     lid = await create_lottery({
         **data,
         "created_by": callback.from_user.id,
-        "status": "draft",
+        "status": init_status,
     })
     if lid is None:
         await callback.answer("⚠️ 保存失败（可能口令冲突）", show_alert=True)
@@ -898,12 +910,51 @@ async def cb_lottery_c_save(callback: types.CallbackQuery, state: FSMContext):
             "prize_count": data.get("prize_count"),
             "publish_at": data.get("publish_at"),
             "draw_at": data.get("draw_at"),
+            "publish_mode": publish_mode,
         },
     )
     await state.clear()
+
+    # Phase L.2.2：根据 publish_mode 触发立即发布 / 注册定时任务
+    from bot.utils.lottery_publish import (
+        LotteryPublishError,
+        publish_lottery_to_channel,
+    )
+    from bot.scheduler.lottery_tasks import (
+        schedule_lottery_draw,
+        schedule_lottery_publish,
+    )
+
+    extra = ""
+    if publish_mode == "immediate":
+        try:
+            result = await publish_lottery_to_channel(callback.bot, lid)
+            extra = f"已立即发布到频道（msg_id={result['msg_id']}）。"
+        except LotteryPublishError as e:
+            extra = f"⚠️ 立即发布失败：{e}（已保存为 draft）"
+            logger.warning("即时发布失败 lid=%s reason=%s: %s", lid, e.reason, e)
+    else:
+        # 定时发布：注册发布定时任务（开奖任务统一注册）
+        from bot.database import get_lottery as _get_lottery
+        lot = await _get_lottery(lid)
+        from bot.main import scheduler as _scheduler
+        if lot and schedule_lottery_publish(_scheduler, callback.bot, lot):
+            extra = f"已注册定时发布任务（publish_at={lot['publish_at']}）。"
+        else:
+            extra = "⚠️ 定时任务注册失败（请检查 publish_at 格式）"
+
+    # 开奖任务统一注册（L.3 实际执行；本 phase 占位 log）
+    try:
+        from bot.database import get_lottery as _get_lottery2
+        lot2 = await _get_lottery2(lid)
+        from bot.main import scheduler as _scheduler2
+        if lot2:
+            schedule_lottery_draw(_scheduler2, callback.bot, lot2)
+    except Exception as e:
+        logger.warning("schedule_lottery_draw 失败 lid=%s: %s", lid, e)
+
     await callback.message.edit_text(
-        f"✅ 抽奖 #{lid}「{data.get('name')}」已保存为草稿。\n\n"
-        "（Phase L.2 实施后可发布到频道。本 phase 仅支持草稿存储 + 列表查看 + 取消草稿。）",
+        f"✅ 抽奖 #{lid}「{data.get('name')}」已保存。\n\n{extra}",
         reply_markup=admin_lottery_menu_kb(await count_lotteries_by_status()),
     )
     await callback.answer("✅ 保存成功")

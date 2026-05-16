@@ -39,6 +39,7 @@ from bot.handlers.user_points import router as user_points_router
 from bot.handlers.user_recommend import router as user_recommend_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
+from bot.scheduler.lottery_tasks import schedule_pending_lotteries
 from bot.scheduler.tasks import (
     schedule_checkin_reminder,
     schedule_daily_publish,
@@ -76,6 +77,17 @@ async def on_startup():
         f"定时任务已启动，发布时间: {publish_time}，签到提醒时间: {reminder_time}，"
         f"日报: {daily_report_time}，周报: {weekly_report_time} ({config.timezone})"
     )
+
+    # Phase L.2：bot 重启时扫所有 scheduled/active 抽奖重注册定时任务（spec §8）
+    try:
+        lottery_summary = await schedule_pending_lotteries(scheduler, bot)
+        logger.info(
+            "抽奖任务扫描完成：发布 %d / 开奖 %d",
+            lottery_summary["scheduled_publish"],
+            lottery_summary["scheduled_draw"],
+        )
+    except Exception as e:
+        logger.warning("schedule_pending_lotteries 失败（不阻断启动）: %s", e)
 
     me = await bot.get_me()
     logger.info(f"Bot 启动成功: @{me.username} (ID: {me.id})")
