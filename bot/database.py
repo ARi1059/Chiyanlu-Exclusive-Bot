@@ -223,6 +223,8 @@ async def init_db():
         await _migrate_user_source_columns(db)
         # Phase 6.2：默认发布模板初始化（幂等）
         await _ensure_default_publish_template(db)
+        # Phase 7.1 schema 增量：users 表新增 onboarding_seen
+        await _migrate_user_onboarding_column(db)
 
         await db.commit()
     finally:
@@ -277,6 +279,24 @@ async def _migrate_user_source_columns(db: aiosqlite.Connection) -> None:
             await db.execute(f"ALTER TABLE users ADD COLUMN {col} {type_def}")
         except Exception:
             pass
+
+
+async def _migrate_user_onboarding_column(db: aiosqlite.Connection) -> None:
+    """Phase 7.1：users 表添加 onboarding_seen 字段（新手引导曝光标记）
+
+    PRAGMA 检测后再 ADD，幂等可重入。已有列时静默跳过。
+    """
+    try:
+        cur = await db.execute("PRAGMA table_info(users)")
+        rows = await cur.fetchall()
+        existing = {row["name"] for row in rows}
+        if "onboarding_seen" in existing:
+            return
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN onboarding_seen INTEGER DEFAULT 0"
+        )
+    except Exception as e:
+        logger.warning("onboarding_seen 字段迁移失败（不阻断启动）: %s", e)
 
 
 DEFAULT_PUBLISH_TEMPLATE_TEXT: str = (
@@ -864,6 +884,57 @@ async def set_user_notify_enabled(user_id: int, enabled: bool) -> bool:
         return db.total_changes > 0
     finally:
         await db.close()
+
+
+async def get_user_onboarding_seen(user_id: int) -> bool:
+    """Phase 7.1：用户是否已看过新手引导
+
+    返回规则：
+        - 用户存在且 onboarding_seen=1 → True
+        - 用户存在且 onboarding_seen=0 / NULL → False
+        - 用户不存在 → False（首次进入，应展示引导）
+        - 字段不存在 / 查询异常 → True（兼容降级，避免阻塞用户）
+    """
+    try:
+        db = await get_db()
+        try:
+            cur = await db.execute(
+                "SELECT onboarding_seen FROM users WHERE user_id = ?",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return False
+            val = row["onboarding_seen"]
+            return bool(val) if val is not None else False
+        finally:
+            await db.close()
+    except Exception as e:
+        logger.warning(
+            "get_user_onboarding_seen 异常（降级为已看过）user=%s: %s", user_id, e,
+        )
+        return True
+
+
+async def mark_user_onboarding_seen(user_id: int) -> None:
+    """Phase 7.1：标记用户已看过新手引导
+
+    字段不存在或更新异常仅记录 warning，不抛异常、不阻断主流程。
+    """
+    try:
+        db = await get_db()
+        try:
+            await db.execute(
+                "UPDATE users SET onboarding_seen = 1 WHERE user_id = ?",
+                (user_id,),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception as e:
+        logger.warning(
+            "mark_user_onboarding_seen 失败 user=%s: %s", user_id, e,
+        )
 
 
 async def count_users() -> int:
@@ -2539,6 +2610,542 @@ async def get_publish_template(template_id: int) -> Optional[dict]:
         return dict(row) if row else None
     finally:
         await db.close()
+
+
+# ============ 条件筛选 / 智能推荐 (Phase 7.2) ============
+
+
+async def get_filter_options(
+    option_type: str,
+    limit: int = 12,
+) -> list[dict]:
+    """统计当前 active 老师的某维度可选值（Phase 7.2 §四）
+
+    支持类型：
+        - region : SELECT region, COUNT(*) GROUP BY region
+        - price  : SELECT price, COUNT(*) GROUP BY price
+        - tag    : 拆 tags JSON 后聚合
+
+    返回 [{"value": str, "count": int}, ...] 按 count DESC，limit 限制条数。
+    类型不支持、teachers 表缺失、SQL 异常 → 返回 []。
+    """
+    if option_type not in {"region", "price", "tag"}:
+        return []
+    if limit <= 0:
+        return []
+
+    db = await get_db()
+    try:
+        if option_type == "tag":
+            cur = await db.execute(
+                """SELECT LOWER(TRIM(je.value)) AS value, COUNT(*) AS n
+                   FROM teachers t, json_each(t.tags) je
+                   WHERE t.is_active = 1
+                     AND je.value IS NOT NULL
+                     AND TRIM(je.value) != ''
+                   GROUP BY LOWER(TRIM(je.value))
+                   ORDER BY n DESC, value ASC
+                   LIMIT ?""",
+                (limit,),
+            )
+        else:
+            col = option_type  # 已校验白名单
+            cur = await db.execute(
+                f"""SELECT {col} AS value, COUNT(*) AS n
+                    FROM teachers
+                    WHERE is_active = 1
+                      AND {col} IS NOT NULL
+                      AND TRIM({col}) != ''
+                    GROUP BY {col}
+                    ORDER BY n DESC, {col} ASC
+                    LIMIT ?""",
+                (limit,),
+            )
+        rows = await cur.fetchall()
+        return [
+            {"value": str(r["value"]), "count": int(r["n"] or 0)}
+            for r in rows if r["value"] is not None
+        ]
+    except Exception as e:
+        logger.warning("get_filter_options(%s) 失败: %s", option_type, e)
+        return []
+    finally:
+        await db.close()
+
+
+async def search_teachers_by_filter(
+    filter_type: str,
+    value: Optional[str] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """根据筛选维度返回 active 老师列表（Phase 7.2 §四）
+
+    filter_type:
+        - region / price / tag : 需要 value，按值匹配（COLLATE NOCASE）
+        - today                : 当天已签到 + status != unavailable
+        - hot                  : 复用 get_hot_teachers
+        - new                  : 按 created_at DESC
+
+    返回项尽量带 daily_status / signed_in_today / fav_count，供结果页渲染。
+    任何异常路径都做兼容降级，不抛。
+    """
+    if limit <= 0:
+        return []
+
+    today_str = _today_str_local()
+
+    # --- hot ---
+    if filter_type == "hot":
+        try:
+            return await get_hot_teachers(limit=limit)
+        except Exception as e:
+            logger.warning("get_hot_teachers 失败，降级到 active 老师: %s", e)
+            try:
+                fallback = await get_all_teachers(active_only=True)
+                return fallback[:limit]
+            except Exception:
+                return []
+
+    # --- today ---
+    if filter_type == "today":
+        try:
+            return await get_sorted_teachers(
+                active_only=True,
+                signed_in_date=today_str,
+                exclude_unavailable=True,
+                limit=limit,
+            )
+        except Exception as e:
+            logger.warning("get_sorted_teachers(today) 失败，降级 checkins: %s", e)
+            try:
+                rows = await get_checked_in_teachers(today_str)
+                return rows[:limit]
+            except Exception:
+                return []
+
+    # --- new ---
+    if filter_type == "new":
+        db = await get_db()
+        try:
+            cur = await db.execute(
+                """SELECT t.*,
+                          (SELECT COUNT(*) FROM favorites f
+                           WHERE f.teacher_id = t.user_id) AS fav_count,
+                          CASE WHEN EXISTS (
+                              SELECT 1 FROM checkins c
+                              WHERE c.teacher_id = t.user_id
+                                AND c.checkin_date = ?
+                          ) THEN 1 ELSE 0 END AS signed_in_today,
+                          s.status AS daily_status,
+                          s.available_time AS daily_available_time,
+                          s.note AS daily_note
+                     FROM teachers t
+                     LEFT JOIN teacher_daily_status s
+                       ON s.teacher_id = t.user_id AND s.status_date = ?
+                    WHERE t.is_active = 1
+                    ORDER BY t.created_at DESC
+                    LIMIT ?""",
+                (today_str, today_str, limit),
+            )
+            return [dict(r) for r in await cur.fetchall()]
+        except Exception as e:
+            logger.warning("search by 'new' 失败，降级到 created_at: %s", e)
+            try:
+                cur = await db.execute(
+                    "SELECT * FROM teachers WHERE is_active = 1 "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in await cur.fetchall()]
+            except Exception:
+                return []
+        finally:
+            await db.close()
+
+    # --- region / price / tag ---
+    if filter_type in ("region", "price", "tag"):
+        if value is None or not str(value).strip():
+            return []
+        v_lower = str(value).strip().lower()
+
+        # 拿全量带 daily_status 的排序结果，再 Python 端按 value 过滤
+        try:
+            all_sorted = await get_sorted_teachers(active_only=True)
+        except Exception as e:
+            logger.warning("get_sorted_teachers 失败，降级 get_all_teachers: %s", e)
+            try:
+                all_sorted = await get_all_teachers(active_only=True)
+            except Exception:
+                return []
+
+        results: list[dict] = []
+        for t in all_sorted:
+            if filter_type == "region":
+                if (t.get("region") or "").strip().lower() == v_lower:
+                    results.append(t)
+            elif filter_type == "price":
+                if (t.get("price") or "").strip().lower() == v_lower:
+                    results.append(t)
+            elif filter_type == "tag":
+                try:
+                    tags = json.loads(t.get("tags") or "[]")
+                    if isinstance(tags, list):
+                        for tag in tags:
+                            if str(tag).strip().lower() == v_lower:
+                                results.append(t)
+                                break
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+            if len(results) >= limit:
+                break
+        return results
+
+    return []
+
+
+async def get_recommended_teachers_for_user(
+    user_id: int,
+    limit: int = 5,
+) -> list[dict]:
+    """根据 user_tags 给用户推荐老师（Phase 7.2 §六）
+
+    评分构成：
+        + 用户标签命中：每命中一个老师 tag/region/price，加 (该用户标签 score * 10)
+        + 今日可约：+30（已签到且 daily_status != unavailable）
+        + is_effective_featured：+50
+        + hot_score：直接相加
+        + fav_count * 3
+
+    降级：
+        - 用户无 user_tags 记录 → get_hot_teachers(limit)
+        - get_hot_teachers 缺失 → get_all_teachers(active_only=True)[:limit]
+        - 全程异常 → []
+    """
+    if limit <= 0:
+        return []
+
+    today_str = _today_str_local()
+
+    # --- 读用户画像 ---
+    try:
+        raw_tags = await get_user_tags(user_id, limit=10)
+    except Exception as e:
+        logger.warning("get_user_tags(%s) 失败，降级到 hot: %s", user_id, e)
+        raw_tags = []
+
+    if not raw_tags:
+        # spec §六.9：无画像 → 回退 get_hot_teachers
+        try:
+            return await get_hot_teachers(limit=limit)
+        except Exception:
+            try:
+                fallback = await get_all_teachers(active_only=True)
+                return fallback[:limit]
+            except Exception:
+                return []
+
+    user_tag_map: dict[str, int] = {}
+    for r in raw_tags:
+        tag = (r.get("tag") or "").strip().lower()
+        if not tag:
+            continue
+        try:
+            user_tag_map[tag] = int(r.get("score") or 0)
+        except (ValueError, TypeError):
+            user_tag_map[tag] = 0
+
+    # --- 取所有 active 老师（带 daily_status / signed_in / fav_count） ---
+    try:
+        teachers = await get_sorted_teachers(active_only=True)
+    except Exception as e:
+        logger.warning("get_sorted_teachers 失败，降级 get_all_teachers: %s", e)
+        try:
+            teachers = await get_all_teachers(active_only=True)
+        except Exception:
+            return []
+
+    scored: list[tuple[float, dict]] = []
+    for t in teachers:
+        score = 0.0
+
+        # 1. 标签 / 地区 / 价格命中
+        try:
+            raw = t.get("tags") or "[]"
+            tags = json.loads(raw) if raw else []
+            if not isinstance(tags, list):
+                tags = []
+        except (json.JSONDecodeError, TypeError, ValueError):
+            tags = []
+        for tag in tags:
+            tl = str(tag).strip().lower()
+            if tl and tl in user_tag_map:
+                score += user_tag_map[tl] * 10
+
+        region_lower = (t.get("region") or "").strip().lower()
+        if region_lower and region_lower in user_tag_map:
+            score += user_tag_map[region_lower] * 10
+
+        price_lower = (t.get("price") or "").strip().lower()
+        if price_lower and price_lower in user_tag_map:
+            score += user_tag_map[price_lower] * 10
+
+        # 2. 今日可约 +30
+        try:
+            signed = bool(t.get("signed_in_today"))
+            d_status = t.get("daily_status")
+            if signed and d_status != "unavailable":
+                score += 30
+        except Exception:
+            pass
+
+        # 3. is_effective_featured +50
+        try:
+            if is_effective_featured(t, today_str):
+                score += 50
+        except Exception:
+            pass
+
+        # 4. hot_score
+        try:
+            score += float(t.get("hot_score") or 0)
+        except (ValueError, TypeError):
+            pass
+
+        # 5. fav_count * 3
+        try:
+            score += float(t.get("fav_count") or 0) * 3
+        except (ValueError, TypeError):
+            pass
+
+        scored.append((score, t))
+
+    # 排序：score DESC, signed_in_today DESC, created_at ASC
+    scored.sort(
+        key=lambda x: (
+            -x[0],
+            -(int(x[1].get("signed_in_today") or 0)),
+            str(x[1].get("created_at") or ""),
+        )
+    )
+
+    return [t for _, t in scored[:limit]]
+
+
+# ============ 相似推荐 / 搜索历史 (Phase 7.3) ============
+
+
+async def get_similar_teachers(
+    teacher_id: int,
+    limit: int = 5,
+) -> list[dict]:
+    """相似老师推荐（Phase 7.3 §一）
+
+    评分规则（命中越多越靠前）：
+        + 每命中一个相同 tag：+10
+        + 同地区：+20
+        + 同价格：+10
+        + 今日可约（signed_in_today=1 且 daily_status != unavailable）：+20
+        + is_effective_featured：+30
+        + hot_score：直接相加
+
+    降级链：
+        1. 目标老师不存在 → []
+        2. 无可比对维度 / 评分全为 0 → 调 get_hot_teachers(limit)
+        3. get_hot_teachers 不存在 / 异常 → get_all_teachers(active_only=True)[:limit]
+        4. 全异常 → []
+    """
+    if limit <= 0:
+        return []
+
+    base = await get_teacher(teacher_id)
+    if not base:
+        return []
+
+    today_str = _today_str_local()
+
+    # base 标签 / 地区 / 价格集合
+    try:
+        base_tags = json.loads(base.get("tags") or "[]") or []
+        if not isinstance(base_tags, list):
+            base_tags = []
+    except (json.JSONDecodeError, TypeError, ValueError):
+        base_tags = []
+    base_tag_set = {str(t).strip().lower() for t in base_tags if t}
+    base_region = (base.get("region") or "").strip().lower()
+    base_price = (base.get("price") or "").strip().lower()
+
+    # 拉所有 active 老师 + daily_status / signed_in / fav_count
+    try:
+        candidates = await get_sorted_teachers(active_only=True)
+    except Exception as e:
+        logger.warning("get_sorted_teachers 失败，降级 get_all_teachers: %s", e)
+        try:
+            candidates = await get_all_teachers(active_only=True)
+        except Exception:
+            return []
+
+    scored: list[tuple[float, dict]] = []
+    for t in candidates:
+        if t.get("user_id") == teacher_id:
+            continue  # 排除自己
+
+        score = 0.0
+
+        # 相同 tag
+        try:
+            tags = json.loads(t.get("tags") or "[]") or []
+            if not isinstance(tags, list):
+                tags = []
+        except (json.JSONDecodeError, TypeError, ValueError):
+            tags = []
+        for tag in tags:
+            tl = str(tag).strip().lower()
+            if tl and tl in base_tag_set:
+                score += 10
+
+        # 同地区
+        region_lower = (t.get("region") or "").strip().lower()
+        if base_region and region_lower == base_region:
+            score += 20
+
+        # 同价格
+        price_lower = (t.get("price") or "").strip().lower()
+        if base_price and price_lower == base_price:
+            score += 10
+
+        # 今日可约
+        try:
+            signed = bool(t.get("signed_in_today"))
+            d_status = t.get("daily_status")
+            if signed and d_status != "unavailable":
+                score += 20
+        except Exception:
+            pass
+
+        # is_effective_featured
+        try:
+            if is_effective_featured(t, today_str):
+                score += 30
+        except Exception:
+            pass
+
+        # hot_score
+        try:
+            score += float(t.get("hot_score") or 0)
+        except (ValueError, TypeError):
+            pass
+
+        scored.append((score, t))
+
+    if not scored:
+        # 候选池为空 → 全回退到 hot
+        try:
+            return await get_hot_teachers(limit=limit)
+        except Exception:
+            try:
+                fallback = await get_all_teachers(active_only=True)
+                return [t for t in fallback if t.get("user_id") != teacher_id][:limit]
+            except Exception:
+                return []
+
+    # 按 score DESC, signed_in_today DESC, created_at ASC
+    scored.sort(
+        key=lambda x: (
+            -x[0],
+            -(int(x[1].get("signed_in_today") or 0)),
+            str(x[1].get("created_at") or ""),
+        )
+    )
+
+    # 取所有 score > 0 的；若全 0 走回退
+    positive = [t for s, t in scored if s > 0]
+    if positive:
+        return positive[:limit]
+
+    # 评分全 0 → 回退到 hot
+    try:
+        hot = await get_hot_teachers(limit=limit)
+        return [t for t in hot if t.get("user_id") != teacher_id][:limit]
+    except Exception:
+        try:
+            fallback = await get_all_teachers(active_only=True)
+            return [t for t in fallback if t.get("user_id") != teacher_id][:limit]
+        except Exception:
+            return []
+
+
+async def get_user_search_history(
+    user_id: int,
+    limit: int = 10,
+) -> list[str]:
+    """从 user_events 中读取该用户最近搜索词（Phase 7.3 §二）
+
+    依赖 event_type='search'，payload 形如 {"raw": "御姐 1000P", "tokens": [...]}.
+    解析优先级：payload.raw > payload.tokens 拼接 > 跳过该条。
+
+    去重：按"小写后比较"保留最早出现位置的原始 query。
+    按 created_at DESC 排序。
+
+    异常 / 表缺失 → 返回 []。
+    """
+    if limit <= 0:
+        return []
+    try:
+        db = await get_db()
+        try:
+            cur = await db.execute(
+                """SELECT payload FROM user_events
+                   WHERE user_id = ? AND event_type = 'search'
+                     AND payload IS NOT NULL
+                   ORDER BY id DESC
+                   LIMIT ?""",
+                (user_id, limit * 5),  # 多取一些，便于去重后仍能凑齐 limit
+            )
+            rows = await cur.fetchall()
+        finally:
+            await db.close()
+    except Exception as e:
+        logger.warning("get_user_search_history(user=%s) 查询失败: %s", user_id, e)
+        return []
+
+    seen_lower: set[str] = set()
+    result: list[str] = []
+    for r in rows:
+        payload_str = r["payload"]
+        if not payload_str:
+            continue
+        try:
+            data = json.loads(payload_str)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        # 优先 raw，其次 tokens 拼接
+        query: Optional[str] = None
+        raw = data.get("raw")
+        if raw and isinstance(raw, str) and raw.strip():
+            query = raw.strip()
+        else:
+            tokens = data.get("tokens")
+            if isinstance(tokens, list):
+                parts = [str(t).strip() for t in tokens if t and str(t).strip()]
+                if parts:
+                    query = " ".join(parts)
+
+        if not query:
+            continue
+
+        key = query.lower()
+        if key in seen_lower:
+            continue
+        seen_lower.add(key)
+        result.append(query)
+
+        if len(result) >= limit:
+            break
+
+    return result
 
 
 # ============ 报表统计 (Phase 6.3) ============

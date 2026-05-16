@@ -24,6 +24,7 @@ from bot.database import (
     get_sorted_teachers,
     list_user_favorites,
     list_user_favorites_signed_in,
+    mark_user_onboarding_seen,
 )
 from bot.keyboards.user_kb import (
     user_main_menu_kb,
@@ -43,17 +44,84 @@ def _today_str() -> str:
     return datetime.now(tz).strftime("%Y-%m-%d")
 
 
+async def _safe_log_event(user_id: int, event_type: str, payload=None) -> None:
+    """log_user_event 缺失或异常时静默跳过"""
+    try:
+        from bot.database import log_user_event  # type: ignore
+    except ImportError:
+        return
+    try:
+        await log_user_event(user_id, event_type, payload)
+    except Exception:
+        pass
+
+
 # ============ 返回主菜单 ============
 
 @router.callback_query(F.data == "user:main")
 async def cb_user_main(callback: types.CallbackQuery, state: FSMContext):
     """返回用户主菜单（任何子菜单 / 搜索状态都可以走这里退出）"""
     await state.clear()
-    await callback.message.edit_text(
-        "👋 欢迎使用痴颜录 Bot\n\n请选择下方功能：",
-        reply_markup=user_main_menu_kb(),
-    )
+    try:
+        await callback.message.edit_text(
+            "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？",
+            reply_markup=user_main_menu_kb(),
+        )
+    except Exception:
+        # 上一条是图片或不可编辑 → 退化为新发一条
+        await callback.message.answer(
+            "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？",
+            reply_markup=user_main_menu_kb(),
+        )
     await callback.answer()
+
+
+# ============ 🧭 新手引导 callbacks（Phase 7.1） ============
+
+
+@router.callback_query(F.data == "user:onboarding:today")
+async def cb_onboarding_today(callback: types.CallbackQuery):
+    """新手引导 → 今日开课：复用 cb_today"""
+    user_id = callback.from_user.id
+    await mark_user_onboarding_seen(user_id)
+    await _safe_log_event(user_id, "onboarding_done", {"path": "today"})
+    await cb_today(callback)
+
+
+@router.callback_query(F.data == "user:onboarding:hot")
+async def cb_onboarding_hot(callback: types.CallbackQuery):
+    """新手引导 → 热门推荐：复用 hot_teachers.cb_user_hot；不存在时降级到主菜单"""
+    user_id = callback.from_user.id
+    await mark_user_onboarding_seen(user_id)
+    await _safe_log_event(user_id, "onboarding_done", {"path": "hot"})
+    try:
+        from bot.handlers.hot_teachers import cb_user_hot
+    except ImportError:
+        await callback.message.edit_text(
+            "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？",
+            reply_markup=user_main_menu_kb(),
+        )
+        await callback.answer()
+        return
+    await cb_user_hot(callback)
+
+
+@router.callback_query(F.data == "user:onboarding:search")
+async def cb_onboarding_search(callback: types.CallbackQuery, state: FSMContext):
+    """新手引导 → 直接搜索：复用 cb_search_entry"""
+    user_id = callback.from_user.id
+    await mark_user_onboarding_seen(user_id)
+    await _safe_log_event(user_id, "onboarding_done", {"path": "search"})
+    await cb_search_entry(callback, state)
+
+
+@router.callback_query(F.data == "user:onboarding:main")
+async def cb_onboarding_main(callback: types.CallbackQuery, state: FSMContext):
+    """新手引导 → 进入主菜单：复用 cb_user_main"""
+    user_id = callback.from_user.id
+    await mark_user_onboarding_seen(user_id)
+    await _safe_log_event(user_id, "onboarding_done", {"path": "main"})
+    await cb_user_main(callback, state)
 
 
 # ============ 📚 今日开课老师 ============

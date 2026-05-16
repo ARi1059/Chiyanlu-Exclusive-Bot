@@ -172,6 +172,35 @@ async def _record_search_tags(user_id: int, tokens: list[str]) -> None:
         pass
 
 
+async def _safe_log_search_event(
+    user_id: int,
+    raw_query: str,
+    tokens: list[str],
+    result_count: int,
+) -> None:
+    """Phase 7.3：把搜索事件落到 user_events（event_type='search'）
+
+    供"搜索历史"复用。raw_query 保留原始输入用于回放；
+    log_user_event 缺失 / 异常时静默跳过，不影响搜索主流程。
+    """
+    try:
+        from bot.database import log_user_event  # type: ignore
+    except ImportError:
+        return
+    try:
+        await log_user_event(
+            user_id,
+            "search",
+            {
+                "raw": raw_query,
+                "tokens": tokens,
+                "result_count": result_count,
+            },
+        )
+    except Exception as e:
+        logger.debug("log_user_event('search') 失败 user=%s: %s", user_id, e)
+
+
 async def _execute_search(
     user_id: int,
     raw_query: str,
@@ -198,6 +227,8 @@ async def _execute_search(
     if teacher:
         # Phase 6.1：艺名搜索也记一个搜索型用户标签
         await _record_search_tags(user_id, [])
+        # Phase 7.3：搜索事件落库（供搜索历史复用）
+        await _safe_log_search_event(user_id, raw, [], 1)
         await send_teacher_detail_message(
             target_message, user_id, teacher, record_view=True,
         )
@@ -216,6 +247,9 @@ async def _execute_search(
     await _record_search_tags(user_id, tokens)
 
     teachers, unrecognized = await search_teachers_smart_and(tokens)
+
+    # Phase 7.3：搜索事件落库（供搜索历史复用）
+    await _safe_log_search_event(user_id, raw, tokens, len(teachers))
 
     if not teachers:
         await _send_no_result(target_message, unrecognized)

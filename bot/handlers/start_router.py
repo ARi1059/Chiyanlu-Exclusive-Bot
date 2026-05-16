@@ -34,11 +34,15 @@ from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
 from bot.database import (
     add_favorite,
     add_user_tag,
     get_teacher,
+    get_user_onboarding_seen,
     is_admin,
+    list_recent_teacher_views,
     mark_user_started,
     record_user_source,
     update_user_tags_from_teacher_action,
@@ -46,7 +50,20 @@ from bot.database import (
 )
 from bot.keyboards.admin_kb import main_menu_kb
 from bot.keyboards.teacher_self_kb import teacher_main_menu_kb
-from bot.keyboards.user_kb import user_main_menu_kb
+from bot.keyboards.user_kb import onboarding_kb, user_main_menu_kb
+
+
+# Phase 7.3：群内快捷入口 deep link
+_QUICK_ENTRY_VALUES = {"menu", "today", "hot", "filter", "recommend"}
+
+# 群内快捷入口对应的私聊跳转目标 callback + 文案
+_QUICK_ENTRY_PAGES: dict[str, tuple[str, str, str]] = {
+    # value: (banner, button_text, target_callback)
+    "today":     ("📚 今日开课", "📚 打开今日开课", "user:today"),
+    "hot":       ("🔥 热门推荐", "🔥 打开热门推荐", "user:hot"),
+    "filter":    ("🔎 条件筛选", "🔎 打开条件筛选", "user:filter"),
+    "recommend": ("🎯 帮我推荐", "🎯 打开帮我推荐", "user:recommend"),
+}
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +82,7 @@ def parse_start_args(raw: str) -> dict:
             "fav_teacher_id": int | None,      # /start fav_<id>...
             "source_type": str | None,         # channel/group/teacher/campaign/invite/unknown
             "source_id": str | None,
+            "quick_entry": str | None,         # Phase 7.3: menu/today/hot/filter/recommend
             "raw": str,                        # 原始 args
         }
     """
@@ -73,6 +91,7 @@ def parse_start_args(raw: str) -> dict:
         "fav_teacher_id": None,
         "source_type": None,
         "source_id": None,
+        "quick_entry": None,
         "raw": raw or "",
     }
     if not raw:
@@ -80,6 +99,11 @@ def parse_start_args(raw: str) -> dict:
 
     if raw == "activate":
         result["activate"] = True
+        return result
+
+    # Phase 7.3：群内快捷入口 deep link（menu / today / hot / filter / recommend）
+    if raw in _QUICK_ENTRY_VALUES:
+        result["quick_entry"] = raw
         return result
 
     # fav 前缀：可能是 fav_<digits> 或 fav_<digits>_<source-suffix>
@@ -272,7 +296,12 @@ async def cmd_start_with_arg(
         logger.warning("来源追踪整体失败 (user=%s, raw=%s): %s", user_id, raw_args, e)
 
     extra_text = "\n\n".join(extras) if extras else None
-    await _route_by_role(message, user_id, extra_text=extra_text)
+    await _route_by_role(
+        message,
+        user_id,
+        extra_text=extra_text,
+        quick_entry=parsed.get("quick_entry"),
+    )
 
 
 async def _handle_fav_deep_link(user_id: int, raw_teacher_id: str) -> str:
@@ -310,15 +339,33 @@ async def cmd_start_plain(message: types.Message, state: FSMContext):
     await _route_by_role(message, user_id)
 
 
+def _quick_entry_kb(target_callback: str, button_label: str) -> InlineKeyboardMarkup:
+    """Phase 7.3：群内 deep link 落地页的 CTA 键盘"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=button_label, callback_data=target_callback)],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
+def _continue_last_kb() -> InlineKeyboardMarkup:
+    """Phase 7.3：欢迎回来 + 继续看上次老师 / 进主菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="继续查看", callback_data="user:continue_last")],
+        [InlineKeyboardButton(text="进入主菜单", callback_data="user:onboarding:main")],
+    ])
+
+
 async def _route_by_role(
     message: types.Message,
     user_id: int,
     extra_text: str | None = None,
+    quick_entry: str | None = None,
 ):
     """根据角色展示对应菜单。
 
     优先级：管理员 > 老师 > 普通用户。
     extra_text 用于在菜单前展示一行额外提示（deep link 场景）。
+    quick_entry (Phase 7.3): 普通用户从群组 deep link 进入时的目标快捷页。
     """
     # 1. 管理员
     if await _is_admin_user(user_id):
@@ -343,8 +390,65 @@ async def _route_by_role(
         await message.answer(text, reply_markup=teacher_main_menu_kb())
         return
 
-    # 3. 普通用户
-    text = "👋 欢迎使用痴颜录 Bot\n\n请选择下方功能："
+    # 3. 普通用户（Phase 7.1：首次进入展示新手引导，已看过则进主菜单）
+    try:
+        seen = await get_user_onboarding_seen(user_id)
+    except Exception as e:
+        logger.warning("get_user_onboarding_seen 异常（默认已看过）: %s", e)
+        seen = True
+
+    if not seen:
+        onboarding_text = (
+            "👋 欢迎使用痴颜录 Bot\n\n"
+            "你可以这样使用：\n\n"
+            "1. 看今天有哪些老师开课\n"
+            "2. 收藏喜欢的老师\n"
+            "3. 开课时收到提醒\n"
+            "4. 也可以通过搜索快速找到老师\n\n"
+            "请选择你的第一步："
+        )
+        if extra_text:
+            onboarding_text = f"{extra_text}\n\n{onboarding_text}"
+        await message.answer(onboarding_text, reply_markup=onboarding_kb())
+        await _safe_log_user_event(user_id, "onboarding_view", None)
+        return
+
+    # Phase 7.3：群内快捷入口 deep link → 落地为带 CTA 按钮的页面
+    if quick_entry and quick_entry != "menu" and quick_entry in _QUICK_ENTRY_PAGES:
+        banner, btn_label, target_cb = _QUICK_ENTRY_PAGES[quick_entry]
+        body = (
+            f"{banner}\n\n"
+            "点击下方按钮进入对应页面："
+        )
+        if extra_text:
+            body = f"{extra_text}\n\n{body}"
+        await message.answer(body, reply_markup=_quick_entry_kb(target_cb, btn_label))
+        return
+
+    # Phase 7.3：欢迎回来 + 继续看上次（仅 plain /start 或 quick_entry=menu）
+    if not quick_entry or quick_entry == "menu":
+        try:
+            views = await list_recent_teacher_views(user_id, limit=1)
+        except Exception as e:
+            logger.debug("list_recent_teacher_views 失败 user=%s: %s", user_id, e)
+            views = []
+        if views:
+            last = views[0]
+            name = last.get("display_name") or "?"
+            region = (last.get("region") or "").strip() or "?"
+            price = (last.get("price") or "").strip() or "?"
+            body = (
+                "👋 欢迎回来\n\n"
+                "你上次看过：\n"
+                f"{name}｜{region}｜{price}\n\n"
+                "你想继续看看吗？"
+            )
+            if extra_text:
+                body = f"{extra_text}\n\n{body}"
+            await message.answer(body, reply_markup=_continue_last_kb())
+            return
+
+    text = "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？"
     if extra_text:
         text = f"{extra_text}\n\n{text}"
     await message.answer(text, reply_markup=user_main_menu_kb())

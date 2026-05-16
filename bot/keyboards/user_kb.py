@@ -10,14 +10,49 @@ from bot.utils.url import normalize_url
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单（v2 §2.5.3 + Phase 2 最近看过 + Phase 3 热门老师）"""
+    """普通用户私聊主菜单（Phase 7.3：新增 🔔 我的提醒 + 📜 搜索历史）
+
+    布局：
+        [📚 今天能约谁] [🎯 帮我推荐]
+        [🔎 按条件找]   [🔥 热门推荐]
+        [⭐ 我的收藏]   [🕘 最近看过]
+        [🔍 直接搜索]   [💝 收藏开课]
+        [🔔 我的提醒]   [📜 搜索历史]
+
+    callback 复用既有命名空间；新增 user:reminders / user:search_history。
+    使用 📜 区分搜索历史与最近看过的 🕘，避免视觉混淆。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📚 今日开课老师", callback_data="user:today")],
-        [InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites")],
-        [InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today")],
-        [InlineKeyboardButton(text="🕘 最近看过", callback_data="user:recent")],
-        [InlineKeyboardButton(text="🔥 热门老师", callback_data="user:hot")],
-        [InlineKeyboardButton(text="🔍 搜索老师", callback_data="user:search")],
+        [
+            InlineKeyboardButton(text="📚 今天能约谁", callback_data="user:today"),
+            InlineKeyboardButton(text="🎯 帮我推荐", callback_data="user:recommend"),
+        ],
+        [
+            InlineKeyboardButton(text="🔎 按条件找", callback_data="user:filter"),
+            InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot"),
+        ],
+        [
+            InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites"),
+            InlineKeyboardButton(text="🕘 最近看过", callback_data="user:recent"),
+        ],
+        [
+            InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search"),
+            InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today"),
+        ],
+        [
+            InlineKeyboardButton(text="🔔 我的提醒", callback_data="user:reminders"),
+            InlineKeyboardButton(text="📜 搜索历史", callback_data="user:search_history"),
+        ],
+    ])
+
+
+def onboarding_kb() -> InlineKeyboardMarkup:
+    """Phase 7.1：新手引导按钮组（仅普通用户首次 /start 时展示）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📚 今日开课", callback_data="user:onboarding:today")],
+        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:onboarding:hot")],
+        [InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:onboarding:search")],
+        [InlineKeyboardButton(text="进入主菜单", callback_data="user:onboarding:main")],
     ])
 
 
@@ -74,22 +109,34 @@ def teacher_detail_kb(
     teacher: dict,
     *,
     is_favorited: bool,
+    notify_enabled: bool = True,
 ) -> InlineKeyboardMarkup:
-    """老师详情页按钮组（Phase 2）
+    """老师详情页按钮组（Phase 7.3：4 行布局，含相似推荐 + 动态提醒态）
 
     布局：
-        [⭐ 收藏 / ✅ 已收藏，点击取消]
-        [📩 联系老师]  ← button_url 有效时显示，否则该行省略
+        [📩 联系老师]                              ← button_url 有效时显示
+        [⭐ 收藏 / ✅ 已收藏，点击取消] [🔔/🔕 提醒按钮]
+        [✨ 相似推荐]
         [🔙 返回主菜单]
+
+    提醒按钮 3 态（Phase 7.3 §四）：
+        - 未收藏              → "🔔 TA 开课提醒"
+        - 已收藏 + notify=1   → "🔔 已开启提醒"
+        - 已收藏 + notify=0   → "🔕 提醒已关闭，点击开启"
     """
     teacher_id = teacher["user_id"]
     fav_text = "✅ 已收藏，点击取消" if is_favorited else "⭐ 收藏"
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(
-            text=fav_text,
-            callback_data=f"teacher:toggle_fav:{teacher_id}",
-        )],
-    ]
+
+    if not is_favorited:
+        remind_text = "🔔 TA 开课提醒"
+    elif notify_enabled:
+        remind_text = "🔔 已开启提醒"
+    else:
+        remind_text = "🔕 提醒已关闭，点击开启"
+
+    rows: list[list[InlineKeyboardButton]] = []
+
+    # 第一行：联系老师
     url = normalize_url(teacher["button_url"])
     if url:
         button_text = teacher.get("button_text") or teacher["display_name"]
@@ -97,6 +144,28 @@ def teacher_detail_kb(
             text=f"📩 联系 {button_text}",
             url=url,
         )])
+
+    # 第二行：收藏切换 + 开课提醒
+    rows.append([
+        InlineKeyboardButton(
+            text=fav_text,
+            callback_data=f"teacher:toggle_fav:{teacher_id}",
+        ),
+        InlineKeyboardButton(
+            text=remind_text,
+            callback_data=f"teacher:remind:{teacher_id}",
+        ),
+    ])
+
+    # 第三行：相似推荐
+    rows.append([
+        InlineKeyboardButton(
+            text="✨ 相似推荐",
+            callback_data=f"teacher:similar:{teacher_id}",
+        ),
+    ])
+
+    # 第四行：返回主菜单
     rows.append([
         InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
     ])

@@ -23,7 +23,10 @@ from bot.handlers.user_tags import router as user_tags_router
 from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_checkin import router as checkin_router
 from bot.handlers.teacher_self import router as teacher_self_router
+from bot.handlers.user_filter import router as user_filter_router
+from bot.handlers.user_history import router as user_history_router
 from bot.handlers.user_panel import router as user_panel_router
+from bot.handlers.user_recommend import router as user_recommend_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
 from bot.scheduler.tasks import (
@@ -124,6 +127,16 @@ async def main():
     #   - user_panel 的 callback (user:*) 不会和 keyword 冲突
     #   - user_search 的 SearchStates filter 保证只在搜索 FSM 状态下匹配
     dp.include_router(user_panel_router)
+    # Phase 7.2：user_filter_router / user_recommend_router
+    # 注册在 user_panel 之后、user_search / keyword 之前。
+    #   - callback 命名空间独立：user:filter:* / user:recommend:*
+    #   - FilterStates 仅在该状态下截获 /cancel，不影响其他文字消息
+    dp.include_router(user_filter_router)
+    dp.include_router(user_recommend_router)
+    # Phase 7.3：user_history_router
+    #   - user:search_history / user:continue_last / user:reminders
+    #   - SearchHistoryStates 仅在自身 FSM 状态下截获 /cancel
+    dp.include_router(user_history_router)
     dp.include_router(user_search_router)
     dp.include_router(keyword_router)  # keyword 放最后，避免拦截其他消息
 
