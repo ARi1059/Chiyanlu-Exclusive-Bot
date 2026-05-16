@@ -141,6 +141,21 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
         detail={"teacher_id": review["teacher_id"], "user_id": review["user_id"]},
     )
 
+    # Phase 9.5：通过审核时一次性触发（任一步失败仅 warning，不阻塞通知）
+    teacher_id = review["teacher_id"]
+    # 1. 重算聚合统计
+    try:
+        from bot.database import recalculate_teacher_review_stats
+        await recalculate_teacher_review_stats(teacher_id)
+    except Exception as e:
+        logger.warning("recalculate_teacher_review_stats 失败 teacher=%s: %s", teacher_id, e)
+    # 2. 同步频道档案帖 caption（force=True 绕过 60s debounce）
+    try:
+        from bot.utils.teacher_channel_publish import update_teacher_post_caption
+        await update_teacher_post_caption(callback.bot, teacher_id, force=True)
+    except Exception as e:
+        logger.warning("update_teacher_post_caption 失败 teacher=%s: %s", teacher_id, e)
+
     # 私聊通知评价者（容错，不阻塞）
     teacher = await get_teacher(review["teacher_id"])
     teacher_name = teacher["display_name"] if teacher else None

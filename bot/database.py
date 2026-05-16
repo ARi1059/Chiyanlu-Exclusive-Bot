@@ -4281,3 +4281,153 @@ async def list_super_admins() -> list[int]:
     finally:
         await db.close()
     return sorted(user_ids)
+
+
+# ============ 评价聚合 / 讨论群锚 (Phase 9.5) ============
+
+
+async def recalculate_teacher_review_stats(teacher_id: int) -> dict:
+    """重算 teacher_channel_posts 缓存的聚合统计（spec §4.4 通过审核时触发）
+
+    - SELECT approved teacher_reviews 聚合 6 维 + overall AVG + 三级 rating count
+    - UPDATE teacher_channel_posts 同字段（保留发布相关字段不动）+ updated_at
+    - 若 teacher_channel_posts 行不存在仅返回聚合字典，不写入
+
+    Returns: 含 review_count / positive_count / neutral_count / negative_count /
+             avg_overall / avg_humanphoto / avg_appearance / avg_body /
+             avg_service / avg_attitude / avg_environment 的字典
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT
+                COUNT(*) AS review_count,
+                SUM(CASE WHEN rating='positive' THEN 1 ELSE 0 END) AS positive_count,
+                SUM(CASE WHEN rating='neutral'  THEN 1 ELSE 0 END) AS neutral_count,
+                SUM(CASE WHEN rating='negative' THEN 1 ELSE 0 END) AS negative_count,
+                AVG(overall_score)      AS avg_overall,
+                AVG(score_humanphoto)   AS avg_humanphoto,
+                AVG(score_appearance)   AS avg_appearance,
+                AVG(score_body)         AS avg_body,
+                AVG(score_service)      AS avg_service,
+                AVG(score_attitude)     AS avg_attitude,
+                AVG(score_environment)  AS avg_environment
+            FROM teacher_reviews
+            WHERE teacher_id = ? AND status = 'approved'""",
+            (teacher_id,),
+        )
+        row = await cur.fetchone()
+        stats = {
+            "review_count":     int(row["review_count"] or 0),
+            "positive_count":   int(row["positive_count"] or 0),
+            "neutral_count":    int(row["neutral_count"] or 0),
+            "negative_count":   int(row["negative_count"] or 0),
+            "avg_overall":      float(row["avg_overall"] or 0),
+            "avg_humanphoto":   float(row["avg_humanphoto"] or 0),
+            "avg_appearance":   float(row["avg_appearance"] or 0),
+            "avg_body":         float(row["avg_body"] or 0),
+            "avg_service":      float(row["avg_service"] or 0),
+            "avg_attitude":     float(row["avg_attitude"] or 0),
+            "avg_environment":  float(row["avg_environment"] or 0),
+        }
+        # 检查 teacher_channel_posts 是否存在
+        cur = await db.execute(
+            "SELECT teacher_id FROM teacher_channel_posts WHERE teacher_id = ?",
+            (teacher_id,),
+        )
+        exists = await cur.fetchone()
+        if exists:
+            await db.execute(
+                """UPDATE teacher_channel_posts SET
+                    review_count = ?,
+                    positive_count = ?,
+                    neutral_count = ?,
+                    negative_count = ?,
+                    avg_overall = ?,
+                    avg_humanphoto = ?,
+                    avg_appearance = ?,
+                    avg_body = ?,
+                    avg_service = ?,
+                    avg_attitude = ?,
+                    avg_environment = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE teacher_id = ?""",
+                (
+                    stats["review_count"],
+                    stats["positive_count"],
+                    stats["neutral_count"],
+                    stats["negative_count"],
+                    stats["avg_overall"],
+                    stats["avg_humanphoto"],
+                    stats["avg_appearance"],
+                    stats["avg_body"],
+                    stats["avg_service"],
+                    stats["avg_attitude"],
+                    stats["avg_environment"],
+                    teacher_id,
+                ),
+            )
+            await db.commit()
+        return stats
+    finally:
+        await db.close()
+
+
+async def update_teacher_channel_post_discussion(
+    teacher_id: int,
+    discussion_chat_id: int,
+    discussion_anchor_id: int,
+) -> bool:
+    """写入讨论群锚消息 id（监听器自动捕获时调用）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_channel_posts SET "
+            "discussion_chat_id = ?, discussion_anchor_id = ?, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE teacher_id = ?",
+            (discussion_chat_id, discussion_anchor_id, teacher_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def update_review_discussion_msg(
+    review_id: int,
+    discussion_chat_id: int,
+    discussion_msg_id: int,
+) -> bool:
+    """评价发布到讨论群后回写 teacher_reviews 对应字段 + published_at"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_reviews SET "
+            "discussion_chat_id = ?, discussion_msg_id = ?, "
+            "published_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (discussion_chat_id, discussion_msg_id, review_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def find_teacher_post_by_channel_msg(
+    channel_chat_id: int,
+    channel_msg_id: int,
+) -> Optional[dict]:
+    """根据频道 chat_id + msg_id 查找老师档案帖记录（监听器用）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teacher_channel_posts "
+            "WHERE channel_chat_id = ? AND channel_msg_id = ?",
+            (channel_chat_id, channel_msg_id),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
