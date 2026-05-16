@@ -10,7 +10,7 @@ from bot.utils.url import normalize_url
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单（Phase 7.3：新增 🔔 我的提醒 + 📜 搜索历史）
+    """普通用户私聊主菜单（Phase P.2：第 6 行独占新增 💰 我的积分）
 
     布局：
         [📚 今天能约谁] [🎯 帮我推荐]
@@ -18,9 +18,9 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         [⭐ 我的收藏]   [🕘 最近看过]
         [🔍 直接搜索]   [💝 收藏开课]
         [🔔 我的提醒]   [📜 搜索历史]
+        [💰 我的积分]                     ← Phase P.2 新增，独占一行（spec §2.1）
 
-    callback 复用既有命名空间；新增 user:reminders / user:search_history。
-    使用 📜 区分搜索历史与最近看过的 🕘，避免视觉混淆。
+    callback 复用既有命名空间。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -43,6 +43,15 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔔 我的提醒", callback_data="user:reminders"),
             InlineKeyboardButton(text="📜 搜索历史", callback_data="user:search_history"),
         ],
+        [InlineKeyboardButton(text="💰 我的积分", callback_data="user:points")],
+    ])
+
+
+def user_points_menu_kb() -> InlineKeyboardMarkup:
+    """积分页按钮组（Phase P.2，spec §2.2）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 积分明细", callback_data="user:points:list")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
     ])
 
 

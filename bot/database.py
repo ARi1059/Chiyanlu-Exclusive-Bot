@@ -4509,6 +4509,27 @@ async def count_approved_reviews(teacher_id: int) -> int:
         await db.close()
 
 
+async def get_teachers_by_ids(user_ids: list[int]) -> dict[int, dict]:
+    """批量取 teachers（按 user_id 主键）→ {teacher_id: dict}
+
+    用于 Phase P.2 积分明细页反查老师名 / Phase P.3 等批量场景。
+    不存在的 id 不会在 dict 中。
+    """
+    if not user_ids:
+        return {}
+    db = await get_db()
+    try:
+        placeholders = ",".join("?" * len(user_ids))
+        cur = await db.execute(
+            f"SELECT * FROM teachers WHERE user_id IN ({placeholders})",
+            user_ids,
+        )
+        rows = await cur.fetchall()
+        return {int(r["user_id"]): dict(r) for r in rows}
+    finally:
+        await db.close()
+
+
 async def get_users_first_names(user_ids: list[int]) -> dict[int, Optional[str]]:
     """批量取 users.first_name → 用于详情页评价半匿名签名
 

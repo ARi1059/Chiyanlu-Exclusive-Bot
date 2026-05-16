@@ -33,6 +33,7 @@ from bot.handlers.teacher_self import router as teacher_self_router
 from bot.handlers.user_filter import router as user_filter_router
 from bot.handlers.user_history import router as user_history_router
 from bot.handlers.user_panel import router as user_panel_router
+from bot.handlers.user_points import router as user_points_router
 from bot.handlers.user_recommend import router as user_recommend_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
@@ -153,6 +154,10 @@ async def main():
     #   - user_panel 的 callback (user:*) 不会和 keyword 冲突
     #   - user_search 的 SearchStates filter 保证只在搜索 FSM 状态下匹配
     dp.include_router(user_panel_router)
+    # Phase P.2：user_points_router 在 user_panel 之后；
+    #   - user:points / user:points:list / user:points:list:<page> 命名空间独立
+    #   - 不与 user:favorites / user:recent 等冲突
+    dp.include_router(user_points_router)
     # Phase 7.2：user_filter_router / user_recommend_router
     # 注册在 user_panel 之后、user_search / keyword 之前。
     #   - callback 命名空间独立：user:filter:* / user:recommend:*
