@@ -7,6 +7,7 @@
 #   ./update.sh stop        仅停止服务
 #   ./update.sh restart     仅重启服务（不更新代码）
 #   ./update.sh status      显示服务运行状态和最近日志
+#   ./update.sh rollback    回滚到上一个 commit + 还原最近一份 DB 备份
 #   ./update.sh help        显示帮助
 
 set -euo pipefail
@@ -19,6 +20,7 @@ BRANCH="main"
 BACKUP_DIR="backups"
 DB_PATH="data/bot.db"
 KEEP_BACKUPS=10                          # 仅保留最近 N 份数据库备份
+HEALTHCHECK_TIMEOUT=15                   # 启动后健康检查最长等待秒数（覆盖大表重建迁移）
 # =========================================
 
 # 颜色输出
@@ -37,6 +39,62 @@ _has_service_unit() {
     # systemctl cat 比 list-unit-files | grep 更稳：直接读取服务定义
     # 存在返回 0；不存在返回非 0 且不抛 stderr
     systemctl cat "$SERVICE_NAME" >/dev/null 2>&1
+}
+
+# 启动后健康检查：每秒轮询 is-active，最多等 HEALTHCHECK_TIMEOUT 秒
+# 用法：_wait_service_active && echo OK || echo FAIL
+_wait_service_active() {
+    local i=0
+    while [[ $i -lt "$HEALTHCHECK_TIMEOUT" ]]; do
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            # 多等 1 秒确认稳定（避免启动瞬间 active 但 init_db 还在跑就卡死）
+            sleep 1
+            if systemctl is-active --quiet "$SERVICE_NAME"; then
+                return 0
+            fi
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+# 扫描启动后日志中的迁移失败 / 致命错误关键字
+# 返回 0 = 干净；返回 1 = 检出问题（已打印警告）
+_scan_post_start_logs() {
+    local since="$1"  # systemctl 时间戳，如 "2 minutes ago"
+    local log_output
+    if ! log_output=$(journalctl -u "$SERVICE_NAME" --since "$since" --no-pager 2>/dev/null); then
+        warn "无法读取 journalctl，跳过日志扫描"
+        return 0
+    fi
+
+    local issues=0
+
+    # 迁移失败警告（database.py 里的 logger.warning("xxx 迁移失败...")）
+    local migration_warns
+    migration_warns=$(echo "$log_output" | grep -iE "迁移失败|migration.*fail" || true)
+    if [[ -n "$migration_warns" ]]; then
+        warn "发现迁移警告："
+        echo "$migration_warns" | sed 's/^/    /'
+        issues=$((issues + 1))
+    fi
+
+    # 致命错误堆栈
+    local errors
+    errors=$(echo "$log_output" | grep -iE "Traceback|CRITICAL|FATAL" | head -20 || true)
+    if [[ -n "$errors" ]]; then
+        warn "发现错误堆栈/严重日志："
+        echo "$errors" | sed 's/^/    /'
+        issues=$((issues + 1))
+    fi
+
+    # 报销表重建的预期日志（信息，不是错误）
+    if echo "$log_output" | grep -q "reimbursements 表已扩展 CHECK"; then
+        info "✓ reimbursements 表重建迁移已执行（CHECK 扩展接受 'queued'）"
+    fi
+
+    return $((issues > 0 ? 1 : 0))
 }
 
 _check_service_unit() {
@@ -59,13 +117,13 @@ cmd_start() {
     fi
     info "启动服务 $SERVICE_NAME ..."
     systemctl start "$SERVICE_NAME"
-    sleep 2
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
+    info "等待服务进入 active 状态（最长 ${HEALTHCHECK_TIMEOUT}s）..."
+    if _wait_service_active; then
         ok "服务已启动并处于运行状态"
         systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
         info "查看实时日志：journalctl -u $SERVICE_NAME -f"
     else
-        err "启动失败！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
+        err "启动失败或超时！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
         exit 1
     fi
 }
@@ -85,12 +143,12 @@ cmd_restart() {
     _check_service_unit
     info "重启服务 $SERVICE_NAME ..."
     systemctl restart "$SERVICE_NAME"
-    sleep 2
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
+    info "等待服务进入 active 状态（最长 ${HEALTHCHECK_TIMEOUT}s）..."
+    if _wait_service_active; then
         ok "服务已重启并处于运行状态"
         systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
     else
-        err "重启失败！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
+        err "重启失败或超时！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
         exit 1
     fi
 }
@@ -98,6 +156,74 @@ cmd_restart() {
 cmd_status() {
     _check_service_unit
     systemctl --no-pager --lines=20 status "$SERVICE_NAME" || true
+}
+
+cmd_rollback() {
+    cd "$PROJECT_DIR"
+    info "工作目录：$(pwd)"
+
+    # 1. 找到最近一份 DB 备份
+    if [[ ! -d "$BACKUP_DIR" ]]; then
+        err "备份目录不存在：$BACKUP_DIR"
+        exit 1
+    fi
+    local latest_backup
+    latest_backup=$(ls -1t "$BACKUP_DIR"/bot.db.*.bak 2>/dev/null | head -n 1 || true)
+    if [[ -z "$latest_backup" ]]; then
+        err "未找到任何 DB 备份（$BACKUP_DIR/bot.db.*.bak）"
+        exit 1
+    fi
+    info "将使用 DB 备份：$latest_backup（$(stat -c %y "$latest_backup" 2>/dev/null || stat -f %Sm "$latest_backup"))"
+
+    # 2. 显示 git 当前位置
+    local current_head
+    current_head=$(git --no-pager log -1 --pretty=format:'%h %s')
+    info "当前 HEAD：$current_head"
+    info "上一个 commit 将作为回滚目标："
+    git --no-pager log -2 --oneline --no-decorate | tail -n 1 | sed 's/^/    /'
+
+    echo
+    warn "⚠️  rollback 将执行："
+    warn "  - systemctl stop $SERVICE_NAME"
+    warn "  - cp $latest_backup -> $DB_PATH （覆盖当前 DB）"
+    warn "  - git reset --hard HEAD~1"
+    warn "  - systemctl start $SERVICE_NAME"
+    read -p "确认继续？输入 yes 回车，其它任何输入中止：" confirm
+    if [[ "$confirm" != "yes" ]]; then
+        warn "已中止"
+        exit 0
+    fi
+
+    # 3. 停服
+    if _has_service_unit; then
+        info "停止服务..."
+        systemctl stop "$SERVICE_NAME" || warn "停止服务失败，继续"
+    fi
+
+    # 4. 还原 DB
+    info "还原数据库..."
+    cp -p "$latest_backup" "$DB_PATH"
+    ok "DB 已还原"
+
+    # 5. git 回退
+    info "git reset --hard HEAD~1..."
+    git reset --hard HEAD~1
+    local new_head
+    new_head=$(git --no-pager log -1 --pretty=format:'%h %s')
+    ok "代码已回退到：$new_head"
+
+    # 6. 启动
+    if _has_service_unit; then
+        info "启动服务..."
+        systemctl start "$SERVICE_NAME"
+        if _wait_service_active; then
+            ok "回滚后服务已正常启动"
+            systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
+        else
+            err "回滚后服务启动失败！请检查日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
+            exit 1
+        fi
+    fi
 }
 
 cmd_help() {
@@ -112,12 +238,14 @@ Chiyanlu-Exclusive-Bot 管理脚本
   stop             仅停止服务
   restart          仅重启服务（不更新代码）
   status           显示服务运行状态和最近日志
+  rollback         回退到上一个 commit + 还原最近一份 DB 备份（需 yes 确认）
   help             显示此帮助
 
 示例:
   $(basename "$0")           # 拉新代码并部署
   $(basename "$0") start     # 服务挂了，直接拉起
   $(basename "$0") restart   # 改了 .env 后只重启不更新
+  $(basename "$0") rollback  # 升级失败紧急回滚
 EOF
 }
 
@@ -127,11 +255,12 @@ EOF
 COMMAND="${1:-update}"
 
 case "$COMMAND" in
-    start)             cmd_start;   exit 0 ;;
-    stop)              cmd_stop;    exit 0 ;;
-    restart)           cmd_restart; exit 0 ;;
-    status)            cmd_status;  exit 0 ;;
-    help|-h|--help)    cmd_help;    exit 0 ;;
+    start)             cmd_start;    exit 0 ;;
+    stop)              cmd_stop;     exit 0 ;;
+    restart)           cmd_restart;  exit 0 ;;
+    status)            cmd_status;   exit 0 ;;
+    rollback)          cmd_rollback; exit 0 ;;
+    help|-h|--help)    cmd_help;     exit 0 ;;
     update|"")         ;;  # 继续往下走完整更新流程
     *)
         err "未知命令: $COMMAND"
@@ -187,13 +316,39 @@ info "将要应用的 $NEW_REMOTE_COUNT 条新提交："
 git --no-pager log --oneline --no-decorate "$LOCAL..$REMOTE"
 echo
 
-# 4. 备份数据库
+# 3.5 扫描新代码包含的 DB 迁移函数，提示潜在风险
+# 检测远程新提交是否引入 / 修改 _migrate_* 或 reimbursements/lotteries DDL
+MIGRATIONS_TOUCHED=$(git diff --name-only "$LOCAL..$REMOTE" -- bot/database.py 2>/dev/null || true)
+if [[ -n "$MIGRATIONS_TOUCHED" ]]; then
+    # 看 diff 里有没有重建表 / ALTER TABLE 关键字
+    RISKY_MIGRATIONS=$(git diff "$LOCAL..$REMOTE" -- bot/database.py 2>/dev/null \
+        | grep -E "^\+.*(_migrate_|ALTER TABLE|CREATE TABLE.*_new|DROP TABLE)" | head -20 || true)
+    if [[ -n "$RISKY_MIGRATIONS" ]]; then
+        warn "本次更新涉及 DB schema 变化（init_db 自动迁移）："
+        echo "$RISKY_MIGRATIONS" | sed 's/^/    /'
+        warn "已下方第 4 步备份数据库；如启动失败可用 './update.sh rollback' 回滚。"
+        echo
+    fi
+fi
+
+# 4. 备份数据库（含完整性校验）
 if [[ -f "$DB_PATH" ]]; then
     mkdir -p "$BACKUP_DIR"
     TS=$(date +%Y%m%d-%H%M%S)
     BACKUP_FILE="$BACKUP_DIR/bot.db.${TS}.bak"
     cp -p "$DB_PATH" "$BACKUP_FILE"
-    ok "数据库已备份至 $BACKUP_FILE"
+    # 校验：备份文件存在 + 大小一致
+    if [[ ! -s "$BACKUP_FILE" ]]; then
+        err "备份失败：$BACKUP_FILE 不存在或为空"
+        exit 1
+    fi
+    ORIG_SIZE=$(stat -c%s "$DB_PATH" 2>/dev/null || stat -f%z "$DB_PATH")
+    BACKUP_SIZE=$(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE")
+    if [[ "$ORIG_SIZE" != "$BACKUP_SIZE" ]]; then
+        err "备份完整性校验失败：原 $ORIG_SIZE bytes，备份 $BACKUP_SIZE bytes"
+        exit 1
+    fi
+    ok "数据库已备份至 $BACKUP_FILE（${BACKUP_SIZE} bytes）"
     # 清理旧备份
     ls -1t "$BACKUP_DIR"/bot.db.*.bak 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
 else
@@ -248,16 +403,33 @@ info "执行语法检查..."
 "$VENV_DIR/bin/python3" -m compileall -q bot
 ok "语法检查通过"
 
-# 9. 启动服务
+# 9. 启动服务（含健康检查 + 迁移日志扫描）
 if _has_service_unit; then
     info "启动服务 $SERVICE_NAME ..."
+    START_TS=$(date '+%Y-%m-%d %H:%M:%S')
     systemctl start "$SERVICE_NAME"
-    sleep 2
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
+    info "等待服务进入 active 状态（最长 ${HEALTHCHECK_TIMEOUT}s，覆盖大表迁移）..."
+    if _wait_service_active; then
         ok "服务已启动并处于运行状态"
         systemctl --no-pager --lines=10 status "$SERVICE_NAME" || true
+        echo
+        # 扫描启动后日志，检测迁移失败 / 错误堆栈
+        info "扫描启动后日志中的迁移警告..."
+        if _scan_post_start_logs "$START_TS"; then
+            ok "日志扫描未发现异常"
+        else
+            err "日志中检出迁移警告或错误堆栈！"
+            err "建议操作："
+            err "  1) journalctl -u $SERVICE_NAME -n 200 --no-pager  # 详查日志"
+            err "  2) ./update.sh rollback                            # 紧急回滚"
+            exit 1
+        fi
     else
-        err "服务启动失败！请查看日志：journalctl -u $SERVICE_NAME -n 100 --no-pager"
+        err "服务启动失败或 ${HEALTHCHECK_TIMEOUT}s 内未进入 active 状态！"
+        err "诊断："
+        err "  journalctl -u $SERVICE_NAME -n 100 --no-pager"
+        err "紧急回滚："
+        err "  ./update.sh rollback"
         exit 1
     fi
 else
@@ -267,3 +439,4 @@ fi
 echo
 ok "更新完成。当前版本：$(git --no-pager log -1 --pretty=format:'%h %s')"
 info "查看实时日志：journalctl -u $SERVICE_NAME -f"
+info "如发现异常可立即回滚：./update.sh rollback"
