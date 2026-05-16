@@ -29,8 +29,17 @@ from bot.keyboards.admin_kb import (
     teacher_profile_skip_cancel_kb,
     teacher_profile_photos_done_kb,
     teacher_profile_confirm_kb,
+    teacher_profile_select_kb,
+    teacher_profile_edit_field_kb,
+    teacher_profile_album_menu_kb,
+    teacher_profile_album_remove_kb,
+    teacher_profile_album_collect_kb,
 )
-from bot.states.teacher_states import TeacherProfileAddStates
+from bot.states.teacher_states import (
+    TeacherProfileAddStates,
+    TeacherProfileEditStates,
+    TeacherProfileAlbumStates,
+)
 from bot.utils.permissions import admin_required
 from bot.utils.url import normalize_url
 
@@ -493,12 +502,458 @@ async def cmd_cancel_in_profile_fsm(message: types.Message, state: FSMContext):
     await _do_cancel(message, state)
 
 
-# ============ Commit 3/4 占位（避免按钮无反应）============
+# ============ 编辑老师档案 FSM ============
 
-@router.callback_query(F.data.in_({"tprofile:edit", "tprofile:album", "tprofile:preview"}))
+@router.callback_query(F.data == "tprofile:edit")
 @admin_required
-async def cb_not_yet(callback: types.CallbackQuery):
-    await callback.answer("将在 Phase 9.1.3 / 9.1.4 启用", show_alert=True)
+async def cb_profile_edit_start(callback: types.CallbackQuery, state: FSMContext):
+    """[✏️ 编辑老师档案] 入口：列出老师，选择目标"""
+    from bot.database import get_all_teachers
+    teachers = await get_all_teachers(active_only=False)
+    if not teachers:
+        await callback.answer("当前没有老师", show_alert=True)
+        return
+    await state.set_state(TeacherProfileEditStates.waiting_target_teacher)
+    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)[:20]
+    await callback.message.edit_text(
+        "✏️ 选择要编辑档案的老师（按创建时间倒序，最多 20 位）：",
+        reply_markup=teacher_profile_select_kb(teachers, action="edit"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:select:edit:"))
+@admin_required
+async def cb_profile_edit_pick(callback: types.CallbackQuery, state: FSMContext):
+    """选定老师 → 显示当前档案 + 字段编辑面板"""
+    try:
+        target = int(callback.data.split(":")[3])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.database import get_teacher_full_profile, is_teacher_profile_complete
+    profile = await get_teacher_full_profile(target)
+    if not profile:
+        await callback.answer("老师不存在", show_alert=True)
+        return
+    await state.set_state(TeacherProfileEditStates.waiting_field_choice)
+    await state.set_data({"target_user_id": target})
+
+    ok, missing = await is_teacher_profile_complete(target)
+    status = (
+        "✅ 必填齐备" if ok
+        else "⚠️ 缺：" + ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
+    )
+    text = (
+        f"✏️ 编辑老师档案：{profile['display_name']}\n"
+        f"{status}\n\n"
+        f"当前字段一览：\n"
+        f"📋 基本信息：{profile.get('age') or '-'} 岁 · "
+        f"{profile.get('height_cm') or '-'}cm · "
+        f"{profile.get('weight_kg') or '-'}kg · 胸 {profile.get('bra_size') or '-'}\n"
+        f"☎ 联系电报：{profile.get('contact_telegram') or '-'}\n"
+        f"💰 价格详述：{profile.get('price_detail') or '-'}\n"
+        f"📍 地区：{profile.get('region') or '-'}\n"
+        f"💰 价格(排序)：{profile.get('price') or '-'}\n"
+        f"🏷 标签：{' | '.join(profile.get('tags') or []) or '-'}\n"
+        f"🔗 链接：{profile.get('button_url') or '-'}\n"
+        f"🔠 按钮文字：{profile.get('button_text') or '-'}\n\n"
+        "选择要修改的字段："
+    )
+    await callback.message.edit_text(text, reply_markup=teacher_profile_edit_field_kb(target))
+    await callback.answer()
+
+
+_EDIT_FIELD_PROMPTS: dict = {
+    "display_name":     ("艺名", "输入新的艺名（≤ 40 字）。", "text"),
+    "basic_info":       ("基本信息", "请用一行回复：年龄 身高 体重 罩杯，空格分隔。例如：25 172 90 B", "basic"),
+    "description":      ("描述", '输入新的描述，或回复"清空"将其置空。', "optional"),
+    "service_content":  ("服务内容", '输入新的服务范围，或回复"清空"。', "optional"),
+    "price_detail":     ("价格详述", "输入新的价格详述（必填，不可为空）。", "text"),
+    "taboos":           ("禁忌", '输入新的禁忌项，或回复"清空"。', "optional"),
+    "contact_telegram": ("联系电报", "输入新的电报联系账号，必须以 @ 开头。", "contact"),
+    "region":           ("地区", "输入新的地区（如：天府一街）。", "text"),
+    "price":            ("价格(排序)", "输入新的价格短标签（如：3000P）。", "text"),
+    "tags":             ("标签", "用空格或逗号分隔多个标签。", "tags"),
+    "button_url":       ("跳转链接", "输入新的 URL（http/https/tg）。", "url"),
+    "button_text":      ("按钮文字", '输入新的按钮文字，或回复"清空"使用默认（艺名）。', "optional"),
+}
+
+
+@router.callback_query(F.data.startswith("tprofile:editfield:"))
+@admin_required
+async def cb_profile_editfield_pick(callback: types.CallbackQuery, state: FSMContext):
+    """点击某字段 → 提示输入新值"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        target = int(parts[2])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    field = parts[3]
+    if field not in _EDIT_FIELD_PROMPTS:
+        await callback.answer("未知字段", show_alert=True)
+        return
+    label, prompt, _kind = _EDIT_FIELD_PROMPTS[field]
+    await state.set_state(TeacherProfileEditStates.waiting_field_value)
+    await state.set_data({"target_user_id": target, "field_key": field})
+    await callback.message.edit_text(
+        f"✏️ 修改 {label}\n\n{prompt}\n\n任意时刻发 /cancel 中止。",
+        reply_markup=teacher_profile_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(TeacherProfileEditStates.waiting_field_value)
+@admin_required
+async def on_profile_edit_value(message: types.Message, state: FSMContext):
+    """接收新值，校验后入库"""
+    from bot.database import update_teacher_profile_field
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        await state.clear()
+        await message.answer("❌ 已取消修改。", reply_markup=teacher_profile_menu_kb())
+        return
+    data = await state.get_data()
+    target = data.get("target_user_id")
+    field = data.get("field_key")
+    if not target or not field:
+        await state.clear()
+        await message.answer("状态丢失，请重新进入。", reply_markup=teacher_profile_menu_kb())
+        return
+
+    _label, _prompt, kind = _EDIT_FIELD_PROMPTS[field]
+
+    # 类型分支
+    if kind == "basic":
+        info = parse_basic_info(text)
+        if info is None:
+            await message.reply(
+                "❌ 格式不对或越界，例如：25 172 90 B（15-60 / 140-200 / 35-120）。"
+            )
+            return
+        # 4 个字段分别 update
+        for k, v in info.items():
+            await update_teacher_profile_field(target, k, v)
+        await _finish_edit(message, state, "基本信息", target)
+        return
+
+    if kind == "url":
+        url = normalize_url(text)
+        if not url:
+            await message.reply("❌ URL 无效（http/https/tg，且不含空格）。")
+            return
+        ok = await update_teacher_profile_field(target, field, url)
+        await _finish_edit(message, state, field, target, success=ok)
+        return
+
+    if kind == "contact":
+        if not text.startswith("@") or not re.fullmatch(r"@[A-Za-z0-9_]{4,32}", text):
+            await message.reply("❌ 联系电报必须 @ 开头，4-32 个字母/数字/下划线。")
+            return
+        ok = await update_teacher_profile_field(target, field, text)
+        await _finish_edit(message, state, field, target, success=ok)
+        return
+
+    if kind == "tags":
+        tags = [t.strip().lstrip("#") for t in re.split(r"[,，\s]+", text) if t.strip()]
+        if not tags:
+            await message.reply("❌ 至少输入一个标签。")
+            return
+        ok = await update_teacher_profile_field(target, "tags", tags)
+        await _finish_edit(message, state, "tags", target, success=ok)
+        return
+
+    if kind == "optional":
+        # "清空" → 写 NULL
+        new_val = None if text in {"清空", "/clear"} else text
+        ok = await update_teacher_profile_field(target, field, new_val)
+        await _finish_edit(message, state, field, target, success=ok)
+        return
+
+    # kind == "text"：必填，不能为空
+    if not text:
+        await message.reply("❌ 该字段必填，不能为空。")
+        return
+    if field == "display_name" and len(text) > 40:
+        await message.reply("❌ 艺名长度需 ≤ 40 字。")
+        return
+    ok = await update_teacher_profile_field(target, field, text)
+    await _finish_edit(message, state, field, target, success=ok)
+
+
+async def _finish_edit(
+    message: types.Message,
+    state: FSMContext,
+    field_or_label: str,
+    target_user_id: int,
+    *,
+    success: bool = True,
+):
+    await state.clear()
+    if success:
+        await message.answer(f"✅ 已更新「{field_or_label}」。")
+    else:
+        await message.answer("⚠️ 更新失败（字段或值不被接受）。")
+    # 重新展示该老师的字段面板，便于继续修改
+    from bot.database import get_teacher_full_profile, is_teacher_profile_complete
+    profile = await get_teacher_full_profile(target_user_id)
+    if not profile:
+        await message.answer("📋 老师档案管理", reply_markup=teacher_profile_menu_kb())
+        return
+    ok, missing = await is_teacher_profile_complete(target_user_id)
+    status = "✅ 必填齐备" if ok else f"⚠️ 仍缺 {len(missing)} 项"
+    await state.set_state(TeacherProfileEditStates.waiting_field_choice)
+    await state.set_data({"target_user_id": target_user_id})
+    await message.answer(
+        f"✏️ 继续编辑：{profile['display_name']}（{status}）",
+        reply_markup=teacher_profile_edit_field_kb(target_user_id),
+    )
+
+
+# ============ 相册管理 ============
+
+@router.callback_query(F.data == "tprofile:album")
+@admin_required
+async def cb_album_start(callback: types.CallbackQuery, state: FSMContext):
+    """[🖼 管理照片相册] 入口：选老师"""
+    from bot.database import get_all_teachers
+    teachers = await get_all_teachers(active_only=False)
+    if not teachers:
+        await callback.answer("当前没有老师", show_alert=True)
+        return
+    await state.set_state(TeacherProfileAlbumStates.waiting_target_teacher)
+    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)[:20]
+    await callback.message.edit_text(
+        "🖼 选择要管理相册的老师：",
+        reply_markup=teacher_profile_select_kb(teachers, action="album"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:select:album:"))
+@admin_required
+async def cb_album_pick(callback: types.CallbackQuery, state: FSMContext):
+    """选定老师 → 显示当前相册数 + 操作按钮"""
+    try:
+        target = int(callback.data.split(":")[3])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await _show_album_menu(callback.message, state, target, via_edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:album_back:"))
+@admin_required
+async def cb_album_back(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await _show_album_menu(callback.message, state, target, via_edit=True)
+    await callback.answer()
+
+
+async def _show_album_menu(
+    msg: types.Message, state: FSMContext, target: int, *, via_edit: bool
+):
+    from bot.database import get_teacher_full_profile
+    profile = await get_teacher_full_profile(target)
+    if not profile:
+        await msg.answer("老师不存在。", reply_markup=teacher_profile_menu_kb())
+        return
+    await state.set_state(TeacherProfileAlbumStates.waiting_album_action)
+    await state.set_data({"target_user_id": target})
+    n = len(profile["photo_album"])
+    text = (
+        f"🖼 相册管理：{profile['display_name']}\n\n"
+        f"当前相册：{n}/10 张\n\n"
+        f"➕ 添加照片：发送图片，点 [✅ 完成] 入库\n"
+        f"❌ 删除照片：选择 index 1-{n}\n"
+        f"🔄 整体替换：丢弃当前所有照片，重新上传"
+    )
+    await _show(msg, text, teacher_profile_album_menu_kb(target), via_edit)
+
+
+@router.callback_query(F.data.startswith("tprofile:album_add:"))
+@admin_required
+async def cb_album_add(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.database import count_teacher_photos
+    cur = await count_teacher_photos(target)
+    if cur >= 10:
+        await callback.answer("已达 10 张上限，请先删除或整体替换", show_alert=True)
+        return
+    await state.set_state(TeacherProfileAlbumStates.waiting_add_photos)
+    await state.set_data({"target_user_id": target, "buffer": []})
+    await callback.message.edit_text(
+        f"➕ 添加照片：依次发送图片，最多再添加 {10 - cur} 张。\n"
+        f"发送完后点 [✅ 完成]。",
+        reply_markup=teacher_profile_album_collect_kb(target),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:album_replace:"))
+@admin_required
+async def cb_album_replace(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await state.set_state(TeacherProfileAlbumStates.waiting_replace_photos)
+    await state.set_data({"target_user_id": target, "buffer": []})
+    await callback.message.edit_text(
+        "🔄 整体替换：依次发送 1-10 张图片，完成后点 [✅ 完成]。\n"
+        "⚠️ 此操作会丢弃当前所有照片。",
+        reply_markup=teacher_profile_album_collect_kb(target),
+    )
+    await callback.answer()
+
+
+@router.message(TeacherProfileAlbumStates.waiting_add_photos, F.photo)
+@admin_required
+async def on_album_add_photo(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    target = data.get("target_user_id")
+    buf: list = list(data.get("buffer") or [])
+    from bot.database import count_teacher_photos
+    cur = await count_teacher_photos(target)
+    if cur + len(buf) >= 10:
+        await message.reply("⚠️ 已达 10 张上限，请点 [✅ 完成]。")
+        return
+    buf.append(message.photo[-1].file_id)
+    await state.update_data(buffer=buf)
+    await message.reply(f"✅ 已收到，本次将追加 {len(buf)} 张（合计 {cur + len(buf)}/10）。")
+
+
+@router.message(TeacherProfileAlbumStates.waiting_replace_photos, F.photo)
+@admin_required
+async def on_album_replace_photo(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    buf: list = list(data.get("buffer") or [])
+    if len(buf) >= 10:
+        await message.reply("⚠️ 已收满 10 张，请点 [✅ 完成]。")
+        return
+    buf.append(message.photo[-1].file_id)
+    await state.update_data(buffer=buf)
+    await message.reply(f"✅ 已收到，当前 {len(buf)}/10。")
+
+
+@router.message(TeacherProfileAlbumStates.waiting_add_photos)
+@router.message(TeacherProfileAlbumStates.waiting_replace_photos)
+@admin_required
+async def on_album_collect_text(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        await state.clear()
+        await message.answer("❌ 已取消相册操作。", reply_markup=teacher_profile_menu_kb())
+        return
+    await message.reply("ℹ️ 请发送图片，或点 [✅ 完成] / [❌ 取消]。")
+
+
+@router.callback_query(F.data.startswith("tprofile:album_collect_done:"))
+@admin_required
+async def cb_album_collect_done(callback: types.CallbackQuery, state: FSMContext):
+    """收图阶段点 [✅ 完成]：执行 add 或 replace"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    cur_state = await state.get_state()
+    data = await state.get_data()
+    if data.get("target_user_id") != target:
+        await callback.answer("状态不匹配", show_alert=True)
+        return
+    buf: list = list(data.get("buffer") or [])
+
+    from bot.database import get_teacher_photos
+    if cur_state == TeacherProfileAlbumStates.waiting_add_photos.state:
+        if not buf:
+            await callback.answer("还没有收到照片", show_alert=True)
+            return
+        existing = await get_teacher_photos(target)
+        new_album = (existing + buf)[:10]
+        await set_teacher_photos(target, new_album)
+        await callback.answer(f"已追加 {len(buf)} 张")
+    elif cur_state == TeacherProfileAlbumStates.waiting_replace_photos.state:
+        if not buf:
+            await callback.answer("至少需要 1 张照片才能替换", show_alert=True)
+            return
+        await set_teacher_photos(target, buf)
+        await callback.answer(f"已替换为 {len(buf)} 张")
+    else:
+        await callback.answer()
+        return
+
+    await _show_album_menu(callback.message, state, target, via_edit=True)
+
+
+@router.callback_query(F.data.startswith("tprofile:album_remove:"))
+@admin_required
+async def cb_album_remove(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.database import get_teacher_photos, get_teacher_full_profile
+    photos = await get_teacher_photos(target)
+    if not photos:
+        await callback.answer("当前相册为空", show_alert=True)
+        return
+    profile = await get_teacher_full_profile(target)
+    name = profile["display_name"] if profile else str(target)
+    await state.set_state(TeacherProfileAlbumStates.waiting_remove_index)
+    await state.set_data({"target_user_id": target})
+    await callback.message.edit_text(
+        f"❌ 删除 {name} 的照片\n\n当前共 {len(photos)} 张，点击下方数字选择要删除的照片（1-{len(photos)}）。",
+        reply_markup=teacher_profile_album_remove_kb(target, len(photos)),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:album_remove_idx:"))
+@admin_required
+async def cb_album_remove_idx(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        target = int(parts[2])
+        idx = int(parts[3])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.database import remove_teacher_photo
+    ok = await remove_teacher_photo(target, idx)
+    if ok:
+        await callback.answer(f"已删除第 {idx} 张")
+    else:
+        await callback.answer("删除失败（index 越界或操作错误）", show_alert=True)
+    await _show_album_menu(callback.message, state, target, via_edit=True)
+
+
+# ============ /cancel 文本退出（编辑 / 相册 FSM）============
+
+@router.message(F.text == "/cancel", TeacherProfileEditStates())
+@router.message(F.text == "/cancel", TeacherProfileAlbumStates())
+@admin_required
+async def cmd_cancel_in_edit_album(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ 已取消。", reply_markup=teacher_profile_menu_kb())
 
 
 # ============ 内部转移辅助 ============
