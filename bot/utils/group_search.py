@@ -176,9 +176,12 @@ def decode_query_from_deep_link(encoded: str) -> Optional[str]:
 
 
 def group_result_short_status(t: dict) -> str:
-    """从一行老师 dict 派生群组结果列表用的短状态
+    """从一行老师 dict 派生群组结果列表用的短状态（四态）
 
-    与 user_filter._short_status 同语义；放在这里方便 keyword.py 复用。
+    - unavailable → 今日已取消
+    - full → 今日已满
+    - 已签到 → 今日可约
+    - 未签到 → 今日暂未开课
     """
     status = t.get("daily_status")
     if status == "unavailable":
@@ -186,16 +189,6 @@ def group_result_short_status(t: dict) -> str:
     if status == "full":
         return "今日已满"
     if bool(t.get("signed_in_today")):
-        avt = (t.get("daily_available_time") or "").strip()
-        note = (t.get("daily_note") or "").strip()
-        if avt == "全天":
-            return "全天可约"
-        if avt == "下午":
-            return "下午可约"
-        if avt == "晚上":
-            return "晚上可约"
-        if avt == "自定义" and note:
-            return note
         return "今日可约"
     return "今日暂未开课"
 

@@ -19,34 +19,15 @@ def teacher_main_menu_kb() -> InlineKeyboardMarkup:
     ])
 
 
-# ============ 老师今日状态（Phase 5） ============
-
-
-def time_picker_kb() -> InlineKeyboardMarkup:
-    """可约时间段选择器（签到后 + 状态菜单"设置可约时间"通用）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌞 全天", callback_data="teacher:time:all")],
-        [InlineKeyboardButton(text="🌤 下午", callback_data="teacher:time:afternoon")],
-        [InlineKeyboardButton(text="🌙 晚上", callback_data="teacher:time:evening")],
-        [InlineKeyboardButton(text="📝 自定义", callback_data="teacher:time:custom")],
-        [InlineKeyboardButton(text="⏭ 暂不设置", callback_data="teacher:time:skip")],
-    ])
+# ============ 老师今日状态 ============
 
 
 def teacher_status_kb() -> InlineKeyboardMarkup:
-    """老师今日状态菜单"""
+    """老师今日状态菜单（移除"设置可约时间"后剩 3 操作）"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ 设置可约时间", callback_data="teacher:status:set_time")],
         [InlineKeyboardButton(text="🈵 标记今日已满", callback_data="teacher:status:mark_full")],
         [InlineKeyboardButton(text="❌ 取消今日开课", callback_data="teacher:status:cancel")],
         [InlineKeyboardButton(text="🔙 返回老师菜单", callback_data="teacher_self:menu")],
-    ])
-
-
-def custom_time_cancel_kb() -> InlineKeyboardMarkup:
-    """自定义时间 FSM 取消按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 取消", callback_data="teacher:status")],
     ])
 
 

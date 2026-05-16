@@ -182,8 +182,7 @@ class UserSourceLookupStates(StatesGroup):
 
 
 class TeacherDailyStatusStates(StatesGroup):
-    """老师每日状态：自定义时间 / 取消原因 输入（Phase 5）"""
-    waiting_custom_time = State()       # 自定义时间段文字
+    """老师每日状态：取消原因 输入"""
     waiting_cancel_reason = State()     # 取消原因（可选）
 
 

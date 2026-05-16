@@ -5,7 +5,6 @@ from pytz import timezone
 
 from bot.config import config
 from bot.database import get_teacher, is_checked_in, checkin_teacher, get_config
-from bot.keyboards.teacher_self_kb import time_picker_kb
 
 router = Router(name="teacher_checkin")
 
@@ -59,11 +58,6 @@ async def on_checkin(message: types.Message):
             f"👤 {teacher['display_name']}\n"
             f"📅 {today_str}\n"
             f"⏰ {now.strftime('%H:%M')}"
-        )
-        # Phase 5：签到后提示设置今日可约时间
-        await message.answer(
-            "请选择今日可约时间：",
-            reply_markup=time_picker_kb(),
         )
     else:
         await message.reply("⚠️ 签到失败，请稍后重试")

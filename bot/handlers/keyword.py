@@ -284,12 +284,8 @@ async def _enrich_with_today_status(
             daily = None
         if daily:
             tt["daily_status"] = daily.get("status")
-            tt["daily_available_time"] = daily.get("available_time")
-            tt["daily_note"] = daily.get("note")
         else:
             tt["daily_status"] = None
-            tt["daily_available_time"] = None
-            tt["daily_note"] = None
         try:
             tt["fav_count"] = await count_teacher_favoriters(t["user_id"])
         except Exception:

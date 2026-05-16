@@ -41,7 +41,6 @@ from bot.keyboards.teacher_self_kb import (
     teacher_edit_cancel_kb,
     teacher_main_menu_kb,
     teacher_profile_kb,
-    time_picker_kb,
 )
 from bot.states.teacher_self_states import TeacherEditStates
 
@@ -474,11 +473,6 @@ async def cb_button_checkin(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer(
         f"✅ 签到成功 - {today_str} {now.strftime('%H:%M')}",
         show_alert=True,
-    )
-    # Phase 5：签到后提示设置今日可约时间（发新消息，不动当前老师主菜单）
-    await callback.message.answer(
-        "✅ 签到成功！请选择今日可约时间：",
-        reply_markup=time_picker_kb(),
     )
 
 

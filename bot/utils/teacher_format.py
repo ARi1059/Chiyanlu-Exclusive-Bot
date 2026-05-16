@@ -153,61 +153,35 @@ def build_teacher_fit_text(
 def derive_today_status_for_detail(
     is_signed_in_today: bool,
     daily_status_row: Optional[dict],
-) -> tuple[str, str]:
-    """私聊详情页用：返回 (today_status_text, available_time_text)
+) -> str:
+    """私聊详情页用：返回单行 today_status_text
 
-    与 Phase 7.1 一致的派生规则。daily_status_row 字段：
-        status:        available / full / unavailable / unknown / None
-        available_time: 全天 / 下午 / 晚上 / 自定义 / None
-        note:           自由文本 / None
+    daily_status_row.status: available / full / unavailable / None
+    （available_time / note 不再用于展示）
     """
     status_val = (daily_status_row or {}).get("status") if daily_status_row else None
-    avt_val = (daily_status_row or {}).get("available_time") if daily_status_row else None
-    note_val = (daily_status_row or {}).get("note") if daily_status_row else None
 
     if not is_signed_in_today and status_val != "unavailable":
-        return "今日暂未开课", "未设置"
+        return "今日暂未开课"
     if status_val == "unavailable":
-        return "❌ 今日已取消", "未设置"
+        return "❌ 今日已取消"
     if status_val == "full":
-        avt = (avt_val or "").strip()
-        return "🈵 今日已满", avt or "未设置"
-
-    # available / 已签到无 daily_status：均视为可约
-    avt = (avt_val or "").strip()
-    note_clean = (note_val or "").strip()
-    if avt == "全天":
-        avt_label = "全天"
-    elif avt == "下午":
-        avt_label = "下午"
-    elif avt == "晚上":
-        avt_label = "晚上"
-    elif avt == "自定义":
-        avt_label = note_clean if note_clean else "自定义"
-    elif not avt:
-        avt_label = "未设置"
-    else:
-        avt_label = avt
-    return "✅ 今日可约", avt_label
+        return "🈵 今日已满"
+    return "✅ 今日可约"
 
 
 def derive_today_status_for_group(
     is_signed_in_today: bool,
     daily_status_row: Optional[dict],
 ) -> str:
-    """群组卡片用：把 status + available_time 合成一行短文案
+    """群组卡片用：单行短文案，四态
 
-    示例返回值：
-        - 未签到 → "今日暂未开课"
-        - unavailable → "已取消"
-        - full → "已满"
-        - 全天 / 下午 / 晚上 → "全天可约" / "下午可约" / "晚上可约"
-        - 自定义 + note → 直接展示 note（如 "晚上8点后可约"）
-        - 已签到但无可约时间 → "今日可约"
+    - 未签到 → "今日暂未开课"
+    - unavailable → "已取消"
+    - full → "已满"
+    - 其它（available / 已签到无 daily_status）→ "今日可约"
     """
     status_val = (daily_status_row or {}).get("status") if daily_status_row else None
-    avt_val = (daily_status_row or {}).get("available_time") if daily_status_row else None
-    note_val = (daily_status_row or {}).get("note") if daily_status_row else None
 
     if not is_signed_in_today and status_val != "unavailable":
         return "今日暂未开课"
@@ -215,17 +189,6 @@ def derive_today_status_for_group(
         return "已取消"
     if status_val == "full":
         return "已满"
-
-    avt = (avt_val or "").strip()
-    note_clean = (note_val or "").strip()
-    if avt == "全天":
-        return "全天可约"
-    if avt == "下午":
-        return "下午可约"
-    if avt == "晚上":
-        return "晚上可约"
-    if avt == "自定义":
-        return note_clean if note_clean else "今日可约"
     return "今日可约"
 
 
@@ -245,20 +208,20 @@ def format_teacher_private_detail(
     tags = parse_teacher_tags(teacher)
     tags_text = " ｜ ".join(tags) if tags else "暂无标签"
 
-    today_status_text, available_time_text = derive_today_status_for_detail(
+    today_status_text = derive_today_status_for_detail(
         is_signed_in_today, daily_status_row,
     )
     hot_text = build_teacher_hot_text(teacher, today_str, fav_count)
     favorite_text = "已收藏" if is_fav else "未收藏"
     fit_text = build_teacher_fit_text(teacher, tags, short=False)
+    price_text = format_price_display(teacher.get("price")) or "未设置"
 
     lines = [
         f"👤 {teacher['display_name']}",
         "",
         f"📍 地区：{teacher.get('region') or '未设置'}",
-        f"💰 价格：{teacher.get('price') or '未设置'}",
+        f"💰 价格：{price_text}",
         f"📅 今日：{today_status_text}",
-        f"⏰ 可约时间：{available_time_text}",
         f"🔥 热度：{hot_text}",
         f"⭐ 你的状态：{favorite_text}",
         "",
@@ -295,7 +258,7 @@ def format_teacher_group_card(
     fit_text = build_teacher_fit_text(teacher, tags, short=True)
 
     region = (teacher.get("region") or "").strip() or "?"
-    price = (teacher.get("price") or "").strip() or "?"
+    price = format_price_display(teacher.get("price")) or "?"
 
     lines = [
         f"👤 {teacher.get('display_name') or '?'}",
