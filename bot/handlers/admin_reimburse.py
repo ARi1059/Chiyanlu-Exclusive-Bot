@@ -10,6 +10,7 @@ callback 命名空间：reimburse:*
 """
 from __future__ import annotations
 
+import functools
 import logging
 
 from aiogram import Router, F, types
@@ -54,7 +55,12 @@ router = Router(name="admin_reimburse")
 
 
 def _super_admin_required(func):
-    """仅超管"""
+    """仅超管
+
+    @functools.wraps 让 aiogram 看到内层 handler 真实签名，避免 dispatcher
+    等 kwargs 误注入引发 TypeError。
+    """
+    @functools.wraps(func)
     async def wrapper(event, *args, **kwargs):
         if isinstance(event, types.CallbackQuery):
             uid = event.from_user.id if event.from_user else 0
@@ -274,9 +280,11 @@ async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext)
         logger.info("通知报销用户失败 uid=%s: %s", reimb["user_id"], e)
 
     await callback.answer(f"✅ 已通过（{reimb['amount']} 元）")
-    # 推下一条
-    callback.data = "reimburse:enter"
-    await cb_reimburse_enter(callback, state)
+    # 推下一条（CallbackQuery 是 pydantic v2 frozen，不能直接赋值 data）
+    await cb_reimburse_enter(
+        callback.model_copy(update={"data": "reimburse:enter"}),
+        state,
+    )
 
 
 # ============ 驳回 ============
@@ -459,8 +467,10 @@ async def cb_reimburse_reset_ok(callback: types.CallbackQuery, state: FSMContext
     )
     await callback.answer(f"✅ 已发放 voucher #{voucher_id}", show_alert=True)
     # 回到 reimb 详情
-    callback.data = f"reimburse:item:{rid}"
-    await cb_reimburse_item(callback, state)
+    await cb_reimburse_item(
+        callback.model_copy(update={"data": f"reimburse:item:{rid}"}),
+        state,
+    )
 
 
 # ============ 报销名单（功能关闭期间静默录入） ============
@@ -589,5 +599,7 @@ async def cb_reimburse_activate(callback: types.CallbackQuery, state: FSMContext
     )
     await callback.answer(f"✅ 已激活 #{rid}（status → pending）", show_alert=True)
     # 刷新名单
-    callback.data = "reimburse:queued:0"
-    await cb_reimburse_queued(callback, state)
+    await cb_reimburse_queued(
+        callback.model_copy(update={"data": "reimburse:queued:0"}),
+        state,
+    )

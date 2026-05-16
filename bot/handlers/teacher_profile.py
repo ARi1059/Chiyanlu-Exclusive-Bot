@@ -1071,9 +1071,13 @@ async def cb_preview_show(callback: types.CallbackQuery):
 # ============ 频道发布动作（Phase 9.2）============
 
 async def _back_to_preview(callback: types.CallbackQuery, target: int):
-    """复用 cb_preview_show 的渲染逻辑回到预览页"""
-    callback.data = f"tprofile:select:preview:{target}"
-    await cb_preview_show(callback)
+    """复用 cb_preview_show 的渲染逻辑回到预览页
+
+    CallbackQuery 是 pydantic v2 frozen 模型，必须 model_copy 创建新实例。
+    """
+    await cb_preview_show(
+        callback.model_copy(update={"data": f"tprofile:select:preview:{target}"})
+    )
 
 
 @router.callback_query(F.data.startswith("tprofile:publish:"))

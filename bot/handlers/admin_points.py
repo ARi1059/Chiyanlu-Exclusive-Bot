@@ -12,6 +12,7 @@ callback 命名空间：admin:points:*
 """
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Optional
 
@@ -59,7 +60,12 @@ router = Router(name="admin_points")
 
 
 def _super_admin_required(func):
-    """仅 super_admin 可访问；普通 admin / 用户 alert 拒绝"""
+    """仅 super_admin 可访问；普通 admin / 用户 alert 拒绝
+
+    @functools.wraps 让 aiogram 看到内层 handler 真实签名，避免 dispatcher
+    等 kwargs 误注入引发 TypeError。
+    """
+    @functools.wraps(func)
     async def wrapper(event, *args, **kwargs):
         if isinstance(event, types.CallbackQuery):
             uid = event.from_user.id

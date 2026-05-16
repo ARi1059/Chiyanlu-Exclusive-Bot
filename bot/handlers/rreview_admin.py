@@ -12,6 +12,7 @@ Commit 9.4.2/9.4.3 在本文件追加：翻页 / 重看 / 驳回 / 通知。
 """
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Optional
 
@@ -74,7 +75,13 @@ router = Router(name="rreview_admin")
 # ============ 权限装饰器（仅超管）============
 
 def _super_admin_required(func):
-    """仅 super_admin 可访问；普通 admin / 用户 alert 拒绝"""
+    """仅 super_admin 可访问；普通 admin / 用户 alert 拒绝
+
+    必须 @functools.wraps 让 aiogram 通过 __wrapped__ 看到内层 handler 真实签名，
+    否则 aiogram 会按 (event, *args, **kwargs) 的包装签名注入 dispatcher / bot /
+    event_from_user 等 kwargs，内层 handler 收不下报 TypeError。
+    """
+    @functools.wraps(func)
     async def wrapper(event, *args, **kwargs):
         if isinstance(event, types.CallbackQuery):
             uid = event.from_user.id

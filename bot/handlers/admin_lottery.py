@@ -14,6 +14,7 @@ callback 命名空间：admin:lottery:*
 """
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Optional
 
@@ -75,7 +76,12 @@ router = Router(name="admin_lottery")
 
 
 def _super_admin_required(func):
-    """仅 super_admin 可访问；普通 admin / 用户 alert 拒绝"""
+    """仅 super_admin 可访问；普通 admin / 用户 alert 拒绝
+
+    @functools.wraps 必须有：aiogram 通过 __wrapped__ 看真实签名，避免
+    把 dispatcher / bot 等 kwargs 误注入到内层 handler。
+    """
+    @functools.wraps(func)
     async def wrapper(event, *args, **kwargs):
         if isinstance(event, types.CallbackQuery):
             uid = event.from_user.id
@@ -374,8 +380,11 @@ async def _do_lottery_cancel(
         )
     else:
         await callback.answer(f"✅ 已取消 #{lid}")
-    callback.data = "admin:lottery:list"
-    await cb_admin_lottery_list(callback, state)
+    # CallbackQuery 是 pydantic v2 frozen 模型，不能直接 callback.data = X
+    await cb_admin_lottery_list(
+        callback.model_copy(update={"data": "admin:lottery:list"}),
+        state,
+    )
 
 
 @router.callback_query(F.data.startswith("admin:lottery:cancel_ok:"))
@@ -495,8 +504,10 @@ async def cb_admin_lottery_publish_ok(callback: types.CallbackQuery, state: FSMC
     )
     await callback.answer(f"✅ 已发布到频道（msg_id={result['msg_id']}）")
     # 回到详情页
-    callback.data = f"admin:lottery:item:{lid}"
-    await cb_admin_lottery_item(callback, state)
+    await cb_admin_lottery_item(
+        callback.model_copy(update={"data": f"admin:lottery:item:{lid}"}),
+        state,
+    )
 
 
 # ============ 参与人员列表（Phase L.4.1）============
@@ -671,8 +682,10 @@ async def cb_admin_lottery_repost_ok(callback: types.CallbackQuery, state: FSMCo
         detail={"chat_id": result["chat_id"], "msg_id": result["msg_id"]},
     )
     await callback.answer(f"✅ 重发成功（新 msg_id={result['msg_id']}）")
-    callback.data = f"admin:lottery:item:{lid}"
-    await cb_admin_lottery_item(callback, state)
+    await cb_admin_lottery_item(
+        callback.model_copy(update={"data": f"admin:lottery:item:{lid}"}),
+        state,
+    )
 
 
 # ============ 客服链接配置（Phase L.4.1）============

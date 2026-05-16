@@ -113,9 +113,11 @@ async def cb_subreq_toggle(callback: types.CallbackQuery, state: FSMContext):
         detail={"is_active": new_val},
     )
     await callback.answer("已启用" if new_val else "已停用")
-    # 刷新详情页
-    callback.data = f"admin:subreq:item:{item_id}"
-    await cb_subreq_item(callback, state)
+    # 刷新详情页（CallbackQuery pydantic frozen，需 model_copy）
+    await cb_subreq_item(
+        callback.model_copy(update={"data": f"admin:subreq:item:{item_id}"}),
+        state,
+    )
 
 
 # ============ 删除（二次确认）============
@@ -166,8 +168,10 @@ async def cb_subreq_remove_confirm(callback: types.CallbackQuery, state: FSMCont
     else:
         await callback.answer("⚠️ 删除失败或已不存在", show_alert=True)
     # 回列表
-    callback.data = "admin:subreq"
-    await cb_subreq_list(callback, state)
+    await cb_subreq_list(
+        callback.model_copy(update={"data": "admin:subreq"}),
+        state,
+    )
 
 
 # ============ 添加（3 步 FSM） ============
