@@ -386,17 +386,22 @@ async def _do_approve_inner(
         },
     )
 
-    # 2.5 报销联动：若用户在评价时勾选了报销 + 满足条件 → 创建 pending reimbursement
+    # 2.5 报销联动：
+    #   request_reimbursement=1 (用户勾选) → status='pending'（admin 审批）
+    #   request_reimbursement=2 (功能关闭时静默录入) → status='queued'（admin 名单）
+    #   request_reimbursement=0 → 不创建
+    #   两种情况都需要满足实时积分门槛 + 老师价位 > 0
     reimb_created_id: Optional[int] = None
     reimb_amount: int = 0
+    reimb_status: str = ""
     try:
         teacher_id_for_reimb = review["teacher_id"]
-        if int(review.get("request_reimbursement") or 0) == 1:
+        req_flag = int(review.get("request_reimbursement") or 0)
+        if req_flag in (1, 2):
             teacher_obj = await get_teacher(teacher_id_for_reimb)
             reimb_amount = compute_reimbursement_amount(
                 teacher_obj.get("price") if teacher_obj else None
             )
-            # 用 new_total（含本次加分后）做门槛校验
             min_pts_raw = await get_config("reimbursement_min_points")
             try:
                 min_pts = int(min_pts_raw) if min_pts_raw else 5
@@ -404,6 +409,7 @@ async def _do_approve_inner(
                 min_pts = 5
             effective_pts = new_total if new_total is not None else 0
             if reimb_amount > 0 and effective_pts >= min_pts:
+                reimb_status = "pending" if req_flag == 1 else "queued"
                 reimb_created_id = await create_reimbursement(
                     user_id=user_id,
                     review_id=review_id,
@@ -411,17 +417,23 @@ async def _do_approve_inner(
                     amount=reimb_amount,
                     week_key=current_week_key(),
                     month_key=current_month_key(),
+                    status=reimb_status,
                 )
                 if reimb_created_id:
+                    action_label = (
+                        "reimburse_created" if reimb_status == "pending"
+                        else "reimburse_queued"
+                    )
                     await log_admin_audit(
                         admin_id=reviewer_id,
-                        action="reimburse_created",
+                        action=action_label,
                         target_type="reimbursement",
                         target_id=str(reimb_created_id),
                         detail={
                             "user_id": user_id,
                             "review_id": review_id,
                             "amount": reimb_amount,
+                            "status": reimb_status,
                         },
                     )
     except Exception as e:
@@ -454,6 +466,10 @@ async def _do_approve_inner(
     teacher = await get_teacher(teacher_id)
     teacher_name = teacher["display_name"] if teacher else None
     try:
+        # 静默 queued 不向用户提示报销（用户也没勾选/没见到选项）
+        notify_reimb_pending = (
+            reimb_created_id is not None and reimb_status == "pending"
+        )
         await notify_review_approved(
             bot, review_id,
             teacher_name=teacher_name,
@@ -461,7 +477,7 @@ async def _do_approve_inner(
             new_total=new_total,
             package_label=package_label,
             reimb_amount=reimb_amount,
-            reimb_pending=(reimb_created_id is not None),
+            reimb_pending=notify_reimb_pending,
         )
     except Exception as e:
         logger.warning("notify_review_approved 失败 review=%s: %s", review_id, e)

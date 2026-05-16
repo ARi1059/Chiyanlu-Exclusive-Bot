@@ -513,7 +513,10 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
         [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
         [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="system:lottery_contact")],
-        [InlineKeyboardButton(text="💰 报销池设置", callback_data="system:reimburse_pool")],
+        [
+            InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool"),
+            InlineKeyboardButton(text="🔘 报销功能开关", callback_data="system:reimburse_toggle"),
+        ],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 

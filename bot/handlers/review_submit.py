@@ -452,10 +452,15 @@ async def msg_summary(message: types.Message, state: FSMContext):
 async def _enter_reimbursement_step(
     msg, state: FSMContext, *, via_edit: bool = False,
 ):
-    """检查是否满足报销资格；满足则显示询问，否则透传到 _enter_confirm
+    """检查是否满足报销资格 + 功能开关状态
 
     资格：user.total_points >= reimbursement_min_points (config，默认 5)
          AND compute_reimbursement_amount(teacher.price) > 0
+
+    功能 OFF：满足资格也不显示选择步骤（静默），但在 state.data 写
+        _reimburse_silent_queue=1 标记，审核通过时仍创建 status='queued' 记录
+        （admin 在「报销名单」可查看；不进 pending 审批队列）。
+    功能 ON：满足资格 → 显示询问；不满足 → 跳过。
 
     user_id 来源（私聊）：msg.chat.id（与用户 user_id 相同；callback.message 时
     msg.from_user 是 bot，不能用）。
@@ -474,9 +479,20 @@ async def _enter_reimbursement_step(
     user_id = msg.chat.id if msg.chat else 0
     points = await get_user_total_points(int(user_id))
 
+    feature_enabled = (await get_config("reimbursement_feature_enabled")) == "1"
+
     if amount <= 0 or points < min_pts:
-        # 不满足资格：直接进确认页
+        # 不满足资格：直接进确认页（request_reimbursement=0 不创建任何记录）
         await state.update_data(request_reimbursement=0, _reimburse_amount=0)
+        await _enter_confirm(msg, state, via_edit=via_edit)
+        return
+
+    if not feature_enabled:
+        # 功能关闭：满足资格 → 静默录入（request_reimbursement=2 → status='queued'）
+        await state.update_data(
+            request_reimbursement=2,
+            _reimburse_amount=amount,
+        )
         await _enter_confirm(msg, state, via_edit=via_edit)
         return
 
@@ -549,7 +565,8 @@ async def _enter_confirm(msg, state: FSMContext, *, via_edit: bool = False):
     # 报销申请状态
     req_reimb = int(data.get("request_reimbursement") or 0)
     reimb_amount = int(data.get("_reimburse_amount") or 0)
-    if reimb_amount > 0:
+    # req=2 = 功能关闭静默录入 → 不向用户显示报销相关信息
+    if reimb_amount > 0 and req_reimb in (0, 1):
         lines.append("")
         if req_reimb == 1:
             lines.append(f"💰 报销申请：✅ 是，{reimb_amount} 元（待超管审核）")

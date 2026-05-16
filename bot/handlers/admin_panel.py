@@ -759,6 +759,37 @@ async def cb_set_reimburse_pool(callback: types.CallbackQuery, state: FSMContext
     await callback.answer()
 
 
+@router.callback_query(F.data == "system:reimburse_toggle")
+@super_admin_required
+async def cb_toggle_reimburse_feature(callback: types.CallbackQuery, state: FSMContext):
+    """[💰 报销功能开关] 切换：1↔0
+
+    关闭时：评价 FSM 不显示报销选择，但满足资格的用户在审核通过时仍被
+    静默录入名单（status='queued'），admin 可在「报销名单」查看。
+    打开后：admin 可激活历史 queued 条目为 pending。
+    """
+    cur = (await get_config("reimbursement_feature_enabled")) or "0"
+    new_val = "0" if cur == "1" else "1"
+    await set_config("reimbursement_feature_enabled", new_val)
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reimburse_toggle",
+        target_type="config",
+        target_id="reimbursement_feature_enabled",
+        detail={"old": cur, "new": new_val},
+    )
+    label = "✅ 已启用" if new_val == "1" else "⛔ 已关闭"
+    await callback.answer(f"报销功能：{label}", show_alert=True)
+    # 刷新系统菜单
+    from bot.keyboards.admin_kb import system_menu_kb
+    try:
+        await callback.message.edit_text(
+            "⚙️ 系统设置", reply_markup=system_menu_kb(),
+        )
+    except Exception:
+        pass
+
+
 @router.message(SystemSettingStates.waiting_value)
 @admin_required
 async def on_system_setting_value(message: types.Message, state: FSMContext):
@@ -891,6 +922,9 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "reimburse_reset": "重置周报销配额",
     "reimburse_pool_set": "设置报销池",
     "reimburse_created": "自动创建报销申请",
+    "reimburse_toggle": "切换报销功能开关",
+    "reimburse_queued": "静默录入报销名单",
+    "reimburse_activate": "激活报销名单条目",
 }
 
 

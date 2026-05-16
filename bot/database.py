@@ -324,7 +324,7 @@ async def init_db():
                 reject_reason TEXT,
                 notified_at   TEXT,
                 FOREIGN KEY (review_id) REFERENCES teacher_reviews(id),
-                CHECK (status IN ('pending','approved','rejected','cancelled'))
+                CHECK (status IN ('pending','approved','rejected','cancelled','queued'))
             );
 
             CREATE INDEX IF NOT EXISTS idx_reimb_user_week
@@ -419,6 +419,8 @@ async def init_db():
         await _migrate_lotteries_entry_cost(db)
         # 报销子系统：teacher_reviews 表新增 request_reimbursement
         await _migrate_reviews_request_reimbursement(db)
+        # 报销子系统：reimbursements.status CHECK 加 'queued'（功能关闭时静默录入）
+        await _migrate_reimbursements_queued_status(db)
 
         await db.commit()
     finally:
@@ -546,6 +548,62 @@ async def _migrate_reviews_request_reimbursement(db: aiosqlite.Connection) -> No
         )
     except Exception as e:
         logger.warning("request_reimbursement 字段迁移失败（不阻断启动）: %s", e)
+
+
+async def _migrate_reimbursements_queued_status(db: aiosqlite.Connection) -> None:
+    """扩展 reimbursements.status CHECK 接受 'queued'（功能关闭时静默录入名单）
+
+    SQLite 不支持 ALTER CHECK；通过 sqlite_master 检测是否已含 'queued'，
+    否则重建表（保留数据 + 索引）。幂等可重入。
+    """
+    try:
+        cur = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='reimbursements'"
+        )
+        row = await cur.fetchone()
+        if not row:
+            return  # 表不存在（首次 init 已含新 CHECK）
+        sql_text = (row["sql"] or "")
+        if "'queued'" in sql_text or "\"queued\"" in sql_text:
+            return  # 已含
+        # 重建表：CREATE NEW → COPY → DROP OLD → RENAME
+        await db.executescript("""
+            CREATE TABLE reimbursements_new (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL,
+                review_id     INTEGER NOT NULL UNIQUE,
+                teacher_id    INTEGER NOT NULL,
+                amount        INTEGER NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                week_key      TEXT NOT NULL,
+                month_key     TEXT NOT NULL,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                decided_at    TEXT,
+                decided_by    INTEGER,
+                reject_reason TEXT,
+                notified_at   TEXT,
+                FOREIGN KEY (review_id) REFERENCES teacher_reviews(id),
+                CHECK (status IN ('pending','approved','rejected','cancelled','queued'))
+            );
+            INSERT INTO reimbursements_new
+                (id, user_id, review_id, teacher_id, amount, status,
+                 week_key, month_key, created_at, decided_at, decided_by,
+                 reject_reason, notified_at)
+            SELECT id, user_id, review_id, teacher_id, amount, status,
+                   week_key, month_key, created_at, decided_at, decided_by,
+                   reject_reason, notified_at FROM reimbursements;
+            DROP TABLE reimbursements;
+            ALTER TABLE reimbursements_new RENAME TO reimbursements;
+            CREATE INDEX IF NOT EXISTS idx_reimb_user_week
+                ON reimbursements(user_id, week_key);
+            CREATE INDEX IF NOT EXISTS idx_reimb_status
+                ON reimbursements(status);
+            CREATE INDEX IF NOT EXISTS idx_reimb_month
+                ON reimbursements(month_key);
+        """)
+        logger.info("reimbursements 表已扩展 CHECK 接受 'queued'")
+    except Exception as e:
+        logger.warning("reimbursements queued 状态迁移失败（不阻断启动）: %s", e)
 
 
 async def _migrate_teacher_profile_columns(db: aiosqlite.Connection) -> None:
@@ -5467,23 +5525,75 @@ async def create_reimbursement(
     amount: int,
     week_key: str,
     month_key: str,
+    status: str = "pending",
 ) -> Optional[int]:
-    """创建 pending 报销记录；UNIQUE(review_id) 冲突返 None"""
+    """创建报销记录；UNIQUE(review_id) 冲突返 None
+
+    status：默认 'pending'（admin 审核队列可见）。功能关闭时传 'queued'
+    （admin 名单可见，不进 pending 队列）。
+    """
+    if status not in ("pending", "queued"):
+        logger.warning("create_reimbursement status 非法: %s", status)
+        return None
     db = await get_db()
     try:
         try:
             cur = await db.execute(
                 """INSERT INTO reimbursements
                 (user_id, review_id, teacher_id, amount, status, week_key, month_key)
-                VALUES (?, ?, ?, ?, 'pending', ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (int(user_id), int(review_id), int(teacher_id),
-                 int(amount), week_key, month_key),
+                 int(amount), status, week_key, month_key),
             )
         except Exception as e:
             logger.warning("create_reimbursement 失败: %s", e)
             return None
         await db.commit()
         return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def count_queued_reimbursements() -> int:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM reimbursements WHERE status = 'queued'"
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def list_queued_reimbursements_paged(
+    limit: int = 20, offset: int = 0,
+) -> list[dict]:
+    """admin 查看「报销名单」分页（功能关闭期间静默录入的）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM reimbursements WHERE status = 'queued' "
+            "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
+            (int(limit), int(offset)),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def activate_queued_reimbursement(reimb_id: int) -> bool:
+    """把 queued → pending（admin 在「报销名单」点激活时调用）"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE reimbursements SET status = 'pending' "
+            "WHERE id = ? AND status = 'queued'",
+            (int(reimb_id),),
+        )
+        await db.commit()
+        return db.total_changes > 0
     finally:
         await db.close()
 
