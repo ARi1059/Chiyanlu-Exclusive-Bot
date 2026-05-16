@@ -22,7 +22,9 @@ from bot.config import config
 from bot.database import (
     add_point_transaction,
     count_user_point_transactions,
+    count_users_with_points,
     find_user_by_username,
+    get_top_points_users,
     get_user,
     get_user_points_summary,
     get_user_total_points,
@@ -31,6 +33,7 @@ from bot.database import (
     log_admin_audit,
     POINT_GRANT_REASON_OPTIONS,
     POINT_PACKAGE_OPTIONS,
+    sum_total_points_earned,
 )
 from bot.keyboards.admin_kb import (
     admin_points_back_kb,
@@ -554,3 +557,47 @@ async def cb_grant_confirm(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=admin_points_back_kb(),
     )
     await callback.answer(f"完成（{int(delta):+d}）")
+
+
+# ============ 积分总览 TOP 10 ============
+
+@router.callback_query(F.data == "admin:points:overview")
+@_super_admin_required
+async def cb_admin_points_overview(callback: types.CallbackQuery, state: FSMContext):
+    """[📊 积分总览]：总用户数 / 总加分 / TOP 10（spec §3.2）"""
+    await state.clear()
+    total_users = await count_users_with_points()
+    total_earned = await sum_total_points_earned()
+    top_users = await get_top_points_users(limit=10)
+
+    lines = [
+        "📊 积分总览",
+        "",
+        f"💼 总用户数（持币）：{total_users}",
+        f"💰 总加分（累计）：{total_earned} 分",
+        "",
+        f"🏆 TOP {len(top_users)} 用户：" if top_users else "🏆 TOP 用户：（暂无）",
+    ]
+    if top_users:
+        for i, u in enumerate(top_users, start=1):
+            uid = int(u["user_id"])
+            name = (u.get("first_name") or "").strip()
+            username = (u.get("username") or "").strip()
+            pts = int(u.get("total_points") or 0)
+            tag_parts = []
+            if name:
+                tag_parts.append(name)
+            if username:
+                tag_parts.append(f"@{username}")
+            tag_parts.append(f"uid {uid}")
+            tag = " · ".join(tag_parts)
+            lines.append(f"{i}. {tag}    {pts} 分")
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…(截断)"
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_points_back_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_points_back_kb())
+    await callback.answer()
