@@ -1,7 +1,7 @@
 # 报销子系统实施记录（积分换报销）
 
 > 状态：**✅ 已完成**（2026-05-17）
-> Commit：DB 基建 / 评价 FSM 联动 / 用户报销页 + E2E
+> Commit：DB 基建 / 评价 FSM 联动 / 用户报销页 / 功能开关 + 名单（queued）
 > 关联：[PHASE-P.1-IMPL.md](./PHASE-P.1-IMPL.md)（积分系统）
 
 ---
@@ -11,12 +11,17 @@
 提交评价的成员若满足积分门槛（≥5），可在评价提交时勾选申请按老师价档报销
 （100/150/200 元）。admin 人工审核报销；周限 1 次（admin 可单独重置）；
 可配置月度报销池总预算。
+**报销不扣积分**（与抽奖扣分体系独立）；功能可整体开关，关闭时满足资格的
+成员仍被静默录入「报销名单」（status='queued'），admin 可在开关重启后批量
+激活为 pending。
 
 **用户决策（已采纳）：**
 1. 申请入口：评价提交 FSM 内（满足条件的成员被询问"是否申请本次报销"）
 2. 审批模式：admin 人工审核（pending → approved/rejected）
 3. 价格源：绑定该评价的老师 `teacher.price`（一个评价仅可报销 1 次，UNIQUE review_id）
 4. 频率：周自动重置 + admin 可单独重置某用户当周配额（reset 当作一次性 voucher）
+5. 功能开关默认 OFF，关闭时静默录入名单（queued 状态）
+6. 报销不扣积分；抽奖扣分导致积分 < 5 → 自动失去本次资格（实时校验）
 
 **金额规则**（按 displayed price = `raw_digits // 100`）：
 - displayed ≤ 8P → 100 元
@@ -42,7 +47,7 @@
 | review_id | INTEGER UNIQUE | 绑定的评价（一评价一报销） |
 | teacher_id | INTEGER | 评价的老师 |
 | amount | INTEGER | 金额（元） |
-| status | TEXT | pending / approved / rejected / cancelled |
+| status | TEXT | pending / approved / rejected / cancelled / **queued** |
 | week_key | TEXT | 'YYYY-Www' ISO 周（查重 + 重置） |
 | month_key | TEXT | 'YYYY-MM'（池统计） |
 | created_at | TEXT | |
@@ -203,32 +208,113 @@ callback：`user:reimburse` / `user:reimburse:list[:page]`（[user_reimburse.py]
 | reimburse_reject | 驳回报销 |
 | reimburse_reset | 重置周报销配额（发放 voucher） |
 | reimburse_pool_set | 设置报销池 |
+| reimburse_toggle | 切换报销功能开关 |
+| reimburse_queued | 静默录入报销名单（功能关闭时审核通过的合格者） |
+| reimburse_activate | 激活报销名单条目（queued → pending） |
 
 ---
 
-## 5. Sanity 覆盖
+## 5. 报销功能开关 + 静默录入（queued）
 
-`/tmp/sanity_reimburse_v1.py`（14 项 ALL PASS）：DB 基建 + 工具函数 + CRUD
+config `reimbursement_feature_enabled`：默认未设置 = OFF；admin 在系统设置 →
+[🔘 报销功能开关] 切换。
 
-`/tmp/sanity_reimburse_v2.py`（9 项 ALL PASS）：评价 FSM + 审核联动
+`request_reimbursement` 字段三值语义（teacher_reviews）：
 
-`/tmp/sanity_reimburse_v3.py`（10 项 ALL PASS）：用户页 + 端到端
-- 完整链路：申请 → 评价审核 → reimbursement pending → admin 通过 → user 查到 approved
-- 周限：第 2 次 block / admin 重置后可继续
-- 月度池超额检测
-- 驳回流程
+| 值 | 含义 | 触发条件 | 审核通过创建的 status |
+|---|---|---|---|
+| 0 | 用户明确不申请 / 不满足资格 / 旧数据 | feature ON + 用户选 No；或不满足；或老数据 | 不创建 |
+| 1 | 用户明确申请 | feature ON + 用户选 Yes | `pending` |
+| 2 | 静默录入（用户无感知） | feature OFF + 满足资格 | `queued` |
+
+### 5.1 状态流转图
+
+```
+评价提交 FSM ─┬─ feature ON + 满足资格 ─→ 显示选择 ─┬─ Yes → req=1
+              │                                      └─ No  → req=0
+              ├─ feature OFF + 满足资格 ─→ 不显示步骤，静默 req=2
+              └─ 不满足资格 ─→ 不显示步骤，req=0
+
+审核通过 ─┬─ req=1 → create_reimbursement(status='pending') → 进 [💰 报销审核] 队列
+          ├─ req=2 → create_reimbursement(status='queued')  → 进 [📋 报销名单]
+          └─ req=0 → 不创建
+
+admin [📋 报销名单] → 选条目 [✅ 激活] → queued 改 pending → 进 [💰 报销审核] 队列
+```
+
+### 5.2 已批准 / 月池 / 周配额计数
+
+`queued` 状态**不计入**：
+- `count_pending_reimbursements`（主菜单 [💰 报销审核] 角标）
+- `sum_approved_reimbursements_in_month`（月度池）
+- `count_approved_reimbursements_in_week`（周配额）
+
+仅 `count_queued_reimbursements` 单独计数，驱动主菜单 [📋 报销名单 (N)] 显示。
+
+### 5.3 admin 「报销名单」 UI
+
+callback `reimburse:queued:<page>`（[admin_reimburse.py:cb_reimburse_queued](../bot/handlers/admin_reimburse.py)）：
+
+```
+📋 报销名单（功能关闭期间录入）
+共 12 笔 · 第 1/2 页
+━━━━━━━━━━━━━━━
+1. #5 user_a (@username)
+    👩‍🏫 老师 X  💰 200 元  2026-05-17 10:30
+2. #4 user_b
+    👩‍🏫 老师 Y  💰 150 元  2026-05-17 09:15
+...
+━━━━━━━━━━━━━━━
+激活后状态 queued → pending，进入 [💰 报销审核] 队列。
+
+[✅ 激活 #5]  [✅ 激活 #4]  ...
+[⬅️ 上一页]  [📄 1/2]  [➡️ 下一页]
+[🔙 返回主菜单]
+```
+
+激活后该条目转 pending，admin 即可在 [💰 报销审核] 走常规通过/驳回。
+
+### 5.4 用户「我的报销」对 queued 的显示
+
+`user_reimburse._STATUS_LABEL['queued']` = "📋 已录入名单（待启用）"。
+用户提交评价时如功能关闭，FSM 不显示报销选择（用户无感），但审核通过后，
+用户在 [🧾 我的报销] 可以看到一条「已录入名单（待启用）」记录，知道 admin
+开启功能后会进入审核。
 
 ---
 
-## 6. 兼容性
+## 6. Sanity 覆盖
+
+| 脚本 | 项数 | 覆盖 |
+|---|---|---|
+| `/tmp/sanity_reimburse_v1.py` | 14 | DB 基建 + 工具函数 + CRUD |
+| `/tmp/sanity_reimburse_v2.py` | 9 | 评价 FSM + 审核联动 |
+| `/tmp/sanity_reimburse_v3.py` | 10 | 用户页 + 端到端（含周限/月池/驳回） |
+| `/tmp/sanity_reimburse_v4.py` | 11 | queued 状态 + DB 迁移 + feature flag |
+| `/tmp/sanity_reimburse_v5.py` | 10 | admin 名单 UI + 激活 + queued 计数分离 |
+
+---
+
+## 7. 兼容性
 
 - 老 review（无 `request_reimbursement` 字段）默认 0 → 审核通过不会创建 reimbursement
 - 老师 price 字段无法解析 / 空 → `compute_reimbursement_amount` 返 0 → 不显示步骤
 - `notify_review_approved` 旧调用方式（不传 reimb_*）默认 `reimb_pending=False`，文案与旧行为一致
+- 老 reimbursements 表 CHECK 不含 `'queued'` → `_migrate_reimbursements_queued_status`
+  重建表保留所有数据；幂等可重入
+- feature 切换不会回填历史 queued（必须 admin 手动激活）
+
+### 三项确认对照（2026-05-17）
+
+1. **报销不扣积分** ✅ — `cb_reimburse_approve` 仅改 status，无 `add_point_transaction`
+2. **功能开关 + 关闭时静默录入名单** ✅ — `reimbursement_feature_enabled` config +
+   status='queued' + admin [📋 报销名单] 入口（仅 queued > 0 时显示）
+3. **抽奖扣分 < 5 分 → 失去资格** ✅ — FSM 提交时 `points` 实时取，审核通过时
+   `effective_pts = new_total` 实时校验
 
 ---
 
-## 7. Out of scope
+## 8. Out of scope
 
 - ❌ 实际打款流程（bot 仅记录意图，admin 线下/客服联系用户支付）
 - ❌ 已批准的报销撤回 / 退款（终态不变）
@@ -236,3 +322,5 @@ callback：`user:reimburse` / `user:reimburse:list[:page]`（[user_reimburse.py]
 - ❌ 用户主动取消申请（pending 状态不允许用户改）
 - ❌ 月度池接近用完时的自动告警（仅在 admin approve 时检查）
 - ❌ 历史评价补申请（不支持，UNIQUE review_id）
+- ❌ feature 打开时自动激活所有历史 queued（必须手动激活，避免一次性涌入大量
+  pending 让 admin 难以处理）

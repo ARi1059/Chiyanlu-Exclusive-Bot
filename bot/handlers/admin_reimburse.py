@@ -17,10 +17,12 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.database import (
+    activate_queued_reimbursement,
     approve_reimbursement,
     consume_reimbursement_reset,
     count_approved_reimbursements_in_week,
     count_pending_reimbursements,
+    count_queued_reimbursements,
     get_config,
     get_reimbursement,
     get_teacher,
@@ -30,6 +32,7 @@ from bot.database import (
     grant_reimbursement_reset,
     is_super_admin,
     list_pending_reimbursements,
+    list_queued_reimbursements_paged,
     log_admin_audit,
     reject_reimbursement,
     sum_approved_reimbursements_in_month,
@@ -38,6 +41,8 @@ from bot.keyboards.admin_kb import (
     main_menu_kb,
     reimburse_action_kb,
     reimburse_empty_kb,
+    reimburse_queued_item_kb,
+    reimburse_queued_pagination_kb,
     reimburse_reject_cancel_kb,
     reimburse_reset_confirm_kb,
 )
@@ -456,3 +461,133 @@ async def cb_reimburse_reset_ok(callback: types.CallbackQuery, state: FSMContext
     # 回到 reimb 详情
     callback.data = f"reimburse:item:{rid}"
     await cb_reimburse_item(callback, state)
+
+
+# ============ 报销名单（功能关闭期间静默录入） ============
+
+_QUEUED_PAGE_SIZE = 10
+
+
+@router.callback_query(F.data.startswith("reimburse:queued:"))
+@_super_admin_required
+async def cb_reimburse_queued(callback: types.CallbackQuery, state: FSMContext):
+    """[📋 报销名单] 列表分页
+
+    每条显示：reimb #id / user / teacher / amount / 提交时间 + [✅ 激活] 按钮
+    激活后状态 queued → pending，admin 可在 [💰 报销审核] 队列处理。
+    """
+    await state.clear()
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        page = max(0, int(parts[2]))
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+
+    total = await count_queued_reimbursements()
+    if total == 0:
+        text = "📋 报销名单（功能关闭期间录入）\n\n（暂无）"
+        try:
+            await callback.message.edit_text(
+                text,
+                reply_markup=reimburse_queued_pagination_kb(0, 1),
+            )
+        except Exception:
+            await callback.message.answer(
+                text,
+                reply_markup=reimburse_queued_pagination_kb(0, 1),
+            )
+        await callback.answer()
+        return
+
+    total_pages = max(1, (total + _QUEUED_PAGE_SIZE - 1) // _QUEUED_PAGE_SIZE)
+    if page >= total_pages:
+        page = total_pages - 1
+    offset = page * _QUEUED_PAGE_SIZE
+    rows = await list_queued_reimbursements_paged(_QUEUED_PAGE_SIZE, offset)
+
+    lines = [
+        f"📋 报销名单（功能关闭期间录入）",
+        f"共 {total} 笔 · 第 {page + 1}/{total_pages} 页",
+        "━━━━━━━━━━━━━━━",
+    ]
+    # 每条用文字展示 + 一个激活按钮在 inline_keyboard 里
+    extra_buttons: list[list] = []
+    from aiogram.types import InlineKeyboardButton
+    for idx, r in enumerate(rows, start=offset + 1):
+        teacher_name = "?"
+        if r.get("teacher_id"):
+            t = await get_teacher(r["teacher_id"])
+            teacher_name = t["display_name"] if t else f"#{r['teacher_id']}"
+        user = await get_user(r["user_id"]) if r.get("user_id") else None
+        user_label = (user.get("first_name") if user else None) or f"uid {r['user_id']}"
+        uname = user.get("username") if user else None
+        user_disp = user_label + (f" (@{uname})" if uname else "")
+        lines.append(
+            f"{idx}. #{r['id']} {user_disp}"
+        )
+        lines.append(
+            f"    👩‍🏫 {teacher_name}  💰 {r['amount']} 元  {r.get('created_at', '')}"
+        )
+        extra_buttons.append([
+            InlineKeyboardButton(
+                text=f"✅ 激活 #{r['id']}",
+                callback_data=f"reimburse:activate:{r['id']}",
+            ),
+        ])
+    lines.append("━━━━━━━━━━━━━━━")
+    lines.append(
+        "激活后状态 queued → pending，进入 [💰 报销审核] 队列。"
+    )
+    text = "\n".join(lines)
+
+    # 组合：每条激活按钮在前，分页 nav 在后
+    base_kb = reimburse_queued_pagination_kb(page, total_pages)
+    kb_rows = extra_buttons + list(base_kb.inline_keyboard)
+    from aiogram.types import InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("reimburse:activate:"))
+@_super_admin_required
+async def cb_reimburse_activate(callback: types.CallbackQuery, state: FSMContext):
+    """激活 queued → pending"""
+    try:
+        rid = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    reimb = await get_reimbursement(rid)
+    if not reimb:
+        await callback.answer("报销不存在", show_alert=True)
+        return
+    if reimb["status"] != "queued":
+        await callback.answer(f"当前状态 {reimb['status']}，无法激活", show_alert=True)
+        return
+    ok = await activate_queued_reimbursement(rid)
+    if not ok:
+        await callback.answer("⚠️ 激活失败", show_alert=True)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reimburse_activate",
+        target_type="reimbursement",
+        target_id=str(rid),
+        detail={
+            "user_id": reimb["user_id"],
+            "amount": reimb["amount"],
+        },
+    )
+    await callback.answer(f"✅ 已激活 #{rid}（status → pending）", show_alert=True)
+    # 刷新名单
+    callback.data = "reimburse:queued:0"
+    await cb_reimburse_queued(callback, state)

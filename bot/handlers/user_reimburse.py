@@ -40,6 +40,7 @@ _STATUS_LABEL = {
     "approved":  "✅ 已通过",
     "rejected":  "❌ 已驳回",
     "cancelled": "🚫 已取消",
+    "queued":    "📋 已录入名单（待启用）",
 }
 
 

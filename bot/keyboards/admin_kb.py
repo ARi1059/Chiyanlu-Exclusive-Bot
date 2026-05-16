@@ -8,6 +8,7 @@ def main_menu_kb(
     *,
     pending_review_count: int = 0,
     pending_reimburse_count: int = 0,
+    queued_reimburse_count: int = 0,
     is_super: bool = False,
 ) -> InlineKeyboardMarkup:
     """管理员主菜单面板
@@ -16,6 +17,7 @@ def main_menu_kb(
         pending_count: 老师改资料待审核数量
         pending_review_count: 用户评价待审核数量（Phase 9.4）
         pending_reimburse_count: 待审核报销数量
+        queued_reimburse_count: 报销功能关闭期间静默录入名单的数量
         is_super: 是否超管；仅超管可见 [📝 报告审核 (M)] 行
     """
     review_label = (
@@ -52,6 +54,14 @@ def main_menu_kb(
             InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery"),
             InlineKeyboardButton(text=reimburse_label, callback_data="reimburse:enter"),
         ])
+        # 仅当存在静默录入条目时显示，避免冗余按钮
+        if queued_reimburse_count > 0:
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"📋 报销名单 ({queued_reimburse_count})",
+                    callback_data="reimburse:queued:0",
+                ),
+            ])
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
         [
@@ -1254,4 +1264,41 @@ def reimburse_pool_cancel_kb() -> InlineKeyboardMarkup:
     """报销池设置 FSM 取消"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 取消", callback_data="menu:system")],
+    ])
+
+
+def reimburse_queued_pagination_kb(
+    page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    """报销名单（queued）分页"""
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页",
+            callback_data=f"reimburse:queued:{page - 1}",
+        ))
+    nav.append(InlineKeyboardButton(
+        text=f"📄 {page + 1}/{max(1, total_pages)}",
+        callback_data="noop:reimburse_queued",
+    ))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="➡️ 下一页",
+            callback_data=f"reimburse:queued:{page + 1}",
+        ))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        nav,
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+    ])
+
+
+def reimburse_queued_item_kb(reimb_id: int) -> InlineKeyboardMarkup:
+    """名单单条详情 + 激活按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ 激活为待审核",
+                                 callback_data=f"reimburse:activate:{reimb_id}"),
+            InlineKeyboardButton(text="🔙 返回名单",
+                                 callback_data="reimburse:queued:0"),
+        ],
     ])

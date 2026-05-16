@@ -72,19 +72,26 @@ async def _build_main_menu_kb(user_id: Optional[int] = None):
     is_super = False
     rcount = 0
     reimb_count = 0
+    queued_count = 0
     if user_id is not None:
         if user_id == config.super_admin_id or await is_super_admin(user_id):
             is_super = True
             rcount = await count_pending_reviews()
             try:
-                from bot.database import count_pending_reimbursements
+                from bot.database import (
+                    count_pending_reimbursements,
+                    count_queued_reimbursements,
+                )
                 reimb_count = await count_pending_reimbursements()
+                queued_count = await count_queued_reimbursements()
             except Exception:
                 reimb_count = 0
+                queued_count = 0
     return main_menu_kb(
         pending_count=n,
         pending_review_count=rcount,
         pending_reimburse_count=reimb_count,
+        queued_reimburse_count=queued_count,
         is_super=is_super,
     )
 
@@ -924,7 +931,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "reimburse_created": "自动创建报销申请",
     "reimburse_toggle": "切换报销功能开关",
     "reimburse_queued": "静默录入报销名单",
-    "reimburse_activate": "激活报销名单条目",
+    "reimburse_activate": "激活报销名单条目（queued → pending）",
 }
 
 
