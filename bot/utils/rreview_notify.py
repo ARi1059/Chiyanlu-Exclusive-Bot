@@ -53,8 +53,17 @@ async def notify_review_approved(
     review_id: int,
     *,
     teacher_name: Optional[str] = None,
+    delta: Optional[int] = None,
+    new_total: Optional[int] = None,
+    package_label: Optional[str] = None,
 ) -> None:
-    """通知评价者：审核通过"""
+    """通知评价者：审核通过（Phase P.1：可选附积分增量 + 当前总积分）
+
+    Args:
+        delta: 本次获得积分（None 表示不附积分信息，向后兼容 9.4 调用）
+        new_total: 当前总积分（与 delta 配对使用）
+        package_label: 套餐标签（如 "包夜"）；若提供则展示"本次获得：+5 积分（包夜）"
+    """
     review = await get_teacher_review(review_id)
     if not review:
         return
@@ -62,13 +71,25 @@ async def notify_review_approved(
     if name is None:
         teacher = await get_teacher(review["teacher_id"])
         name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
-    text = (
-        f"✅ 你的评价已通过审核。\n\n"
-        f"老师：{name}\n"
+
+    lines = [
+        "✅ 你的评价已通过审核。",
+        "",
+        f"老师：{name}",
         f"评级：{_rating_str(review.get('rating'))} · "
-        f"🎯 综合 {review.get('overall_score', '?')}\n\n"
-        "感谢你的反馈！"
-    )
+        f"🎯 综合 {review.get('overall_score', '?')}",
+    ]
+    if delta is not None:
+        lines.append("")
+        if package_label:
+            lines.append(f"本次获得：+{delta} 积分（{package_label}）")
+        else:
+            lines.append(f"本次获得：+{delta} 积分")
+        if new_total is not None:
+            lines.append(f"当前总积分：{new_total}")
+    lines.append("")
+    lines.append("感谢你的反馈！")
+    text = "\n".join(lines)
     await _safe_send_text(bot, review["user_id"], text)
 
 

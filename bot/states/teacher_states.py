@@ -57,6 +57,14 @@ class RReviewRejectStates(StatesGroup):
     waiting_custom_reason = State()
 
 
+class RReviewApprovePointsStates(StatesGroup):
+    """Phase P.1：审核通过时填写自定义积分 FSM
+
+    state.data：{"review_id": int}
+    """
+    waiting_custom_delta = State()
+
+
 class ReviewSubmitStates(StatesGroup):
     """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
 

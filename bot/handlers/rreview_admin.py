@@ -21,23 +21,32 @@ from aiogram.types import InputMediaPhoto
 
 from bot.config import config
 from bot.database import (
+    add_point_transaction,
     approve_teacher_review,
     count_pending_reviews,
     get_teacher,
     get_teacher_review,
+    get_user_total_points,
     is_super_admin,
     list_pending_reviews,
     log_admin_audit,
+    POINT_CUSTOM_MAX,
+    POINT_CUSTOM_MIN,
+    POINT_PACKAGE_OPTIONS,
     reject_teacher_review,
     REVIEW_RATINGS,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
     rreview_action_kb,
+    rreview_approve_points_kb,
     rreview_empty_kb,
     rreview_reject_choice_kb,
 )
-from bot.states.teacher_states import RReviewRejectStates
+from bot.states.teacher_states import (
+    RReviewApprovePointsStates,
+    RReviewRejectStates,
+)
 from bot.utils.rreview_notify import (
     notify_review_approved,
     notify_review_rejected,
@@ -113,7 +122,11 @@ async def cb_rreview_show(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("rreview:approve:"))
 @_super_admin_required
 async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
-    """[✅ 通过]：DB UPDATE + audit + 提示 + 返回下一条 / 空列表"""
+    """[✅ 通过]：Phase P.1 改为先进加分子页（spec §3.1）
+
+    不再直接 commit；展示加分预设按钮（+1/+3/+5/+8/+0/自定义/取消），
+    超管选完后由 cb_rreview_approve_p / cb_rreview_approve_custom 一次性 commit。
+    """
     try:
         review_id = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
@@ -128,37 +141,261 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer(f"该评价已是 {review['status']}", show_alert=True)
         return
 
-    ok = await approve_teacher_review(review_id, callback.from_user.id)
-    if not ok:
-        await callback.answer("⚠️ 通过失败", show_alert=True)
+    teacher = await get_teacher(review["teacher_id"])
+    teacher_name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
+    current_pts = await get_user_total_points(review["user_id"])
+
+    text = (
+        f"💰 审核通过加分（评价 #{review_id}）\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"老师：{teacher_name}\n"
+        f"评价者：{_anonymize_user_id(review['user_id'])} "
+        f"(uid: {_anonymize_user_id(review['user_id'])})\n"
+        f"当前用户总积分：{current_pts}\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "请根据审核材料给该用户加分（默认 +1 P；包夜 +5；包天 +8）："
+    )
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=rreview_approve_points_kb(review_id),
+        )
+    except Exception:
+        await callback.message.answer(
+            text, reply_markup=rreview_approve_points_kb(review_id),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rreview:approve_p:"))
+@_super_admin_required
+async def cb_rreview_approve_preset(callback: types.CallbackQuery, state: FSMContext):
+    """选预设套餐 → 直接通过 + 加分"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    try:
+        review_id = int(parts[2])
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    key = parts[3]
+    pkg = next((o for o in POINT_PACKAGE_OPTIONS if o["key"] == key), None)
+    if not pkg:
+        await callback.answer("未知套餐", show_alert=True)
+        return
+    await _do_approve(
+        callback, state,
+        review_id=review_id,
+        delta=int(pkg["delta"]),
+        package_label=pkg["label"],
+    )
+
+
+@router.callback_query(F.data.startswith("rreview:approve_custom:"))
+@_super_admin_required
+async def cb_rreview_approve_custom(callback: types.CallbackQuery, state: FSMContext):
+    """[💬 自定义] → 进 FSM 等待文本输入 0-100 整数"""
+    try:
+        review_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await state.set_state(RReviewApprovePointsStates.waiting_custom_delta)
+    await state.update_data(approve_review_id=review_id)
+    await callback.message.edit_text(
+        f"💬 自定义加分（评价 #{review_id}）\n\n"
+        f"请回复一个 {POINT_CUSTOM_MIN}-{POINT_CUSTOM_MAX} 之间的整数。\n"
+        "/cancel 取消（回到审核详情页）。",
+    )
+    await callback.answer()
+
+
+@router.message(F.text == "/cancel", RReviewApprovePointsStates.waiting_custom_delta)
+@_super_admin_required
+async def cmd_cancel_custom_delta(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    review_id = data.get("approve_review_id")
+    await state.clear()
+    if not review_id:
+        await message.answer("已取消。")
+        return
+    pending = await list_pending_reviews(limit=50)
+    idx = next((i for i, r in enumerate(pending) if r["id"] == review_id), -1)
+    if idx == -1:
+        await message.answer("✅ 当前没有待审核的报告。", reply_markup=rreview_empty_kb())
+        return
+    await _cleanup_messages(message.bot, message.chat.id, state)
+    await _send_review_at_index(message.bot, message.chat.id, state, pending, idx)
+
+
+@router.message(RReviewApprovePointsStates.waiting_custom_delta, F.text)
+@_super_admin_required
+async def on_custom_delta(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text:
+        await message.reply(
+            f"❌ 请输入 {POINT_CUSTOM_MIN}-{POINT_CUSTOM_MAX} 的整数，或 /cancel 取消。"
+        )
+        return
+    try:
+        delta = int(text)
+    except ValueError:
+        await message.reply(
+            f"❌ 请输入整数（{POINT_CUSTOM_MIN}-{POINT_CUSTOM_MAX}），或 /cancel 取消。"
+        )
+        return
+    if delta < POINT_CUSTOM_MIN or delta > POINT_CUSTOM_MAX:
+        await message.reply(
+            f"❌ 范围 {POINT_CUSTOM_MIN}-{POINT_CUSTOM_MAX}，当前 {delta}。"
+        )
+        return
+    data = await state.get_data()
+    review_id = data.get("approve_review_id")
+    if not review_id:
+        await state.clear()
+        await message.reply("⚠️ 状态丢失，请重新进入审核。")
+        return
+    await state.clear()
+    # 没有 callback，用消息驱动 _do_approve
+    await _do_approve_from_message(
+        message,
+        review_id=int(review_id),
+        delta=delta,
+        package_label="自定义",
+    )
+
+
+async def _do_approve(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    *,
+    review_id: int,
+    delta: int,
+    package_label: Optional[str],
+):
+    """callback 驱动的审核通过 + 加分统一执行链"""
+    await _do_approve_inner(
+        bot=callback.bot,
+        chat_id=callback.message.chat.id,
+        reviewer_id=callback.from_user.id,
+        state=state,
+        review_id=review_id,
+        delta=delta,
+        package_label=package_label,
+        callback=callback,
+    )
+
+
+async def _do_approve_from_message(
+    message: types.Message,
+    *,
+    review_id: int,
+    delta: int,
+    package_label: Optional[str],
+):
+    """message 驱动（自定义 FSM 输入完成后）的审核通过 + 加分执行链
+
+    state 在自定义 FSM clear 时已重置；本路径无审核详情消息要清理
+    （cmd_cancel / on_custom_delta 触发时审核消息已不存在）。
+    """
+    await _do_approve_inner(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        reviewer_id=message.from_user.id,
+        state=None,
+        review_id=review_id,
+        delta=delta,
+        package_label=package_label,
+        callback=None,
+        message=message,
+    )
+
+
+async def _do_approve_inner(
+    *,
+    bot,
+    chat_id: int,
+    reviewer_id: int,
+    state: Optional[FSMContext],
+    review_id: int,
+    delta: int,
+    package_label: Optional[str],
+    callback: Optional[types.CallbackQuery] = None,
+    message: Optional[types.Message] = None,
+):
+    """审核通过 + 加分一次性执行链（spec §1.1）
+
+    顺序：
+        1. approve_teacher_review (9.4)
+        2. add_point_transaction (P.1)
+        3. recalc + edit_caption (9.5)
+        4. publish_review_comment (9.5)
+        5. notify_review_approved (P.1 文案含积分)
+        6. 清旧审核消息 + 推下一条 / 队列空
+    """
+    review = await get_teacher_review(review_id)
+    if not review:
+        await _alert(callback, "评价不存在")
+        return
+    if review["status"] != "pending":
+        await _alert(callback, f"该评价已是 {review['status']}")
         return
 
+    # 1. approve
+    ok = await approve_teacher_review(review_id, reviewer_id=reviewer_id)
+    if not ok:
+        await _alert(callback, "通过失败")
+        return
+
+    # 2. 加分（P.1）
+    user_id = review["user_id"]
+    new_total: Optional[int] = None
+    try:
+        tx_id = await add_point_transaction(
+            user_id,
+            delta=delta,
+            reason="review_approved",
+            related_id=review_id,
+            operator_id=reviewer_id,
+            note=package_label or None,
+        )
+        new_total = await get_user_total_points(user_id)
+        if tx_id is None:
+            logger.warning("add_point_transaction 返回 None review=%s delta=%s", review_id, delta)
+    except Exception as e:
+        logger.warning("add_point_transaction 失败 review=%s delta=%s: %s", review_id, delta, e)
+
+    # audit
     await log_admin_audit(
-        admin_id=callback.from_user.id,
+        admin_id=reviewer_id,
         action="rreview_approve",
         target_type="teacher_review",
         target_id=str(review_id),
-        detail={"teacher_id": review["teacher_id"], "user_id": review["user_id"]},
+        detail={
+            "teacher_id": review["teacher_id"],
+            "user_id": user_id,
+            "delta": delta,
+            "package": package_label,
+            "new_total": new_total,
+        },
     )
 
-    # Phase 9.5：通过审核时一次性触发（任一步失败仅 warning，不阻塞通知）
+    # 3-4. 9.5 链：recalc + caption + 讨论群评论
     teacher_id = review["teacher_id"]
-    # 1. 重算聚合统计
     try:
         from bot.database import recalculate_teacher_review_stats
         await recalculate_teacher_review_stats(teacher_id)
     except Exception as e:
         logger.warning("recalculate_teacher_review_stats 失败 teacher=%s: %s", teacher_id, e)
-    # 2. 同步频道档案帖 caption（force=True 绕过 60s debounce）
     try:
         from bot.utils.teacher_channel_publish import update_teacher_post_caption
-        await update_teacher_post_caption(callback.bot, teacher_id, force=True)
+        await update_teacher_post_caption(bot, teacher_id, force=True)
     except Exception as e:
         logger.warning("update_teacher_post_caption 失败 teacher=%s: %s", teacher_id, e)
-    # 3. 在讨论群发评论（reply 到锚消息；锚丢失时 fallback + 告警超管）
     try:
         from bot.utils.review_comment import publish_review_comment, CommentError
-        await publish_review_comment(callback.bot, review_id)
+        await publish_review_comment(bot, review_id)
     except CommentError as e:
         logger.warning(
             "publish_review_comment failed review=%s reason=%s: %s",
@@ -167,39 +404,60 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.warning("publish_review_comment 异常 review=%s: %s", review_id, e)
 
-    # 私聊通知评价者（容错，不阻塞）
-    teacher = await get_teacher(review["teacher_id"])
+    # 5. 通知评价者（附积分）
+    teacher = await get_teacher(teacher_id)
     teacher_name = teacher["display_name"] if teacher else None
     try:
         await notify_review_approved(
-            callback.bot, review_id, teacher_name=teacher_name,
+            bot, review_id,
+            teacher_name=teacher_name,
+            delta=delta,
+            new_total=new_total,
+            package_label=package_label,
         )
     except Exception as e:
         logger.warning("notify_review_approved 失败 review=%s: %s", review_id, e)
 
-    # 删除当前审核的 2 条消息 + 推下一条 / 空列表
-    await _cleanup_messages(callback.bot, callback.message.chat.id, state)
-    await callback.answer(f"✅ 已通过评价 #{review_id}")
+    # 6. 清旧 + 推下一条
+    if state is not None:
+        await _cleanup_messages(bot, chat_id, state)
+    if callback is not None:
+        await callback.answer(f"✅ 已通过评价 #{review_id}（+{delta} 积分）")
 
-    # 推下一条 pending（如果有）
     pending = await list_pending_reviews(limit=50)
     if not pending:
-        # 队列空 → 回主面板
-        rcount = 0
         try:
-            await callback.bot.send_message(
-                chat_id=callback.message.chat.id,
-                text="🔧 痴颜录管理面板（队列已清空）",
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ 已通过评价 #{review_id}（+{delta} 积分）\n\n"
+                     "🔧 痴颜录管理面板（队列已清空）",
                 reply_markup=main_menu_kb(
                     pending_count=0,
-                    pending_review_count=rcount,
+                    pending_review_count=0,
                     is_super=True,
                 ),
             )
         except Exception as e:
             logger.warning("发送空队列回主面板失败: %s", e)
         return
-    await _send_review_at_index(callback.bot, callback.message.chat.id, state, pending, 0)
+    if message is not None:
+        # 自定义 FSM 路径：发个 ack 文字然后推下一条
+        try:
+            await message.answer(f"✅ 已通过评价 #{review_id}（+{delta} 积分）")
+        except Exception:
+            pass
+    if state is None:
+        # 自定义 FSM 路径不传 state，本地构造一个临时空 state 让 _send_review_at_index 可用
+        # 但 _send_review_at_index 要 state.update_data 存 msg_ids；自定义路径之前的旧消息已被 cmd_cancel
+        # 清理掉。这里我们只 send 不 store 也可——下次翻页时拿不到旧 msg_ids，listener 自动跳过
+        # 简单做法：拿不到 state 就传 callback.state；自定义 FSM 调到这里 state 实际仍可用
+        return
+    await _send_review_at_index(bot, chat_id, state, pending, 0)
+
+
+async def _alert(callback: Optional[types.CallbackQuery], text: str):
+    if callback is not None:
+        await callback.answer(text, show_alert=True)
 
 
 # ============ 内部辅助 ============

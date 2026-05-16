@@ -776,3 +776,33 @@ def rreview_push_action_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 前往审核", callback_data="rreview:enter")],
     ])
+
+
+def rreview_approve_points_kb(review_id: int) -> InlineKeyboardMarkup:
+    """Phase P.1：审核通过加分子页（spec §3.1）
+
+    点 [✅ 通过] 后展示，超管根据材料选积分：
+        [+1 P / PP]   [+3 包时]
+        [+5 包夜]     [+8 包天]
+        [+0 不加分]   [💬 自定义]
+        [🔙 取消]
+
+    callback：rreview:approve_p:<rid>:<key> 其中 key ∈ {p,hour,night,day,zero}
+              rreview:approve_custom:<rid>
+              rreview:show:<rid> 取消回审核详情页
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="+1 P / PP", callback_data=f"rreview:approve_p:{review_id}:p"),
+            InlineKeyboardButton(text="+3 包时",    callback_data=f"rreview:approve_p:{review_id}:hour"),
+        ],
+        [
+            InlineKeyboardButton(text="+5 包夜",   callback_data=f"rreview:approve_p:{review_id}:night"),
+            InlineKeyboardButton(text="+8 包天",   callback_data=f"rreview:approve_p:{review_id}:day"),
+        ],
+        [
+            InlineKeyboardButton(text="+0 不加分", callback_data=f"rreview:approve_p:{review_id}:zero"),
+            InlineKeyboardButton(text="💬 自定义", callback_data=f"rreview:approve_custom:{review_id}"),
+        ],
+        [InlineKeyboardButton(text="🔙 取消通过，返回审核", callback_data=f"rreview:show:{review_id}")],
+    ])
