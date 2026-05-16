@@ -75,9 +75,49 @@ _STEP_BY_KEY: dict[str, dict] = {s["key"]: s for s in _SCORE_FLOW}
 
 # ============ 入口 ============
 
+async def start_review_flow(
+    bot,
+    chat_id: int,
+    user_id: int,
+    teacher_id: int,
+    state: FSMContext,
+    *,
+    edit_msg: Optional[types.Message] = None,
+) -> tuple[str, Optional[dict]]:
+    """[📝 写评价] 入口的核心逻辑（callback / deep link 共用）
+
+    返回 ("ok"|"not_found"|"inactive"|"rate_limited"|"need_subscribe", extra)
+        - ok：state 已设置 waiting_booking_screenshot；extra={"teacher": dict}
+        - rate_limited：extra={"reason": str}
+        - need_subscribe：extra={"missing": list[dict]}
+        - not_found / inactive：extra=None
+
+    调用方负责按返回值渲染对应文案 / 键盘。
+    edit_msg 为可选目标消息：若提供，文案直接 edit_text 替换；
+    否则调用方需自己 send_message。
+    """
+    teacher = await get_teacher(teacher_id)
+    if not teacher:
+        return "not_found", None
+    if not teacher.get("is_active"):
+        return "inactive", None
+
+    limit_msg = await _check_rate_limit(user_id, teacher_id)
+    if limit_msg:
+        return "rate_limited", {"reason": limit_msg}
+
+    ok, missing = await check_user_subscribed(bot, user_id)
+    if not ok:
+        return "need_subscribe", {"missing": missing}
+
+    await state.set_state(ReviewSubmitStates.waiting_booking_screenshot)
+    await state.set_data({"teacher_id": teacher_id})
+    return "ok", {"teacher": teacher}
+
+
 @router.callback_query(F.data.startswith("review:start:"))
 async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):
-    """[📝 写评价] 入口
+    """[📝 写评价] callback 入口（老师详情页按钮）
 
     校验顺序：teacher active → 限频 → 必关频道。
     通过后进入 Step B（上传约课截图）。
@@ -89,38 +129,33 @@ async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):
         return
     user_id = callback.from_user.id
 
-    teacher = await get_teacher(teacher_id)
-    if not teacher:
+    status, extra = await start_review_flow(
+        callback.bot, callback.message.chat.id, user_id, teacher_id, state,
+    )
+    if status == "not_found":
         await callback.answer("该老师不存在", show_alert=True)
         return
-    if not teacher.get("is_active"):
+    if status == "inactive":
         await callback.answer("该老师已停用，无法提交评价", show_alert=True)
         return
-
-    # 限频校验（spec §2.6）
-    limit_msg = await _check_rate_limit(user_id, teacher_id)
-    if limit_msg:
-        await callback.answer(limit_msg, show_alert=True)
+    if status == "rate_limited":
+        await callback.answer(extra["reason"], show_alert=True)
         return
-
-    # 必关频道校验
-    ok, missing = await check_user_subscribed(callback.bot, user_id)
-    if not ok:
+    if status == "need_subscribe":
         lines = ["⚠️ 提交评价前请先加入：\n"]
-        for it in missing:
+        for it in extra["missing"]:
             lines.append(f"📺 {it['display_name']}")
         lines.append("\n加入后回到老师详情页重新点 [📝 写评价]。")
         await callback.message.edit_text(
             "\n".join(lines),
-            reply_markup=review_subscribe_links_kb(missing),
+            reply_markup=review_subscribe_links_kb(extra["missing"]),
             disable_web_page_preview=True,
         )
         await callback.answer()
         return
 
-    # 进入 Step B
-    await state.set_state(ReviewSubmitStates.waiting_booking_screenshot)
-    await state.set_data({"teacher_id": teacher_id})
+    # status == "ok"
+    teacher = extra["teacher"]
     await callback.message.edit_text(
         f"📝 为「{teacher['display_name']}」写评价\n\n"
         "[Step B/12] 上传约课记录截图（必填）\n\n"

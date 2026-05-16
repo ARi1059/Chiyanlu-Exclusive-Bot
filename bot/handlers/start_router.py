@@ -93,6 +93,7 @@ def parse_start_args(raw: str) -> dict:
         "activate": False,
         "fav_teacher_id": None,
         "teacher_detail_id": None,
+        "review_target_id": None,
         "search_query": None,
         "search_entry": False,
         "source_type": None,
@@ -134,6 +135,15 @@ def parse_start_args(raw: str) -> dict:
     if m_td:
         try:
             result["teacher_detail_id"] = int(m_td.group(1))
+        except ValueError:
+            pass
+        return result
+
+    # Phase 9.5.4：/start write_<digits> 直达评价 FSM（讨论群评论"🤖 给XXX写报告"按钮）
+    m_wr = re.match(r"^write_(\d+)$", raw)
+    if m_wr:
+        try:
+            result["review_target_id"] = int(m_wr.group(1))
         except ValueError:
             pass
         return result
@@ -334,6 +344,7 @@ async def cmd_start_with_arg(
         extra_text=extra_text,
         quick_entry=parsed.get("quick_entry"),
         teacher_detail_id=parsed.get("teacher_detail_id"),
+        review_target_id=parsed.get("review_target_id"),
         search_entry=parsed.get("search_entry", False),
         search_query=parsed.get("search_query"),
         state=state,
@@ -408,6 +419,7 @@ async def _route_by_role(
     extra_text: str | None = None,
     quick_entry: str | None = None,
     teacher_detail_id: int | None = None,
+    review_target_id: int | None = None,
     search_entry: bool = False,
     search_query: str | None = None,
     state: FSMContext | None = None,
@@ -477,6 +489,68 @@ async def _route_by_role(
             onboarding_text = f"{extra_text}\n\n{onboarding_text}"
         await message.answer(onboarding_text, reply_markup=onboarding_kb())
         await _safe_log_user_event(user_id, "onboarding_view", None)
+        return
+
+    # Phase 9.5.4：/start write_<id> 直达评价 FSM（讨论群评论"🤖 给XXX写报告"按钮）
+    # 仅普通用户分支处理；管理员 / 老师角色已在前面 return
+    if review_target_id is not None and state is not None:
+        from bot.handlers.review_submit import start_review_flow
+        from bot.keyboards.user_kb import review_cancel_kb, review_subscribe_links_kb
+
+        await _safe_log_user_event(
+            user_id,
+            "deep_link_write_review",
+            {"teacher_id": review_target_id},
+        )
+
+        status, extra = await start_review_flow(
+            message.bot, message.chat.id, user_id, review_target_id, state,
+        )
+        if status == "not_found":
+            body = "⚠️ 该老师不存在或已被删除。"
+            if extra_text:
+                body = f"{extra_text}\n\n{body}"
+            await message.answer(body, reply_markup=user_main_menu_kb())
+            return
+        if status == "inactive":
+            body = "⚠️ 该老师已停用，无法提交评价。"
+            if extra_text:
+                body = f"{extra_text}\n\n{body}"
+            await message.answer(body, reply_markup=user_main_menu_kb())
+            return
+        if status == "rate_limited":
+            body = f"⚠️ {extra['reason']}"
+            if extra_text:
+                body = f"{extra_text}\n\n{body}"
+            await message.answer(body, reply_markup=user_main_menu_kb())
+            return
+        if status == "need_subscribe":
+            lines = ["⚠️ 提交评价前请先加入：\n"]
+            for it in extra["missing"]:
+                lines.append(f"📺 {it['display_name']}")
+            lines.append('\n加入后再次点击讨论群里的 "🤖 给XXX写报告" 按钮。')
+            body = "\n".join(lines)
+            if extra_text:
+                body = f"{extra_text}\n\n{body}"
+            await message.answer(
+                body,
+                reply_markup=review_subscribe_links_kb(extra["missing"]),
+                disable_web_page_preview=True,
+            )
+            return
+
+        # status == "ok"
+        teacher = extra["teacher"]
+        body = (
+            f"📝 为「{teacher['display_name']}」写评价\n\n"
+            "[Step B/12] 上传约课记录截图（必填）\n\n"
+            "请发送你和该老师的约课记录截图（一张图片）。\n"
+            "仅作为审核证据，不会公开展示。\n\n"
+            "任意时刻发 /cancel 中止。"
+        )
+        if extra_text:
+            body = f"{extra_text}\n\n{body}"
+        await message.answer(body, reply_markup=review_cancel_kb())
         return
 
     # Phase 8.1：/start teacher_<id> 落地页（仅普通用户分支处理；不破坏现有 deep link）
