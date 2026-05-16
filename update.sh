@@ -31,21 +31,14 @@ fi
 cd "$PROJECT_DIR"
 info "工作目录：$(pwd)"
 
-# 2. 检查工作树是否干净
-if [[ -n "$(git status --porcelain)" ]]; then
-    warn "检测到本地有未提交修改："
-    git status --short
-    read -r -p "是否暂存(stash)这些改动后继续？[y/N] " yn
-    case "$yn" in
-        [Yy]*)
-            git stash push -u -m "auto-stash before update $(date +%Y%m%d-%H%M%S)"
-            ok "已暂存本地修改（git stash list 可查看）"
-            ;;
-        *)
-            err "请先处理本地改动后再运行更新。"
-            exit 1
-            ;;
-    esac
+# 2. 检查工作树（只看已跟踪文件；未跟踪文件假设已在 .gitignore 中）
+TRACKED_DIRTY=$(git status --porcelain --untracked-files=no)
+if [[ -n "$TRACKED_DIRTY" ]]; then
+    warn "检测到已跟踪文件有未提交改动："
+    echo "$TRACKED_DIRTY"
+    warn "rebase 时会自动 autostash 暂存并在拉取后恢复。"
+    warn "如不放心，按 Ctrl+C 中止后手动 git commit / git stash。3 秒后继续..."
+    sleep 3
 fi
 
 # 3. 拉取远程并比较版本
@@ -55,13 +48,21 @@ git fetch --prune origin
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse "origin/$BRANCH")
 
-if [[ "$LOCAL" == "$REMOTE" ]]; then
-    ok "本地已是最新版本（$LOCAL），无需更新。"
+# 用 rev-list 计算远程领先的提交数（兼容"本地有未推送提交"导致 HEAD!=REMOTE 的场景）
+NEW_REMOTE_COUNT=$(git rev-list --count "$LOCAL..$REMOTE" 2>/dev/null || echo 0)
+if [[ "$NEW_REMOTE_COUNT" -eq 0 ]]; then
+    ok "远程没有新提交（当前 HEAD: ${LOCAL:0:7}），无需更新。"
     exit 0
 fi
 
+# 顺便提示本地是否有未推送提交（如 .gitignore 调整）
+LOCAL_AHEAD=$(git rev-list --count "$REMOTE..$LOCAL" 2>/dev/null || echo 0)
+if [[ "$LOCAL_AHEAD" -gt 0 ]]; then
+    info "本地有 $LOCAL_AHEAD 个未推送提交，rebase 时会被垫到远程之上"
+fi
+
 echo
-info "将要应用的新提交："
+info "将要应用的 $NEW_REMOTE_COUNT 条新提交："
 git --no-pager log --oneline --no-decorate "$LOCAL..$REMOTE"
 echo
 
@@ -86,9 +87,24 @@ else
     warn "未找到 $SERVICE_NAME.service，跳过停止步骤"
 fi
 
-# 6. 拉取代码（使用 fast-forward，避免意外 merge）
-info "更新代码到 origin/$BRANCH ..."
-git pull --ff-only origin "$BRANCH"
+# 6. 拉取代码（rebase + autostash 模式）
+#   - 兼容本地有未推送提交（如服务器 .gitignore 调整）
+#   - autostash 自动暂存工作树未提交改动并在 rebase 后恢复
+#   - 不再使用 --ff-only，避免分叉时阻塞更新
+info "更新代码到 origin/$BRANCH（rebase + autostash）..."
+if ! git pull --rebase --autostash origin "$BRANCH"; then
+    err "git pull --rebase 失败（可能有冲突）"
+    # 清理半成品状态
+    git rebase --abort 2>/dev/null || true
+    git stash pop 2>/dev/null || true
+    # 尝试用旧代码恢复服务，避免 bot 长时间宕机
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
+        warn "正在用旧代码恢复服务以避免长时间宕机..."
+        systemctl start "$SERVICE_NAME" 2>/dev/null || true
+    fi
+    err "请手动处理后重试：cd $PROJECT_DIR && git status && git log --oneline -5"
+    exit 1
+fi
 NEW_HEAD=$(git rev-parse --short HEAD)
 ok "代码已更新到 $NEW_HEAD"
 
