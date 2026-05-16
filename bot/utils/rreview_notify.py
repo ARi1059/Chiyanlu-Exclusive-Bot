@@ -105,6 +105,25 @@ def _anonymize_user_id(uid: int) -> str:
     return "*" * (len(s) - 4) + s[-4:]
 
 
+async def notify_super_admins_anchor_lost(
+    bot: Bot,
+    *,
+    teacher_id: int,
+    teacher_name: Optional[str] = None,
+) -> None:
+    """Phase 9.5.3：讨论群锚消息丢失告警（fallback 已发不 reply 消息）"""
+    name = teacher_name or f"#{teacher_id}"
+    text = (
+        "⚠️ 讨论群锚消息丢失\n\n"
+        f"老师：{name} (teacher_id={teacher_id})\n"
+        "评价已用 fallback 发到讨论群（不挂在锚消息下）。\n"
+        "建议：在频道重发档案帖（重发档案帖 → 让 Telegram 自动转发→ 监听器重写锚 id）。"
+    )
+    supers = await list_super_admins()
+    for uid in supers:
+        await _safe_send_text(bot, uid, text)
+
+
 async def notify_super_admins_new_review(bot: Bot, review_id: int) -> None:
     """新评价提交后推送给所有超管（媒体组 + 概要 + 前往审核按钮）— Phase 9.4.3 用"""
     review = await get_teacher_review(review_id)

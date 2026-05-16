@@ -15,6 +15,7 @@ from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.discussion_anchor_listener import router as discussion_anchor_router
+from bot.handlers.noop_handlers import router as noop_router
 from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.review_submit import router as review_submit_router
 from bot.handlers.rreview_admin import router as rreview_admin_router
@@ -88,6 +89,9 @@ async def main():
     # 注册路由
     # start_router 必须最先：/start 角色分流入口（v2 §2.5）
     dp.include_router(start_router)
+    # Phase 9.5.3：noop:* callback 占位（讨论群评论中间徽章按钮等）
+    # 在所有具名 callback 之前注册，命名空间 noop: 与其它 callback 不冲突
+    dp.include_router(noop_router)
     # favorite_router：fav:* callback（卡片场景 + "我的收藏"列表）
     dp.include_router(favorite_router)
     # teacher_detail_router（Phase 2）：teacher:view / teacher:toggle_fav / user:recent

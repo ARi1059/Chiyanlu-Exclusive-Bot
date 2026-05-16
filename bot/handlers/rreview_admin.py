@@ -155,6 +155,17 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
         await update_teacher_post_caption(callback.bot, teacher_id, force=True)
     except Exception as e:
         logger.warning("update_teacher_post_caption 失败 teacher=%s: %s", teacher_id, e)
+    # 3. 在讨论群发评论（reply 到锚消息；锚丢失时 fallback + 告警超管）
+    try:
+        from bot.utils.review_comment import publish_review_comment, CommentError
+        await publish_review_comment(callback.bot, review_id)
+    except CommentError as e:
+        logger.warning(
+            "publish_review_comment failed review=%s reason=%s: %s",
+            review_id, getattr(e, "reason", "?"), e,
+        )
+    except Exception as e:
+        logger.warning("publish_review_comment 异常 review=%s: %s", review_id, e)
 
     # 私聊通知评价者（容错，不阻塞）
     teacher = await get_teacher(review["teacher_id"])
