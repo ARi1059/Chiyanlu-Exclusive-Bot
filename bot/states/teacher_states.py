@@ -31,6 +31,11 @@ class SetChannelStates(StatesGroup):
     waiting_channel_id = State()
 
 
+class SetArchiveChannelStates(StatesGroup):
+    """Phase 9.2：设置档案帖目标频道（archive_channel_id 单 chat_id）"""
+    waiting_chat_id = State()
+
+
 class SetGroupStates(StatesGroup):
     """设置响应群组状态"""
     waiting_group_id = State()

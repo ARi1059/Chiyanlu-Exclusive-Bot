@@ -20,6 +20,8 @@ from bot.database import (
     log_admin_audit,
     get_dashboard_metrics,
     list_recent_admin_audits,
+    set_archive_channel_id,
+    get_archive_channel_id,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
@@ -36,6 +38,7 @@ from bot.states.teacher_states import (
     SetChannelStates,
     SetGroupStates,
     SystemSettingStates,
+    SetArchiveChannelStates,
 )
 from bot.utils.permissions import admin_required, super_admin_required
 from bot.scheduler.tasks import (
@@ -283,6 +286,62 @@ async def on_publish_channel_id(message: types.Message, state: FSMContext):
     await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
 
 
+@router.callback_query(F.data == "channel:set_archive")
+@admin_required
+async def cb_set_archive_channel(callback: types.CallbackQuery, state: FSMContext):
+    """Phase 9.2：设置档案帖发布频道（单个 chat_id）"""
+    current = await get_archive_channel_id()
+    fallback_hint = ""
+    if current is None:
+        fallback_hint = "\n当前未配置（且 publish_channel_id 也为空）。"
+    else:
+        fallback_hint = f"\n当前生效值：{current}（独立配置或回退自发布目标）。"
+    await state.set_state(SetArchiveChannelStates.waiting_chat_id)
+    await callback.message.edit_text(
+        "📦 请输入档案帖发布频道 Chat ID（单个数字，通常为负数）：\n\n"
+        "档案帖用于发布老师完整资料 + 相册（媒体组），与每日签到帖解耦。\n"
+        "未配置时回退使用 [📌 发布目标] 的第一个 ID。\n"
+        "回复 0 表示清空独立配置（之后将回退 publish_channel_id）。"
+        f"{fallback_hint}",
+    )
+    await callback.answer()
+
+
+@router.message(SetArchiveChannelStates.waiting_chat_id)
+@admin_required
+async def on_archive_channel_id(message: types.Message, state: FSMContext):
+    """Phase 9.2：接收档案频道 ID 并入库"""
+    text = (message.text or "").strip()
+    try:
+        chat_id = int(text)
+    except ValueError:
+        await message.reply("❌ 请输入单个数字 ID（正负均可）。回复 0 清空。")
+        return
+
+    if chat_id == 0:
+        await set_config("archive_channel_id", "")
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="archive_channel_set",
+            target_type="config",
+            target_id="archive_channel_id",
+            detail={"value": ""},
+        )
+        await message.answer("✅ 已清空独立档案频道配置（后续将回退 publish_channel_id）")
+    else:
+        await set_archive_channel_id(chat_id)
+        await log_admin_audit(
+            admin_id=message.from_user.id,
+            action="archive_channel_set",
+            target_type="config",
+            target_id="archive_channel_id",
+            detail={"value": str(chat_id)},
+        )
+        await message.answer(f"✅ 档案频道已设置为: {chat_id}")
+    await state.clear()
+    await message.answer("🔧 痴颜录管理面板", reply_markup=await _build_main_menu_kb())
+
+
 @router.callback_query(F.data == "channel:set_response")
 @admin_required
 async def cb_set_response_group(callback: types.CallbackQuery, state: FSMContext):
@@ -327,10 +386,20 @@ async def on_response_group_id(message: types.Message, state: FSMContext):
 async def cb_channel_view(callback: types.CallbackQuery):
     """查看当前频道/群组设置"""
     publish_id = await get_config("publish_channel_id")
+    archive_id_raw = await get_config("archive_channel_id")
+    archive_effective = await get_archive_channel_id()
     group_ids = await get_config("response_group_ids")
+
+    if archive_id_raw:
+        archive_display = f"{archive_id_raw}（独立配置）"
+    elif archive_effective is not None:
+        archive_display = f"{archive_effective}（回退 publish_channel_id）"
+    else:
+        archive_display = "未设置"
 
     lines = ["📋 当前设置：\n"]
     lines.append(f"📌 发布目标: {publish_id or '未设置'}")
+    lines.append(f"📦 档案频道: {archive_display}")
     lines.append(f"💬 响应群组: {group_ids or '未设置'}")
 
     await callback.message.edit_text(
@@ -724,6 +793,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "admin_add": "添加管理员",
     "admin_remove": "移除管理员",
     "publish_channel_set": "设置发布目标",
+    "archive_channel_set": "设置档案频道",
     "response_group_set": "设置响应群组",
     "publish_time_set": "修改发布时间",
     "cooldown_set": "修改冷却时间",
@@ -732,6 +802,10 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "publish_manual": "手动发布",
     "review_approve": "审核通过",
     "review_reject": "审核驳回",
+    "teacher_publish_to_channel": "发布档案帖到频道",
+    "teacher_channel_repost": "重发档案帖",
+    "teacher_channel_caption_update": "同步档案 caption",
+    "teacher_channel_post_delete": "删除频道档案帖",
 }
 
 

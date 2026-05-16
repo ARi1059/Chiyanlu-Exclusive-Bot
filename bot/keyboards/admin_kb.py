@@ -385,6 +385,54 @@ def teacher_profile_album_collect_kb(user_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+# ============ 老师档案：频道发布动作（Phase 9.2） ============
+
+def teacher_profile_publish_action_kb(
+    user_id: int,
+    *,
+    is_published: bool,
+    can_publish: bool,
+) -> InlineKeyboardMarkup:
+    """预览页底部的发布操作按钮
+
+    is_published: teacher_channel_posts 是否已有该老师的行
+    can_publish: 必填齐备 + 相册 ≥ 1 张（影响首发按钮是否启用）
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if is_published:
+        rows.append([
+            InlineKeyboardButton(text="🔄 重发档案帖", callback_data=f"tprofile:repost:{user_id}"),
+            InlineKeyboardButton(text="🔄 同步 caption", callback_data=f"tprofile:sync:{user_id}"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="❌ 删除频道帖", callback_data=f"tprofile:unpublish:{user_id}"),
+        ])
+    elif can_publish:
+        rows.append([
+            InlineKeyboardButton(text="📤 发布档案帖到频道", callback_data=f"tprofile:publish:{user_id}"),
+        ])
+    rows.append([InlineKeyboardButton(text="🔙 返回档案管理", callback_data="tprofile:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def teacher_profile_repost_confirm_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认重发", callback_data=f"tprofile:repost_confirm:{user_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data=f"tprofile:select:preview:{user_id}"),
+        ],
+    ])
+
+
+def teacher_profile_unpublish_confirm_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认删除", callback_data=f"tprofile:unpublish_confirm:{user_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data=f"tprofile:select:preview:{user_id}"),
+        ],
+    ])
+
+
 # ============ 管理员管理子面板 ============
 
 def admin_menu_kb() -> InlineKeyboardMarkup:
@@ -400,9 +448,13 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
 # ============ 频道设置子面板 ============
 
 def channel_menu_kb() -> InlineKeyboardMarkup:
-    """频道设置子面板"""
+    """频道设置子面板
+
+    Phase 9.2：新增 [📦 设置档案频道]（archive_channel_id），与"发布目标"解耦。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📌 设置发布目标", callback_data="channel:set_publish")],
+        [InlineKeyboardButton(text="📦 设置档案频道", callback_data="channel:set_archive")],
         [InlineKeyboardButton(text="💬 设置响应群组", callback_data="channel:set_response")],
         [InlineKeyboardButton(text="📋 查看当前设置", callback_data="channel:view")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],

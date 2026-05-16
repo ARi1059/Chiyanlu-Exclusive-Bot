@@ -704,6 +704,22 @@ async def _finish_edit(
     if not profile:
         await message.answer("📋 老师档案管理", reply_markup=teacher_profile_menu_kb())
         return
+
+    # Phase 9.2：若该老师已发布到频道，字段更新后自动 edit_message_caption
+    # （60s debounce 在 update_teacher_post_caption 内部处理，silent skip 未发布）
+    if success:
+        try:
+            from bot.utils.teacher_channel_publish import update_teacher_post_caption
+            edited = await update_teacher_post_caption(message.bot, target_user_id)
+            if edited:
+                await message.answer("📡 已同步频道 caption。")
+        except Exception as e:
+            # 不打断 admin 流程；失败仅记日志
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "auto edit caption 失败 teacher=%s: %s", target_user_id, e,
+            )
+
     ok, missing = await is_teacher_profile_complete(target_user_id)
     status = "✅ 必填齐备" if ok else f"⚠️ 仍缺 {len(missing)} 项"
     await state.set_state(TeacherProfileEditStates.waiting_field_choice)
@@ -985,7 +1001,7 @@ _FIELD_LABEL_CN: dict = {
 @router.callback_query(F.data.startswith("tprofile:select:preview:"))
 @admin_required
 async def cb_preview_show(callback: types.CallbackQuery):
-    """渲染 caption 并发送，附必填齐备性提示"""
+    """渲染 caption + 显示发布动作按钮（Phase 9.2）"""
     try:
         target = int(callback.data.split(":")[3])
     except (IndexError, ValueError):
@@ -993,8 +1009,10 @@ async def cb_preview_show(callback: types.CallbackQuery):
         return
     from bot.database import (
         get_teacher_full_profile, is_teacher_profile_complete,
+        get_teacher_channel_post,
     )
     from bot.utils.teacher_profile_render import render_teacher_channel_caption
+    from bot.keyboards.admin_kb import teacher_profile_publish_action_kb
 
     profile = await get_teacher_full_profile(target)
     if not profile:
@@ -1002,10 +1020,12 @@ async def cb_preview_show(callback: types.CallbackQuery):
         return
 
     ok, missing = await is_teacher_profile_complete(target)
+    post = await get_teacher_channel_post(target)
+    is_published = post is not None
 
-    # 必填字段不全时 caption 可能抛 ValueError，单独处理
+    # 渲染时把 channel_posts 行作为 stats 传入（首发前 post 为 None → 占位符）
     try:
-        caption = render_teacher_channel_caption(profile)
+        caption = render_teacher_channel_caption(profile, stats=post)
         caption_block = (
             "─── 档案 caption 预览 ───\n"
             f"{caption}\n"
@@ -1019,8 +1039,13 @@ async def cb_preview_show(callback: types.CallbackQuery):
             "───────────────────"
         )
 
-    if ok:
-        status_line = "✅ 必填齐备，可发布频道（Phase 9.2 启用后）"
+    if is_published:
+        status_line = (
+            f"✅ 已发布到频道（chat_id={post['channel_chat_id']}, "
+            f"msg_id={post['channel_msg_id']}，共 {len(post['media_group_msg_ids'])} 张）"
+        )
+    elif ok:
+        status_line = "✅ 必填齐备，可点 [📤 发布档案帖到频道]"
     else:
         labels = [_FIELD_LABEL_CN.get(f, f) for f in missing]
         status_line = (
@@ -1029,12 +1054,185 @@ async def cb_preview_show(callback: types.CallbackQuery):
         )
 
     text = f"{caption_block}\n\n{status_line}"
-    # caption 本身可能很长，避免单条超过 Telegram 4096 字符
     if len(text) > 4000:
         text = text[:3990] + "\n…(截断)"
 
-    await callback.message.edit_text(text, reply_markup=teacher_profile_menu_kb())
+    await callback.message.edit_text(
+        text,
+        reply_markup=teacher_profile_publish_action_kb(
+            target, is_published=is_published, can_publish=ok,
+        ),
+    )
     await callback.answer()
+
+
+# ============ 频道发布动作（Phase 9.2）============
+
+async def _back_to_preview(callback: types.CallbackQuery, target: int):
+    """复用 cb_preview_show 的渲染逻辑回到预览页"""
+    callback.data = f"tprofile:select:preview:{target}"
+    await cb_preview_show(callback)
+
+
+@router.callback_query(F.data.startswith("tprofile:publish:"))
+@admin_required
+async def cb_publish_post(callback: types.CallbackQuery):
+    """[📤 发布档案帖到频道]"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.utils.teacher_channel_publish import publish_teacher_post, PublishError
+    from bot.database import log_admin_audit
+    try:
+        result = await publish_teacher_post(callback.bot, target)
+    except PublishError as err:
+        await callback.answer(f"❌ {err}", show_alert=True)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="teacher_publish_to_channel",
+        target_type="teacher",
+        target_id=str(target),
+        detail={"chat_id": result["chat_id"], "msg_id": result["channel_msg_id"],
+                "media_count": result["media_count"]},
+    )
+    await callback.answer(f"✅ 已发布到频道（{result['media_count']} 张）")
+    await _back_to_preview(callback, target)
+
+
+@router.callback_query(F.data.startswith("tprofile:sync:"))
+@admin_required
+async def cb_sync_caption(callback: types.CallbackQuery):
+    """[🔄 同步 caption]（绕过 debounce 显式 edit）"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.utils.teacher_channel_publish import (
+        update_teacher_post_caption, PublishError,
+    )
+    from bot.database import log_admin_audit
+    try:
+        edited = await update_teacher_post_caption(
+            callback.bot, target, force=True,
+        )
+    except PublishError as err:
+        await callback.answer(f"❌ {err}", show_alert=True)
+        return
+    if edited:
+        await log_admin_audit(
+            admin_id=callback.from_user.id,
+            action="teacher_channel_caption_update",
+            target_type="teacher",
+            target_id=str(target),
+            detail={"trigger": "manual_sync"},
+        )
+        await callback.answer("✅ 已同步 caption")
+    else:
+        await callback.answer("ℹ️ 已是最新（无变化）")
+    await _back_to_preview(callback, target)
+
+
+@router.callback_query(F.data.startswith("tprofile:repost:"))
+@admin_required
+async def cb_repost_confirm_ask(callback: types.CallbackQuery):
+    """[🔄 重发档案帖] 二次确认"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.keyboards.admin_kb import teacher_profile_repost_confirm_kb
+    await callback.message.edit_text(
+        "🔄 重发档案帖\n\n"
+        "此操作会先删除当前频道里的媒体组（每张照片单独 delete_message），\n"
+        "然后用现有相册重新 send_media_group 一次。\n"
+        "⚠️ 删旧消息时部分失败不阻塞（Telegram 48h 限制等），但请确认频道仍可正常发图。",
+        reply_markup=teacher_profile_repost_confirm_kb(target),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:repost_confirm:"))
+@admin_required
+async def cb_repost_execute(callback: types.CallbackQuery):
+    """[⚠️ 确认重发]"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.utils.teacher_channel_publish import repost_teacher_post, PublishError
+    from bot.database import log_admin_audit
+    try:
+        result = await repost_teacher_post(callback.bot, target)
+    except PublishError as err:
+        await callback.answer(f"❌ {err}", show_alert=True)
+        await _back_to_preview(callback, target)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="teacher_channel_repost",
+        target_type="teacher",
+        target_id=str(target),
+        detail={"chat_id": result["chat_id"], "msg_id": result["channel_msg_id"],
+                "media_count": result["media_count"]},
+    )
+    await callback.answer(f"✅ 已重发（{result['media_count']} 张）")
+    await _back_to_preview(callback, target)
+
+
+@router.callback_query(F.data.startswith("tprofile:unpublish:"))
+@admin_required
+async def cb_unpublish_confirm_ask(callback: types.CallbackQuery):
+    """[❌ 删除频道帖] 二次确认"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.keyboards.admin_kb import teacher_profile_unpublish_confirm_kb
+    await callback.message.edit_text(
+        "❌ 删除频道档案帖\n\n"
+        "此操作会从频道删除该老师所有媒体组消息，并清除 teacher_channel_posts 记录。\n"
+        "⚠️ 老师本身和数据库其他记录不会被删除；如需重新发布，回到预览页点 [📤 发布]。",
+        reply_markup=teacher_profile_unpublish_confirm_kb(target),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:unpublish_confirm:"))
+@admin_required
+async def cb_unpublish_execute(callback: types.CallbackQuery):
+    """[⚠️ 确认删除]"""
+    try:
+        target = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    from bot.utils.teacher_channel_publish import delete_teacher_post, PublishError
+    from bot.database import log_admin_audit
+    try:
+        ok = await delete_teacher_post(callback.bot, target)
+    except PublishError as err:
+        await callback.answer(f"❌ {err}", show_alert=True)
+        await _back_to_preview(callback, target)
+        return
+    if ok:
+        await log_admin_audit(
+            admin_id=callback.from_user.id,
+            action="teacher_channel_post_delete",
+            target_type="teacher",
+            target_id=str(target),
+            detail={},
+        )
+        await callback.answer("✅ 已删除频道帖")
+    else:
+        await callback.answer("⚠️ DB 行已不存在", show_alert=True)
+    await _back_to_preview(callback, target)
 
 
 # ============ /cancel 文本退出（编辑 / 相册 FSM）============
