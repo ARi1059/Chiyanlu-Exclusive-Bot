@@ -43,7 +43,10 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔔 我的提醒", callback_data="user:reminders"),
             InlineKeyboardButton(text="📜 搜索历史", callback_data="user:search_history"),
         ],
-        [InlineKeyboardButton(text="💰 我的积分", callback_data="user:points")],
+        [
+            InlineKeyboardButton(text="💰 我的积分", callback_data="user:points"),
+            InlineKeyboardButton(text="🧾 我的报销", callback_data="user:reimburse"),
+        ],
     ])
 
 
@@ -52,6 +55,39 @@ def user_points_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 积分明细", callback_data="user:points:list")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
+def user_reimburse_menu_kb() -> InlineKeyboardMarkup:
+    """报销页按钮组"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 报销明细", callback_data="user:reimburse:list")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
+def user_reimburse_pagination_kb(
+    page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    """报销明细分页"""
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页",
+            callback_data=f"user:reimburse:list:{page - 1}",
+        ))
+    nav.append(InlineKeyboardButton(
+        text=f"📄 {page + 1}/{max(1, total_pages)}",
+        callback_data="noop:reimburse_page",
+    ))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="➡️ 下一页",
+            callback_data=f"user:reimburse:list:{page + 1}",
+        ))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        nav,
+        [InlineKeyboardButton(text="🔙 返回报销", callback_data="user:reimburse")],
     ])
 
 

@@ -38,6 +38,7 @@ from bot.handlers.user_filter import router as user_filter_router
 from bot.handlers.user_history import router as user_history_router
 from bot.handlers.user_panel import router as user_panel_router
 from bot.handlers.user_points import router as user_points_router
+from bot.handlers.user_reimburse import router as user_reimburse_router
 from bot.handlers.user_recommend import router as user_recommend_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
@@ -183,6 +184,8 @@ async def main():
     #   - user:points / user:points:list / user:points:list:<page> 命名空间独立
     #   - 不与 user:favorites / user:recent 等冲突
     dp.include_router(user_points_router)
+    # 报销子系统用户侧：user:reimburse / user:reimburse:list[:page]
+    dp.include_router(user_reimburse_router)
     # Phase 7.2：user_filter_router / user_recommend_router
     # 注册在 user_panel 之后、user_search / keyword 之前。
     #   - callback 命名空间独立：user:filter:* / user:recommend:*
