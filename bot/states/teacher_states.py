@@ -65,6 +65,27 @@ class RReviewApprovePointsStates(StatesGroup):
     waiting_custom_delta = State()
 
 
+class AdminPointsQueryStates(StatesGroup):
+    """Phase P.3：超管查询用户积分 FSM"""
+    waiting_input = State()
+
+
+class AdminPointsGrantStates(StatesGroup):
+    """Phase P.3：超管手动加扣分 4 步 FSM
+
+    state.data：
+        target_user_id / target_username / target_first_name / current_total
+        delta / package_label
+        reason / reason_note
+    """
+    waiting_target        = State()
+    waiting_delta         = State()
+    waiting_custom_delta  = State()
+    waiting_reason        = State()
+    waiting_custom_reason = State()
+    waiting_confirm       = State()
+
+
 class ReviewSubmitStates(StatesGroup):
     """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
 

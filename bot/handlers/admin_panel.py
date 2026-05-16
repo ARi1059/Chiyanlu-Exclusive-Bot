@@ -830,6 +830,8 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "rreview_view": "查看报告",
     "rreview_approve": "通过报告",
     "rreview_reject": "驳回报告",
+    "points_query": "查询用户积分",
+    "points_grant": "手动加扣积分",
 }
 
 

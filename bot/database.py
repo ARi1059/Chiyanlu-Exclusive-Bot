@@ -4708,3 +4708,80 @@ async def count_user_point_transactions(user_id: int) -> int:
         return int(row["c"]) if row else 0
     finally:
         await db.close()
+
+
+async def find_user_by_username(username: str) -> Optional[dict]:
+    """通过 @username（或裸 username）查找用户
+
+    自动 lstrip "@"；LOWER 不区分大小写比对（spec §3.2 手动加分输入）。
+    返回完整 users row 或 None。
+    """
+    if not username:
+        return None
+    name = str(username).strip().lstrip("@")
+    if not name:
+        return None
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1",
+            (name,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+# ============ 积分管理（Phase P.3） ============
+
+
+# 手动加扣分原因预设（spec §3.2）
+POINT_GRANT_REASON_OPTIONS: list[dict] = [
+    {"key": "audit",   "label": "📝 报告审核补加", "reason": "admin_grant",  "note": "报告审核补加"},
+    {"key": "event",   "label": "🎁 活动奖励",     "reason": "admin_grant",  "note": "活动奖励"},
+    {"key": "violate", "label": "⚠️ 违规扣分",     "reason": "admin_revoke", "note": "违规扣分"},
+    {"key": "fix",     "label": "🛠 系统修正",     "reason": "admin_grant",  "note": "系统修正"},
+]
+
+
+async def get_top_points_users(limit: int = 10) -> list[dict]:
+    """TOP N 持币用户（仅 total_points > 0），按 DESC"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT user_id, username, first_name, total_points "
+            "FROM users WHERE total_points > 0 "
+            "ORDER BY total_points DESC, user_id LIMIT ?",
+            (int(limit),),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_users_with_points() -> int:
+    """持币用户数（total_points > 0）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE total_points > 0"
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def sum_total_points_earned() -> int:
+    """累计加分总和（所有 delta > 0 的 point_transactions）"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(delta), 0) AS s FROM point_transactions WHERE delta > 0"
+        )
+        row = await cur.fetchone()
+        return int(row["s"]) if row else 0
+    finally:
+        await db.close()

@@ -38,7 +38,10 @@ def main_menu_kb(
             f"📝 报告审核 ({pending_review_count})"
             if pending_review_count > 0 else "📝 报告审核"
         )
-        rows.append([InlineKeyboardButton(text=rreview_label, callback_data="rreview:enter")])
+        rows.append([
+            InlineKeyboardButton(text=rreview_label, callback_data="rreview:enter"),
+            InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points"),
+        ])
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
         [
@@ -775,6 +778,34 @@ def rreview_push_action_kb() -> InlineKeyboardMarkup:
     """新评价推送给超管时附带的按钮"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 前往审核", callback_data="rreview:enter")],
+    ])
+
+
+def admin_points_menu_kb() -> InlineKeyboardMarkup:
+    """[💰 积分管理] 子菜单（spec §3.2）"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 查询用户积分", callback_data="admin:points:query")],
+        [InlineKeyboardButton(text="➕ 手动加分",     callback_data="admin:points:grant")],
+        [InlineKeyboardButton(text="📊 积分总览",     callback_data="admin:points:overview")],
+        [InlineKeyboardButton(text="🔙 返回主菜单",   callback_data="menu:main")],
+    ])
+
+
+def admin_points_cancel_kb() -> InlineKeyboardMarkup:
+    """积分管理 FSM 通用取消按钮"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:points")],
+    ])
+
+
+def admin_points_back_kb() -> InlineKeyboardMarkup:
+    """查询结果页 / 总览页底部：返回积分管理"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔍 再查一个", callback_data="admin:points:query"),
+            InlineKeyboardButton(text="🔙 返回积分管理", callback_data="admin:points"),
+        ],
+        [InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main")],
     ])
 
 

@@ -14,6 +14,7 @@ from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
+from bot.handlers.admin_points import router as admin_points_router
 from bot.handlers.discussion_anchor_listener import router as discussion_anchor_router
 from bot.handlers.noop_handlers import router as noop_router
 from bot.handlers.report_settings import router as report_settings_router
@@ -138,6 +139,10 @@ async def main():
     # review:* 完全独立，FSM 状态保证文字消息只在 RReviewRejectStates 中被截获
     dp.include_router(rreview_admin_router)
     dp.include_router(admin_panel_router)
+    # admin_points_router (Phase P.3)：admin:points:* 超管积分管理工具
+    # 必须在 admin_panel 之后（主菜单已嵌入 admin:points 入口），_super_admin_required
+    # 装饰器保证非超管被拒
+    dp.include_router(admin_points_router)
     # subreq_admin_router (Phase 9.3)：admin:subreq:* callback + SubReqAddStates
     # 必须在 admin_panel 之后（系统设置子菜单已含 admin:subreq 入口），
     # SubReqAddStates FSM 保证文字消息仅在状态中被截获
