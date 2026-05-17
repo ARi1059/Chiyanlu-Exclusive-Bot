@@ -55,11 +55,11 @@ def _today_str() -> str:
 # ============ 群组个人 / 系统查询关键词（2026-05-18） ============
 #
 # 用户在群里发关键词，bot 在群里回复个人积分 / 报销池剩余金额。
-# - "我的积分" / "积分"   → 查询发送者 total_points
-# - "报销池"   / "报销"   → 查询当前月度池余额（关闭时显示「未开启」）
+# - "积分"   → 查询发送者 total_points
+# - "报销池" → 查询当前月度池余额（关闭时显示「未开启」）
 
-_PERSONAL_QUERY_POINTS: set[str] = {"我的积分", "积分"}
-_PERSONAL_QUERY_REIMBURSE_POOL: set[str] = {"报销池", "报销"}
+_PERSONAL_QUERY_POINTS: set[str] = {"积分"}
+_PERSONAL_QUERY_REIMBURSE_POOL: set[str] = {"报销池"}
 
 
 def _format_user_mention(user) -> str:
