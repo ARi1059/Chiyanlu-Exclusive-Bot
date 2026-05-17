@@ -699,13 +699,20 @@ async def _scan_legacy_sync_diff() -> dict:
     return stats
 
 
-async def _run_legacy_sync() -> dict:
-    """实际执行：遍历所有老师，把不一致的字段写入 DB
+async def _run_legacy_sync(bot=None) -> dict:
+    """实际执行：遍历所有老师，把不一致的字段写入 DB；可选刷新频道帖 caption
 
-    返回与 _scan 同结构 + updated 计数。
+    Args:
+        bot: 传入 Bot 实例 → 对已发布且字段有变更的老师调
+             update_teacher_post_caption(force=True) 同步频道帖。
+             None → 仅同步 DB，不动频道。
+
+    返回 dict 含 DB 统计 + 频道刷新统计。
     """
+    import asyncio
     from bot.database import (
         get_all_teachers,
+        get_teacher_channel_post,
         update_teacher,
         update_teacher_profile_field,
     )
@@ -716,7 +723,18 @@ async def _run_legacy_sync() -> dict:
         "diff_taboos": 0,
         "diff_button_text": 0,
         "updated": 0,
+        "caption_refreshed": 0,
+        "caption_failed": 0,
+        "caption_skipped_unpublished": 0,
     }
+    refresh_fn = None
+    if bot is not None:
+        try:
+            from bot.utils.teacher_channel_publish import update_teacher_post_caption
+            refresh_fn = update_teacher_post_caption
+        except Exception:
+            refresh_fn = None
+
     for t in teachers:
         target = _compute_legacy_sync_target(t)
         uid = int(t["user_id"])
@@ -738,6 +756,22 @@ async def _run_legacy_sync() -> dict:
                 any_diff = True
         if any_diff:
             stats["updated"] += 1
+            # 同步频道帖 caption（仅对已发布的老师 + bot 已传入）
+            if refresh_fn is not None:
+                post = await get_teacher_channel_post(uid)
+                if post is None:
+                    stats["caption_skipped_unpublished"] += 1
+                else:
+                    try:
+                        refreshed = await refresh_fn(bot, uid, force=True)
+                        if refreshed:
+                            stats["caption_refreshed"] += 1
+                        else:
+                            stats["caption_failed"] += 1
+                    except Exception:
+                        stats["caption_failed"] += 1
+                    # Telegram edit_message 限流：每老师间 sleep 0.5s 友好处理
+                    await asyncio.sleep(0.5)
     return stats
 
 
@@ -761,7 +795,8 @@ async def cb_sync_legacy_preview(callback: types.CallbackQuery, state: FSMContex
         "       规则：「地区 艺名」\n"
         "━━━━━━━━━━━━━━━\n"
         "⚠️ 已经手动改过这些字段的老师会被覆盖。\n"
-        "⚠️ 频道帖 caption 不自动重发，下次该老师任何字段变动时自动同步。"
+        "📣 同时会同步刷新所有已发布老师的频道帖 caption。\n"
+        f"⏱ 频道刷新每位间隔 0.5 秒避免限流；预计耗时约 {max(1, stats['diff_any']) // 2} 秒。"
     )
     try:
         await callback.message.edit_text(text, reply_markup=tprofile_sync_legacy_confirm_kb())
@@ -773,10 +808,25 @@ async def cb_sync_legacy_preview(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data == "tprofile:sync_legacy_ok")
 @admin_required
 async def cb_sync_legacy_execute(callback: types.CallbackQuery, state: FSMContext):
-    """实际执行同步"""
+    """实际执行同步 — DB 同步 + 已发布老师的频道 caption 同步刷新
+
+    频道 caption 刷新走 update_teacher_post_caption(force=True)；每老师间
+    sleep 0.5s 友好 Telegram 限流。当老师较多时可能需要数十秒。
+    """
     from bot.database import log_admin_audit
-    await callback.answer("⏳ 正在同步...")
-    stats = await _run_legacy_sync()
+    # 提前给一个 alert，因为可能要等几十秒
+    await callback.answer("⏳ 正在同步 DB + 频道帖，请稍候...", show_alert=False)
+    try:
+        await callback.message.edit_text(
+            "⏳ 同步进行中...\n\n"
+            "正在逐位更新 DB 并刷新已发布老师的频道 caption。\n"
+            "（每老师间隔 0.5 秒以避免 Telegram 限流；老师数较多时请耐心等待）",
+        )
+    except Exception:
+        pass
+
+    stats = await _run_legacy_sync(bot=callback.bot)
+
     try:
         await log_admin_audit(
             admin_id=callback.from_user.id,
@@ -787,17 +837,25 @@ async def cb_sync_legacy_execute(callback: types.CallbackQuery, state: FSMContex
         )
     except Exception:
         pass
+
     text = (
         "✅ 老数据同步完成\n"
         "━━━━━━━━━━━━━━━\n"
-        f"📊 共 {stats['total']} 位老师，{stats['updated']} 位实际更新\n\n"
-        f"  📋 描述字段写入：{stats['diff_description']} 位\n"
-        f"  🚫 禁忌字段写入：{stats['diff_taboos']} 位\n"
-        f"  🔠 按钮文字写入：{stats['diff_button_text']} 位\n"
+        f"📊 共 {stats['total']} 位老师，{stats['updated']} 位 DB 实际更新\n\n"
+        "DB 写入统计：\n"
+        f"  📋 描述：{stats['diff_description']} 位\n"
+        f"  🚫 禁忌：{stats['diff_taboos']} 位\n"
+        f"  🔠 按钮文字：{stats['diff_button_text']} 位\n\n"
+        "频道帖 caption 同步：\n"
+        f"  📣 已刷新：{stats['caption_refreshed']} 位\n"
+        f"  ⚪ 未发布（跳过）：{stats['caption_skipped_unpublished']} 位\n"
+        f"  ⚠️ 刷新失败：{stats['caption_failed']} 位\n"
         "━━━━━━━━━━━━━━━\n"
-        "ℹ️ 已发布的频道帖 caption 不会自动重发；可用 [🔄 重发档案帖] 逐位重发，\n"
-        "   或等下次评价审核 / 字段编辑触发自动刷新。"
     )
+    if stats["caption_failed"] > 0:
+        text += "ℹ️ 失败的多半是频道帖已被删除 / bot 权限丢失；可用 [🔄 重发档案帖] 单独重发。"
+    else:
+        text += "🎉 全部同步成功！"
     try:
         await callback.message.edit_text(text, reply_markup=teacher_profile_menu_kb())
     except Exception:
