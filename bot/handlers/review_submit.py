@@ -23,6 +23,7 @@ from aiogram.fsm.context import FSMContext
 
 from bot.database import (
     get_teacher,
+    get_teacher_by_name,
     create_teacher_review,
     count_recent_user_reviews,
     count_recent_user_teacher_reviews,
@@ -50,7 +51,7 @@ from bot.keyboards.user_kb import (
     review_summary_skip_cancel_kb,
     review_confirm_kb,
 )
-from bot.states.teacher_states import ReviewSubmitStates
+from bot.states.teacher_states import ReviewSubmitStates, WriteReviewLookupStates
 from bot.utils.required_channels import check_user_subscribed
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,96 @@ async def start_review_flow(
     await state.set_data({"teacher_id": teacher_id})
     return "ok", {"teacher": teacher}
 
+
+# ============ 主菜单 [📝 写评价]：艺名搜索直达 ============
+
+@router.callback_query(F.data == "user:write_review")
+async def cb_user_write_review_entry(callback: types.CallbackQuery, state: FSMContext):
+    """[📝 写评价] 主菜单入口 → 等待用户输入老师艺名"""
+    await state.clear()
+    await state.set_state(WriteReviewLookupStates.waiting_teacher_name)
+    text = (
+        "📝 写评价 - 输入老师艺名\n\n"
+        "请直接输入要评价的老师**艺名**（精确匹配，不区分大小写）。\n\n"
+        "📌 如「丁小夏」、「乔儿」等\n"
+        "🔍 如果你不记得艺名，可以先到 [📚 今天能约谁] / [⭐ 我的收藏]\n"
+        "    找到老师 → 详情页底部 [📝 写评价] 也能进入此流程。\n\n"
+        "任意时刻发 /cancel 退出。"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=review_cancel_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=review_cancel_kb())
+    await callback.answer()
+
+
+@router.message(WriteReviewLookupStates.waiting_teacher_name, F.text)
+async def on_write_review_teacher_name(message: types.Message, state: FSMContext):
+    """接收艺名 → 精确查找 → 通过则进入 ReviewSubmit FSM；失败则 alert + 留在原状态"""
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        await state.clear()
+        await message.answer(
+            "❌ 已取消。回到主菜单可重新点 [📝 写评价]。"
+        )
+        return
+    if not text or len(text) > 60:
+        await message.reply("❌ 艺名不能为空或过长，请重新输入（≤ 60 字）。")
+        return
+    teacher = await get_teacher_by_name(text)
+    if not teacher:
+        await message.reply(
+            f"⚠️ 没找到艺名为「{text}」的老师。\n"
+            "请检查拼写后重发；或 /cancel 退出。"
+        )
+        return
+    user_id = message.from_user.id if message.from_user else 0
+    teacher_id = int(teacher["user_id"])
+    status, extra = await start_review_flow(
+        message.bot, message.chat.id, user_id, teacher_id, state,
+    )
+    if status == "not_found":
+        await state.clear()
+        await message.reply("⚠️ 该老师不存在或已被删除。")
+        return
+    if status == "inactive":
+        await state.clear()
+        await message.reply(f"⚠️ 老师「{teacher['display_name']}」已停用，无法提交评价。")
+        return
+    if status == "rate_limited":
+        await state.clear()
+        await message.reply(f"⚠️ {extra['reason']}")
+        return
+    if status == "need_subscribe":
+        lines = ["⚠️ 提交评价前请先加入：\n"]
+        for it in extra["missing"]:
+            lines.append(f"📺 {it['display_name']}")
+        lines.append("\n加入后回到主菜单重新点 [📝 写评价]。")
+        await state.clear()
+        await message.answer(
+            "\n".join(lines),
+            reply_markup=review_subscribe_links_kb(extra["missing"]),
+            disable_web_page_preview=True,
+        )
+        return
+    # status == "ok" — start_review_flow 已设好 ReviewSubmitStates.waiting_booking_screenshot
+    await message.answer(
+        f"📝 为「{teacher['display_name']}」写评价\n\n"
+        "[Step B/12] 上传约课记录截图（必填）\n\n"
+        "请发送你和该老师的约课记录截图（一张图片）。\n"
+        "仅作为审核证据，不会公开展示。\n\n"
+        "任意时刻发 /cancel 中止。",
+        reply_markup=review_cancel_kb(),
+    )
+
+
+@router.message(F.text == "/cancel", WriteReviewLookupStates())
+async def cmd_cancel_write_review_lookup(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ 已取消写评价。")
+
+
+# ============ 老师详情页 [📝 写评价] callback ============
 
 @router.callback_query(F.data.startswith("review:start:"))
 async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):

@@ -132,6 +132,11 @@ class LotteryCreateStates(StatesGroup):
     waiting_entry_cost_input  = State()  # Step 10 确认页 [💰 设置参与所需积分] 子流程
 
 
+class WriteReviewLookupStates(StatesGroup):
+    """主菜单 [📝 写评价] → 等待用户输入艺名 → 查到老师后转 ReviewSubmitStates"""
+    waiting_teacher_name = State()
+
+
 class ReviewSubmitStates(StatesGroup):
     """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
 

@@ -10,7 +10,7 @@ from bot.utils.url import normalize_url
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单（Phase P.2：第 6 行独占新增 💰 我的积分）
+    """普通用户私聊主菜单
 
     布局：
         [📚 今天能约谁] [🎯 帮我推荐]
@@ -18,7 +18,8 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         [⭐ 我的收藏]   [🕘 最近看过]
         [🔍 直接搜索]   [💝 收藏开课]
         [🔔 我的提醒]   [📜 搜索历史]
-        [💰 我的积分]                     ← Phase P.2 新增，独占一行（spec §2.1）
+        [💰 我的积分]   [🧾 我的报销]
+        [📝 写评价]                       ← 2026-05-18 新增独占一行
 
     callback 复用既有命名空间。
     """
@@ -46,6 +47,9 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="💰 我的积分", callback_data="user:points"),
             InlineKeyboardButton(text="🧾 我的报销", callback_data="user:reimburse"),
+        ],
+        [
+            InlineKeyboardButton(text="📝 写评价", callback_data="user:write_review"),
         ],
     ])
 
