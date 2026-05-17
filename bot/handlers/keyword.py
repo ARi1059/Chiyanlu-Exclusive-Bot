@@ -52,6 +52,117 @@ def _today_str() -> str:
     return datetime.now(_tz).strftime("%Y-%m-%d")
 
 
+# ============ 群组个人 / 系统查询关键词（2026-05-18） ============
+#
+# 用户在群里发关键词，bot 在群里回复个人积分 / 报销池剩余金额。
+# - "我的积分" / "积分"   → 查询发送者 total_points
+# - "报销池"   / "报销"   → 查询当前月度池余额（关闭时显示「未开启」）
+
+_PERSONAL_QUERY_POINTS: set[str] = {"我的积分", "积分"}
+_PERSONAL_QUERY_REIMBURSE_POOL: set[str] = {"报销池", "报销"}
+
+
+def _format_user_mention(user) -> str:
+    """生成 @username 或 first_name 用于群组回复称呼"""
+    if not user:
+        return "你"
+    uname = getattr(user, "username", None)
+    if uname:
+        return f"@{uname}"
+    first = (getattr(user, "first_name", None) or "").strip()
+    return first or "你"
+
+
+async def _handle_personal_points(message: types.Message) -> bool:
+    """群组「我的积分 / 积分」查询：reply 发送者当前 total_points
+
+    Returns:
+        True 已 reply（cooldown 应记账）；False 静默
+    """
+    if not message.from_user:
+        return False
+    user_id = message.from_user.id
+    try:
+        from bot.database import get_user_total_points
+        points = await get_user_total_points(user_id)
+    except Exception as e:
+        logger.warning("get_user_total_points 失败 uid=%s: %s", user_id, e)
+        return False
+    mention = _format_user_mention(message.from_user)
+    text = (
+        f"💰 {mention} 你的积分\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"当前余额：{points} 分\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"ℹ️ 提交评价并审核通过可获积分；抽奖参与会扣分。\n"
+        f"私聊 bot 点 [💰 我的积分] 查看明细。"
+    )
+    try:
+        await message.reply(text, disable_notification=True)
+        return True
+    except Exception as e:
+        logger.warning("reply personal_points 失败: %s", e)
+        return False
+
+
+async def _handle_reimburse_pool(message: types.Message) -> bool:
+    """群组「报销池 / 报销」查询：当前月度池余额 + 功能开关状态
+
+    Returns:
+        True 已 reply；False 静默
+    """
+    try:
+        from bot.database import (
+            get_config,
+            current_month_key,
+            sum_approved_reimbursements_in_month,
+        )
+        feature_enabled = (await get_config("reimbursement_feature_enabled")) == "1"
+        pool_raw = await get_config("reimbursement_monthly_pool")
+        try:
+            pool = int(pool_raw) if pool_raw else 0
+        except (TypeError, ValueError):
+            pool = 0
+        month_key = current_month_key()
+        used = await sum_approved_reimbursements_in_month(month_key)
+    except Exception as e:
+        logger.warning("查询报销池失败: %s", e)
+        return False
+
+    if not feature_enabled:
+        text = (
+            "💰 报销池\n"
+            "━━━━━━━━━━━━━━━\n"
+            "⚠️ 报销功能未开启\n"
+            "━━━━━━━━━━━━━━━\n"
+            "如需了解详情，请联系超管。"
+        )
+    elif pool <= 0:
+        text = (
+            "💰 报销池\n"
+            "━━━━━━━━━━━━━━━\n"
+            f"📅 本月（{month_key}）已用：{used} 元\n"
+            "🔓 月度上限：不限（admin 未配置）\n"
+            "━━━━━━━━━━━━━━━"
+        )
+    else:
+        remaining = max(0, pool - used)
+        text = (
+            "💰 报销池\n"
+            "━━━━━━━━━━━━━━━\n"
+            f"📅 本月（{month_key}）总额度：{pool} 元\n"
+            f"📤 已用：{used} 元\n"
+            f"💵 剩余：{remaining} 元\n"
+            "━━━━━━━━━━━━━━━"
+        )
+    try:
+        await message.reply(text, disable_notification=True)
+        return True
+    except Exception as e:
+        logger.warning("reply reimburse_pool 失败: %s", e)
+        return False
+
+
 # ============ 群组快捷词（Phase 8.2 §七，更新文案） ============
 
 
@@ -431,6 +542,27 @@ async def on_keyword_message(message: types.Message):
                 "group_id": group_id,
                 "keyword": keyword,
             },
+        )
+        return
+
+    # ============ 优先级 1.5：个人 / 系统查询关键词 ============
+    if keyword in _PERSONAL_QUERY_POINTS or keyword in _PERSONAL_QUERY_REIMBURSE_POOL:
+        allowed, _ = check_group_cooldown(group_id, user_id, normalized)
+        if not allowed:
+            return
+        if keyword in _PERSONAL_QUERY_POINTS:
+            sent = await _handle_personal_points(message)
+            event_type = "group_query_points"
+        else:
+            sent = await _handle_reimburse_pool(message)
+            event_type = "group_query_reimburse_pool"
+        if not sent:
+            return
+        record_group_cooldown(group_id, user_id, normalized)
+        await _safe_log_event(
+            user_id,
+            event_type,
+            {"keyword": keyword, "group_id": group_id},
         )
         return
 
