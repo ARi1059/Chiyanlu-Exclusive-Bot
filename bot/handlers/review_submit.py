@@ -116,7 +116,7 @@ async def start_review_flow(
     if not ok:
         return "need_subscribe", {"missing": missing}
 
-    await state.set_state(ReviewSubmitStates.waiting_booking_screenshot)
+    await state.set_state(ReviewSubmitStates.waiting_evidence_media)
     await state.set_data({"teacher_id": teacher_id})
     return "ok", {"teacher": teacher}
 
@@ -193,12 +193,14 @@ async def on_write_review_teacher_name(message: types.Message, state: FSMContext
             disable_web_page_preview=True,
         )
         return
-    # status == "ok" — start_review_flow 已设好 ReviewSubmitStates.waiting_booking_screenshot
+    # status == "ok" — start_review_flow 已设好 waiting_evidence_media
     await message.answer(
         f"📝 为「{teacher['display_name']}」写评价\n\n"
-        "[Step B/12] 上传约课记录截图（必填）\n\n"
-        "请发送你和该老师的约课记录截图（一张图片）。\n"
-        "仅作为审核证据，不会公开展示。\n\n"
+        "[Step 1/10] 上传 2 张证据照片（必填）\n\n"
+        "请把以下 2 张图片**一起作为媒体组**发送（或先后发送）：\n"
+        "1️⃣ 约课记录截图\n"
+        "2️⃣ 现场手势照片（如比心 / 大拇指 / 比 3 指）\n\n"
+        "前 2 张照片会被收为证据（仅审核可见，不公开）。\n"
         "任意时刻发 /cancel 中止。",
         reply_markup=review_cancel_kb(),
     )
@@ -259,9 +261,11 @@ async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):
     teacher = extra["teacher"]
     await callback.message.edit_text(
         f"📝 为「{teacher['display_name']}」写评价\n\n"
-        "[Step B/12] 上传约课记录截图（必填）\n\n"
-        "请发送你和该老师的约课记录截图（一张图片）。\n"
-        "仅作为审核证据，不会公开展示。\n\n"
+        "[Step 1/10] 上传 2 张证据照片（必填）\n\n"
+        "请把以下 2 张图片**一起作为媒体组**发送（或先后发送）：\n"
+        "1️⃣ 约课记录截图\n"
+        "2️⃣ 现场手势照片（如比心 / 大拇指 / 比 3 指）\n\n"
+        "前 2 张照片会被收为证据（仅审核可见，不公开）。\n"
         "任意时刻发 /cancel 中止。",
         reply_markup=review_cancel_kb(),
     )
@@ -299,127 +303,147 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     await message.answer(text, reply_markup=kb)
 
 
-# ============ Step B：约课截图 ============
+# ============ Step 1：媒体组（约课截图 + 手势照片合并） ============
+#
+# 用户连发 2 张图（媒体组或一张一张）：
+#   第 1 张 → booking_screenshot_file_id
+#   第 2 张 → gesture_photo_file_id
+# 收齐 2 张后自动进入 Step 2 评级。
 
-@router.message(ReviewSubmitStates.waiting_booking_screenshot, F.photo)
-async def step_booking_photo(message: types.Message, state: FSMContext):
-    file_id = message.photo[-1].file_id
-    await state.update_data(booking_screenshot_file_id=file_id)
+import asyncio as _asyncio
+_EVIDENCE_REPLY_TASKS: dict[int, "_asyncio.Task"] = {}
+
+
+@router.message(ReviewSubmitStates.waiting_evidence_media, F.photo)
+async def step_evidence_media(message: types.Message, state: FSMContext):
+    """收图：累加，前 2 张分别作为约课截图 / 手势照片"""
     data = await state.get_data()
-    if data.get("jump_back"):
-        await state.update_data(jump_back=False)
-        await _enter_confirm(message, state)
+    files: list = list(data.get("_evidence_files") or [])
+    if len(files) >= 2:
+        if message.media_group_id is None:
+            await message.reply("⚠️ 已收到 2 张证据照片，请耐心等待跳到 Step 2。")
+        return  # 媒体组多余张数静默忽略
+    files.append(message.photo[-1].file_id)
+    await state.update_data(_evidence_files=files)
+
+    # 收齐 2 张 → 进 Step 2
+    if len(files) >= 2:
+        # 清除可能还在 schedule 的 debounce task
+        old = _EVIDENCE_REPLY_TASKS.pop(message.chat.id, None)
+        if old and not old.done():
+            old.cancel()
+        await state.update_data(
+            booking_screenshot_file_id=files[0],
+            gesture_photo_file_id=files[1],
+        )
+        if data.get("jump_back"):
+            await state.update_data(jump_back=False)
+            await message.reply("✅ 2 张证据照片已收到。")
+            await _enter_confirm(message, state)
+            return
+        await message.reply("✅ 2 张证据照片已收到。")
+        await _enter_rating(message, state)
         return
-    await state.set_state(ReviewSubmitStates.waiting_gesture_photo)
-    await message.answer(
-        "✅ 约课截图已收到。\n\n"
-        "[Step C/12] 上传现场手势照片（必填）\n\n"
-        "请发送你在见到老师后的现场手势照片（如比心 / 竖大拇指 / 伸 3 根手指等）。\n"
-        "仅作为审核证据，不会公开展示。",
-        reply_markup=review_cancel_kb(),
-    )
 
-
-@router.message(ReviewSubmitStates.waiting_booking_screenshot)
-async def step_booking_invalid(message: types.Message):
-    await message.reply("❌ 请发送一张图片（不接受文字 / 视频 / 文件）。")
-
-
-# ============ Step C：手势照片 ============
-
-@router.message(ReviewSubmitStates.waiting_gesture_photo, F.photo)
-async def step_gesture_photo(message: types.Message, state: FSMContext):
-    file_id = message.photo[-1].file_id
-    await state.update_data(gesture_photo_file_id=file_id)
-    data = await state.get_data()
-    if data.get("jump_back"):
-        await state.update_data(jump_back=False)
-        await _enter_confirm(message, state)
+    # 还差 1 张
+    if message.media_group_id is None:
+        # 单张上传 → 立即提示
+        await message.reply(f"✅ 已收到第 {len(files)}/2 张，请继续上传剩余照片。")
         return
-    await _enter_rating(message, state)
+
+    # 媒体组中间张 → debounce 后提示（避免 N 张图刷屏）
+    chat_id = message.chat.id
+    old = _EVIDENCE_REPLY_TASKS.get(chat_id)
+    if old and not old.done():
+        old.cancel()
+    bot_ref = message.bot
+
+    async def _debounced_reply():
+        try:
+            await _asyncio.sleep(0.6)
+            d = await state.get_data()
+            cur_files = d.get("_evidence_files") or []
+            n = len(cur_files)
+            if n >= 2:
+                return
+            await bot_ref.send_message(
+                chat_id=chat_id,
+                text=f"✅ 已收到 {n}/2 张，请继续上传剩余照片。",
+            )
+        except _asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            _EVIDENCE_REPLY_TASKS.pop(chat_id, None)
+
+    _EVIDENCE_REPLY_TASKS[chat_id] = _asyncio.create_task(_debounced_reply())
 
 
-@router.message(ReviewSubmitStates.waiting_gesture_photo)
-async def step_gesture_invalid(message: types.Message):
-    await message.reply("❌ 请发送一张图片（不接受文字 / 视频 / 文件）。")
+@router.message(ReviewSubmitStates.waiting_evidence_media)
+async def step_evidence_invalid(message: types.Message):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        # /cancel 走 cmd_cancel 的全局 handler，这里防御性 echo
+        return
+    await message.reply("❌ 请发送图片（约课截图 + 手势照片 共 2 张，支持媒体组）。")
 
 
-# ============ Step 1：评级 ============
+# ============ Step 2：评级（文本输入） ============
 
 async def _enter_rating(msg_or_cb, state: FSMContext, *, via_edit: bool = False):
     await state.set_state(ReviewSubmitStates.waiting_rating)
+    options_inline = " / ".join(f"{r['emoji']} {r['label']}" for r in REVIEW_RATINGS)
     text = (
-        "[Step 1/9] 评级（必填）\n\n"
-        "请选择你对老师的整体印象："
+        "[Step 2/10] 评级（必填）\n\n"
+        "请**输入文字**回复你对老师的整体印象：\n"
+        f"  {options_inline}\n\n"
+        "（直接发送 "
+        + "、".join(f'「{r["label"]}」' for r in REVIEW_RATINGS)
+        + " 其中之一）"
     )
-    await _show(msg_or_cb, text, review_rating_kb(), via_edit=via_edit)
+    await _show(msg_or_cb, text, review_cancel_kb(), via_edit=via_edit)
 
 
-@router.callback_query(F.data.startswith("review:rating:"), ReviewSubmitStates.waiting_rating)
-async def cb_rating(callback: types.CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":")
-    if len(parts) != 3:
-        await callback.answer("参数错误", show_alert=True)
-        return
-    rating_key = parts[2]
-    valid = {r["key"] for r in REVIEW_RATINGS}
-    if rating_key not in valid:
-        await callback.answer("非法评级", show_alert=True)
+@router.message(ReviewSubmitStates.waiting_rating)
+async def msg_rating(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel(message, state)
+    # 匹配 label（去 emoji 前缀）
+    norm = text.lstrip("👍😐👎").strip()
+    rating_key = None
+    for r in REVIEW_RATINGS:
+        if norm == r["label"] or text == r["label"] or text == f"{r['emoji']} {r['label']}":
+            rating_key = r["key"]
+            break
+    if rating_key is None:
+        valid = " / ".join(r["label"] for r in REVIEW_RATINGS)
+        await message.reply(f"❌ 评级需输入：{valid}")
         return
     await state.update_data(rating=rating_key)
     data = await state.get_data()
     if data.get("jump_back"):
         await state.update_data(jump_back=False)
-        await _enter_confirm(callback.message, state, via_edit=True)
-        await callback.answer("已更新评级")
+        await message.reply(f"✅ 评级 = {next(r['label'] for r in REVIEW_RATINGS if r['key'] == rating_key)}")
+        await _enter_confirm(message, state)
         return
-    await _enter_score_step(callback.message, state, "humanphoto", via_edit=True)
-    await callback.answer()
+    await message.reply(f"✅ 评级 = {next(r['label'] for r in REVIEW_RATINGS if r['key'] == rating_key)}")
+    await _enter_score_step(message, state, "humanphoto")
 
 
-# ============ Step 2-7：6 维评分（共用入口） ============
+# ============ Step 3-8：6 维评分（文本输入，无按钮） ============
 
 async def _enter_score_step(msg, state: FSMContext, dim_key: str, *, via_edit: bool = False):
     step = _STEP_BY_KEY[dim_key]
     await state.set_state(step["state"])
-    step_num = next(i for i, s in enumerate(_SCORE_FLOW, start=2) if s["key"] == dim_key)
+    # 6 维顺序对应 Step 3-8（评级是 Step 2）
+    step_num = next(i for i, s in enumerate(_SCORE_FLOW, start=3) if s["key"] == dim_key)
     text = (
-        f"[Step {step_num}/9] {step['label']}（必填）\n\n"
-        "请打分 0.0 - 10.0（最多 1 位小数）。\n"
-        "可点下方快捷按钮，或直接回复数字。"
+        f"[Step {step_num}/10] {step['label']}（必填）\n\n"
+        "请**直接输入数字**打分 0.0 - 10.0（最多 1 位小数）。"
     )
-    await _show(msg, text, review_score_kb(dim_key, REVIEW_SCORE_QUICK_BUTTONS_FOR_DIM),
-                via_edit=via_edit)
-
-
-@router.callback_query(F.data.startswith("review:score:"))
-async def cb_score_button(callback: types.CallbackQuery, state: FSMContext):
-    """快捷数字按钮 callback：review:score:<dim_key>:<value>
-
-    dim_key ∈ {humanphoto, appearance, body, service, attitude, environment, overall}
-    """
-    parts = callback.data.split(":")
-    if len(parts) != 4:
-        await callback.answer("参数错误", show_alert=True)
-        return
-    dim_key, raw_val = parts[2], parts[3]
-    score = parse_review_score(raw_val)
-    if score is None:
-        await callback.answer("评分非法", show_alert=True)
-        return
-    cur = await state.get_state()
-    if dim_key == "overall":
-        if cur != ReviewSubmitStates.waiting_overall_score.state:
-            await callback.answer("当前不在综合评分步骤", show_alert=True)
-            return
-        await _record_overall(callback, state, score, via_edit=True)
-    elif dim_key in _STEP_BY_KEY:
-        if cur != _STEP_BY_KEY[dim_key]["state"].state:
-            await callback.answer("当前不在该评分步骤", show_alert=True)
-            return
-        await _record_score(callback, state, dim_key, score, via_edit=True)
-    else:
-        await callback.answer("未知维度", show_alert=True)
+    await _show(msg, text, review_cancel_kb(), via_edit=via_edit)
 
 
 @router.message(
@@ -436,11 +460,8 @@ async def msg_dim_score(message: types.Message, state: FSMContext):
         return await cmd_cancel(message, state)
     score = parse_review_score(text)
     if score is None:
-        await message.reply(
-            "❌ 请输入 0-10 的数字（最多 1 位小数），或点上方快捷按钮。"
-        )
+        await message.reply("❌ 请输入 0-10 的数字（最多 1 位小数）。")
         return
-    # 找到当前状态对应的 dim_key
     cur_state = await state.get_state()
     dim_key: Optional[str] = None
     for s in _SCORE_FLOW:
@@ -452,6 +473,20 @@ async def msg_dim_score(message: types.Message, state: FSMContext):
     await _record_score(message, state, dim_key, score, via_edit=False)
 
 
+def _compute_overall_avg(data: dict) -> float:
+    """从 state.data 取 6 维分数算均值；返回保留 1 位小数。
+
+    任一维度缺失时（不应该发生）回退到 0.0。
+    """
+    try:
+        vals = [float(data.get(s["column"])) for s in _SCORE_FLOW]
+    except (TypeError, ValueError):
+        return 0.0
+    if not vals:
+        return 0.0
+    return round(sum(vals) / len(vals), 1)
+
+
 async def _record_score(
     msg_or_cb, state: FSMContext, dim_key: str, score: float, *, via_edit: bool,
 ):
@@ -460,81 +495,41 @@ async def _record_score(
     data = await state.get_data()
     if data.get("jump_back"):
         await state.update_data(jump_back=False)
-        await _ack(msg_or_cb, f"✅ 已更新「{_STEP_BY_KEY[dim_key]['label']}」= {score}")
+        # 跳回模式：单维改完即回确认页；同时重新计算 overall
+        overall = _compute_overall_avg(await state.get_data())
+        await state.update_data(overall_score=overall)
+        await _ack(msg_or_cb, f"✅ 已更新「{_STEP_BY_KEY[dim_key]['label']}」= {score}（综合自动 = {overall}）")
         await _enter_confirm(_extract_msg(msg_or_cb), state, via_edit=via_edit)
         return
-    # 下一个维度 or 综合
     idx = next(i for i, s in enumerate(_SCORE_FLOW) if s["key"] == dim_key)
     if idx + 1 < len(_SCORE_FLOW):
         next_key = _SCORE_FLOW[idx + 1]["key"]
         await _ack(msg_or_cb, f"✅ {_STEP_BY_KEY[dim_key]['label']} = {score}")
         await _enter_score_step(_extract_msg(msg_or_cb), state, next_key, via_edit=via_edit)
     else:
-        # 转 Step 8 综合评分
-        await _ack(msg_or_cb, f"✅ {_STEP_BY_KEY[dim_key]['label']} = {score}")
-        await _enter_overall(_extract_msg(msg_or_cb), state, via_edit=via_edit)
-
-
-# ============ Step 8：综合评分 ============
-
-async def _enter_overall(msg, state: FSMContext, *, via_edit: bool = False):
-    await state.set_state(ReviewSubmitStates.waiting_overall_score)
-    text = (
-        "[Step 8/9] 🎯 综合评分（必填）\n\n"
-        "请打个综合分 0.0 - 10.0（与 6 维平均可有差异，不强制一致）。\n"
-        "可点下方快捷按钮，或直接回复数字。"
-    )
-    await _show(msg, text, review_score_kb("overall", REVIEW_SCORE_QUICK_BUTTONS_FOR_OVERALL),
-                via_edit=via_edit)
-
-
-@router.message(ReviewSubmitStates.waiting_overall_score)
-async def msg_overall(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await cmd_cancel(message, state)
-    score = parse_review_score(text)
-    if score is None:
-        await message.reply(
-            "❌ 请输入 0-10 的数字（最多 1 位小数），或点上方快捷按钮。"
+        # 6 维全部完成 → 综合 = 平均；直接进 Step 9 过程描述
+        overall = _compute_overall_avg(await state.get_data())
+        await state.update_data(overall_score=overall)
+        await _ack(
+            msg_or_cb,
+            f"✅ {_STEP_BY_KEY[dim_key]['label']} = {score}\n"
+            f"📊 综合评分（自动取 6 维平均）= {overall}"
         )
-        return
-    await _record_overall(message, state, score, via_edit=False)
+        await _enter_summary(_extract_msg(msg_or_cb), state, via_edit=via_edit)
 
 
-# review:score:overall:<value> 复用 cb_score_button → 走到这里
-async def _record_overall(msg_or_cb, state: FSMContext, score: float, *, via_edit: bool):
-    await state.update_data(overall_score=score)
-    data = await state.get_data()
-    if data.get("jump_back"):
-        await state.update_data(jump_back=False)
-        await _ack(msg_or_cb, f"✅ 综合评分 = {score}")
-        await _enter_confirm(_extract_msg(msg_or_cb), state, via_edit=via_edit)
-        return
-    await _ack(msg_or_cb, f"✅ 综合评分 = {score}")
-    await _enter_summary(_extract_msg(msg_or_cb), state, via_edit=via_edit)
+# 综合评分自动计算（_compute_overall_avg）；不再有 user-facing 输入步
 
 
-# ============ Step 9：过程描述（可选） ============
+# ============ Step 9：过程描述（必填） ============
 
 async def _enter_summary(msg, state: FSMContext, *, via_edit: bool = False):
     await state.set_state(ReviewSubmitStates.waiting_summary)
     text = (
-        f"[Step 9/9] 📝 过程描述（可选，{REVIEW_SUMMARY_MIN_LEN}-{REVIEW_SUMMARY_MAX_LEN} 字）\n\n"
-        "用一句话描述整体感受 / 过程，会显示在评论区。\n"
-        "点 [⏭ 跳过] 也可。"
+        f"[Step 9/10] 📝 过程描述（**必填**，{REVIEW_SUMMARY_MIN_LEN}-{REVIEW_SUMMARY_MAX_LEN} 字）\n\n"
+        "请用一句话描述整体感受 / 过程，会显示在评论区。"
     )
-    await _show(msg, text, review_summary_skip_cancel_kb(), via_edit=via_edit)
-
-
-@router.callback_query(F.data == "review:summary_skip", ReviewSubmitStates.waiting_summary)
-async def cb_summary_skip(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(summary=None)
-    data = await state.get_data()
-    if data.get("jump_back"):
-        await state.update_data(jump_back=False)
-    await _enter_reimbursement_step(callback.message, state, via_edit=True)
-    await callback.answer("已跳过")
+    await _show(msg, text, review_cancel_kb(), via_edit=via_edit)
 
 
 @router.message(ReviewSubmitStates.waiting_summary)
@@ -543,7 +538,7 @@ async def msg_summary(message: types.Message, state: FSMContext):
     if text == "/cancel":
         return await cmd_cancel(message, state)
     if not text:
-        await message.reply("❌ 请用文字回复，或点 [⏭ 跳过]。")
+        await message.reply("❌ 过程描述必填，请输入文字。")
         return
     if len(text) < REVIEW_SUMMARY_MIN_LEN or len(text) > REVIEW_SUMMARY_MAX_LEN:
         await message.reply(
@@ -554,6 +549,8 @@ async def msg_summary(message: types.Message, state: FSMContext):
     data = await state.get_data()
     if data.get("jump_back"):
         await state.update_data(jump_back=False)
+        await _enter_confirm(message, state)
+        return
     await _enter_reimbursement_step(message, state, via_edit=False)
 
 
@@ -661,7 +658,7 @@ async def _enter_confirm(msg, state: FSMContext, *, via_edit: bool = False):
         f"📸 约课截图：{'✅ 已上传' if data.get('booking_screenshot_file_id') else '❌ 缺'}",
         f"✋ 现场手势：{'✅ 已上传' if data.get('gesture_photo_file_id') else '❌ 缺'}",
         "",
-        f"评级：{rating_str} · 🎯 综合 {overall}",
+        f"评级：{rating_str} · 🎯 综合 {overall}（自动 = 6 维平均）",
         "",
         f"🎨 人照：{data.get('score_humanphoto', '?')}",
         f"颜值：{data.get('score_appearance', '?')}",
@@ -692,34 +689,34 @@ async def _enter_confirm(msg, state: FSMContext, *, via_edit: bool = False):
 # ============ 修改某项跳回 ============
 
 _EDIT_DESTINATION: dict[str, dict] = {
-    "booking":     {"state": ReviewSubmitStates.waiting_booking_screenshot,
-                    "prompt": "请重新发送约课记录截图。", "kind": "photo"},
-    "gesture":     {"state": ReviewSubmitStates.waiting_gesture_photo,
-                    "prompt": "请重新发送现场手势照片。", "kind": "photo"},
+    "evidence":    {"state": ReviewSubmitStates.waiting_evidence_media,
+                    "prompt": "请重新上传 2 张证据照片（约课截图 + 手势照片，支持媒体组）。",
+                    "kind": "photo"},
     "rating":      {"state": ReviewSubmitStates.waiting_rating,
-                    "prompt": "请重新选择评级：", "kind": "rating"},
+                    "prompt": "请重新输入评级（好评 / 中评 / 差评）：",
+                    "kind": "rating"},
     "humanphoto":  {"state": ReviewSubmitStates.waiting_score_humanphoto,
-                    "prompt": "请重新打 🎨 人照评分（0-10）：", "kind": "score",
-                    "dim_key": "humanphoto"},
+                    "prompt": "请重新输入 🎨 人照评分（0-10）：",
+                    "kind": "score", "dim_key": "humanphoto"},
     "appearance":  {"state": ReviewSubmitStates.waiting_score_appearance,
-                    "prompt": "请重新打颜值评分（0-10）：", "kind": "score",
-                    "dim_key": "appearance"},
+                    "prompt": "请重新输入颜值评分（0-10）：",
+                    "kind": "score", "dim_key": "appearance"},
     "body":        {"state": ReviewSubmitStates.waiting_score_body,
-                    "prompt": "请重新打身材评分（0-10）：", "kind": "score",
-                    "dim_key": "body"},
+                    "prompt": "请重新输入身材评分（0-10）：",
+                    "kind": "score", "dim_key": "body"},
     "service":     {"state": ReviewSubmitStates.waiting_score_service,
-                    "prompt": "请重新打服务评分（0-10）：", "kind": "score",
-                    "dim_key": "service"},
+                    "prompt": "请重新输入服务评分（0-10）：",
+                    "kind": "score", "dim_key": "service"},
     "attitude":    {"state": ReviewSubmitStates.waiting_score_attitude,
-                    "prompt": "请重新打态度评分（0-10）：", "kind": "score",
-                    "dim_key": "attitude"},
+                    "prompt": "请重新输入态度评分（0-10）：",
+                    "kind": "score", "dim_key": "attitude"},
     "environment": {"state": ReviewSubmitStates.waiting_score_environment,
-                    "prompt": "请重新打环境评分（0-10）：", "kind": "score",
-                    "dim_key": "environment"},
-    "overall":     {"state": ReviewSubmitStates.waiting_overall_score,
-                    "prompt": "请重新打综合评分（0-10）：", "kind": "overall"},
+                    "prompt": "请重新输入环境评分（0-10）：",
+                    "kind": "score", "dim_key": "environment"},
+    # 综合评分自动 = 6 维平均，无独立编辑项
     "summary":     {"state": ReviewSubmitStates.waiting_summary,
-                    "prompt": "请重新输入过程描述（或跳过）：", "kind": "summary"},
+                    "prompt": "请重新输入过程描述（必填）：",
+                    "kind": "summary"},
 }
 
 
@@ -730,22 +727,13 @@ async def cb_review_edit(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("参数错误", show_alert=True)
         return
     dest = _EDIT_DESTINATION[parts[2]]
+    if parts[2] == "evidence":
+        # 重传证据时清空已存的 file_id 防止半边新半边旧
+        await state.update_data(_evidence_files=[])
     await state.set_state(dest["state"])
     await state.update_data(jump_back=True)
-
-    kind = dest["kind"]
-    if kind == "rating":
-        kb = review_rating_kb()
-    elif kind == "score":
-        kb = review_score_kb(dest["dim_key"], REVIEW_SCORE_QUICK_BUTTONS_FOR_DIM)
-    elif kind == "overall":
-        kb = review_score_kb("overall", REVIEW_SCORE_QUICK_BUTTONS_FOR_OVERALL)
-    elif kind == "summary":
-        kb = review_summary_skip_cancel_kb()
-    else:  # photo
-        kb = review_cancel_kb()
-
-    await callback.message.edit_text(dest["prompt"], reply_markup=kb)
+    # 所有跳回都用统一的 cancel 键盘（无快捷按钮）
+    await callback.message.edit_text(dest["prompt"], reply_markup=review_cancel_kb())
     await callback.answer()
 
 

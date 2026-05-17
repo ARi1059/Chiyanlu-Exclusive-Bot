@@ -493,16 +493,15 @@ def review_reimbursement_choice_kb(amount: int) -> InlineKeyboardMarkup:
 
 
 _REVIEW_EDIT_KEYS: list[tuple[str, str]] = [
-    ("booking", "约课截图"),
-    ("gesture", "手势照片"),
+    ("evidence", "证据照片"),  # 替换原 booking + gesture（合并为媒体组）
     ("rating", "评级"),
-    ("overall", "综合"),
     ("humanphoto", "人照"),
     ("appearance", "颜值"),
     ("body", "身材"),
     ("service", "服务"),
     ("attitude", "态度"),
     ("environment", "环境"),
+    # 综合评分由 6 维自动平均，无独立编辑项
     ("summary", "过程"),
 ]
 

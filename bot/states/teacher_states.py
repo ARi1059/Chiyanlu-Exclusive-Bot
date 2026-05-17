@@ -138,27 +138,35 @@ class WriteReviewLookupStates(StatesGroup):
 
 
 class ReviewSubmitStates(StatesGroup):
-    """Phase 9.3：用户提交评价 12 步 FSM（前置 3 步证据 + 9 步评分）
+    """用户提交评价 FSM（v2 2026-05-18：10 步精简版 + 1 条件步）
 
-    本 phase 仅从 teacher_detail [📝 写评价] 入口（teacher_id 已知），
-    Step A 选老师留给 9.5。state.data 累加：
-        teacher_id / booking_screenshot_file_id / gesture_photo_file_id /
-        rating / score_humanphoto / score_appearance / score_body /
-        score_service / score_attitude / score_environment / overall_score /
-        summary（可空）/ jump_back（确认页跳回时为 True）
+    主要变化：
+        - 约课截图 + 手势照片合并为 1 步（支持媒体组）
+        - 评级 + 6 维评分要求用户**自行输入文本**（无快捷按钮）
+        - 综合评分**自动**取 6 维平均（不再让用户单独打分）
+        - 过程描述改为**必填**（不再可跳过）
+
+    state.data 累加：
+        teacher_id /
+        booking_screenshot_file_id / gesture_photo_file_id /  ← 来自媒体组首 2 张
+        rating /
+        score_humanphoto / score_appearance / score_body /
+        score_service / score_attitude / score_environment /
+        overall_score（自动 = avg）/
+        summary（必填）/
+        request_reimbursement /
+        jump_back（确认页跳回时为 True）
     """
-    waiting_booking_screenshot = State()  # Step B
-    waiting_gesture_photo      = State()  # Step C
-    waiting_rating             = State()  # Step 1
-    waiting_score_humanphoto   = State()  # Step 2
-    waiting_score_appearance   = State()  # Step 3
-    waiting_score_body         = State()  # Step 4
-    waiting_score_service      = State()  # Step 5
-    waiting_score_attitude     = State()  # Step 6
-    waiting_score_environment  = State()  # Step 7
-    waiting_overall_score      = State()  # Step 8
+    waiting_evidence_media     = State()  # Step 1：约课截图 + 手势照片（媒体组）
+    waiting_rating             = State()  # Step 2：评级
+    waiting_score_humanphoto   = State()  # Step 3
+    waiting_score_appearance   = State()  # Step 4
+    waiting_score_body         = State()  # Step 5
+    waiting_score_service      = State()  # Step 6
+    waiting_score_attitude     = State()  # Step 7
+    waiting_score_environment  = State()  # Step 8
     waiting_summary            = State()  # Step 9
-    waiting_reimbursement_choice = State()  # 报销意愿（条件可见）
+    waiting_reimbursement_choice = State()  # Step 10（条件可见）
     waiting_confirm            = State()
 
 
