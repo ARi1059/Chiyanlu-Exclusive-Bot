@@ -154,6 +154,41 @@ def my_favorites_kb(favorites: list[dict]) -> InlineKeyboardMarkup:
 # ============ 老师详情页 / 列表（Phase 2） ============
 
 
+def review_cancelled_kb(teacher_id: Optional[int] = None) -> InlineKeyboardMarkup:
+    """评价取消后的恢复键盘
+
+    有 teacher_id（FSM 进到了 ReviewSubmit 阶段，已知评价对象）：
+        [📋 返回老师详情页] [📝 重新写评价]
+        [🔙 返回主菜单]
+
+    无 teacher_id（仅 WriteReviewLookup 阶段就被取消）：
+        [📝 重新写评价] [🔙 返回主菜单]
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if teacher_id is not None:
+        rows.append([
+            InlineKeyboardButton(
+                text="📋 返回老师详情页",
+                callback_data=f"teacher:view:{teacher_id}",
+            ),
+            InlineKeyboardButton(
+                text="📝 重新写评价",
+                callback_data="user:write_review",
+            ),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                text="📝 重新写评价",
+                callback_data="user:write_review",
+            ),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def teacher_detail_kb(
     teacher: dict,
     *,

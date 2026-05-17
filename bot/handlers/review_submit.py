@@ -44,6 +44,7 @@ from bot.database import (
 )
 from bot.keyboards.user_kb import (
     review_cancel_kb,
+    review_cancelled_kb,
     review_subscribe_links_kb,
     review_rating_kb,
     review_reimbursement_choice_kb,
@@ -149,7 +150,8 @@ async def on_write_review_teacher_name(message: types.Message, state: FSMContext
     if text == "/cancel":
         await state.clear()
         await message.answer(
-            "❌ 已取消。回到主菜单可重新点 [📝 写评价]。"
+            "❌ 已取消写评价。",
+            reply_markup=review_cancelled_kb(),
         )
         return
     if not text or len(text) > 60:
@@ -205,7 +207,11 @@ async def on_write_review_teacher_name(message: types.Message, state: FSMContext
 @router.message(F.text == "/cancel", WriteReviewLookupStates())
 async def cmd_cancel_write_review_lookup(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ 已取消写评价。")
+    # 此状态下尚未选老师，kb 不传 teacher_id
+    await message.answer(
+        "❌ 已取消写评价。",
+        reply_markup=review_cancelled_kb(),
+    )
 
 
 # ============ 老师详情页 [📝 写评价] callback ============
@@ -264,19 +270,33 @@ async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):
 
 # ============ 通用取消 ============
 
+async def _cancel_with_kb(state: FSMContext) -> tuple[str, "InlineKeyboardMarkup | None"]:
+    """读 teacher_id（如有）→ 清 state → 返回 (文案, kb)"""
+    data = await state.get_data()
+    tid = data.get("teacher_id")
+    await state.clear()
+    try:
+        tid_int = int(tid) if tid is not None else None
+    except (TypeError, ValueError):
+        tid_int = None
+    text = "❌ 已取消评价。"
+    return text, review_cancelled_kb(tid_int)
+
+
 @router.callback_query(F.data == "review:cancel")
 async def cb_review_cancel(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text(
-        "❌ 已取消评价。回到老师详情页可重新点 [📝 写评价]。"
-    )
+    text, kb = await _cancel_with_kb(state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
     await callback.answer("已取消")
 
 
 @router.message(F.text == "/cancel", ReviewSubmitStates())
 async def cmd_cancel(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ 已取消评价。回到老师详情页可重新点 [📝 写评价]。")
+    text, kb = await _cancel_with_kb(state)
+    await message.answer(text, reply_markup=kb)
 
 
 # ============ Step B：约课截图 ============
