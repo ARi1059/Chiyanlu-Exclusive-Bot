@@ -294,7 +294,20 @@ def teacher_profile_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✏️ 编辑老师档案", callback_data="tprofile:edit")],
         [InlineKeyboardButton(text="🖼 管理照片相册", callback_data="tprofile:album")],
         [InlineKeyboardButton(text="👁 预览档案 caption", callback_data="tprofile:preview")],
+        [InlineKeyboardButton(text="🔄 老数据一键同步", callback_data="tprofile:sync_legacy")],
         [InlineKeyboardButton(text="🔙 返回老师管理", callback_data="menu:teacher")],
+    ])
+
+
+def tprofile_sync_legacy_confirm_kb() -> InlineKeyboardMarkup:
+    """老数据同步预览页的二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认同步",
+                                 callback_data="tprofile:sync_legacy_ok"),
+            InlineKeyboardButton(text="🔙 取消",
+                                 callback_data="tprofile:menu"),
+        ],
     ])
 
 

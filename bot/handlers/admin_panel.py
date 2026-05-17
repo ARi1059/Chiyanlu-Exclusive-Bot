@@ -1027,6 +1027,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "reimburse_activate": "激活报销名单条目（queued → pending）",
     "brand_name_set": "设置档案品牌名",
     "brand_channels_set": "设置档案品牌频道",
+    "teacher_sync_legacy": "老师档案一键同步（description/taboos/button_text）",
 }
 
 

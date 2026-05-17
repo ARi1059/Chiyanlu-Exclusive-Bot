@@ -648,6 +648,162 @@ async def cb_profile_save(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("已保存")
 
 
+# ============ 老数据一键同步（2026-05-17）============
+#
+# 把所有已存在老师的 3 个字段强制刷成新规则：
+#   - description = 按 price 档位 (出击加分 1分 报销金额 100/150/200元)
+#   - taboos = DEFAULT_TABOOS（写死字符串）
+#   - button_text = "地区 艺名"
+# admin 之前手动改过的会被覆盖。两步确认 + 详细统计 + audit。
+
+
+def _compute_legacy_sync_target(t: dict) -> dict:
+    """对一个老师计算 3 个新字段值（不写 DB）
+
+    返回 {description, taboos, button_text}；其中 description 在老师 price
+    无数字时为 ""（此时跳过更新），button_text 缺地区时退化为 display_name。
+    """
+    desc = _compute_description_from_price(t.get("price"))
+    taboos = DEFAULT_TABOOS
+    region = (t.get("region") or "").strip()
+    name = (t.get("display_name") or "").strip()
+    bt = f"{region} {name}".strip() or name
+    return {"description": desc, "taboos": taboos, "button_text": bt}
+
+
+async def _scan_legacy_sync_diff() -> dict:
+    """扫描所有老师，统计将变更的字段数（不写 DB），用于预览页"""
+    from bot.database import get_all_teachers
+    teachers = await get_all_teachers(active_only=False)
+    stats = {
+        "total": len(teachers),
+        "diff_description": 0,
+        "diff_taboos": 0,
+        "diff_button_text": 0,
+        "diff_any": 0,
+    }
+    for t in teachers:
+        target = _compute_legacy_sync_target(t)
+        any_diff = False
+        if target["description"] and (t.get("description") or "") != target["description"]:
+            stats["diff_description"] += 1
+            any_diff = True
+        if (t.get("taboos") or "") != target["taboos"]:
+            stats["diff_taboos"] += 1
+            any_diff = True
+        if (t.get("button_text") or "") != target["button_text"]:
+            stats["diff_button_text"] += 1
+            any_diff = True
+        if any_diff:
+            stats["diff_any"] += 1
+    return stats
+
+
+async def _run_legacy_sync() -> dict:
+    """实际执行：遍历所有老师，把不一致的字段写入 DB
+
+    返回与 _scan 同结构 + updated 计数。
+    """
+    from bot.database import (
+        get_all_teachers,
+        update_teacher,
+        update_teacher_profile_field,
+    )
+    teachers = await get_all_teachers(active_only=False)
+    stats = {
+        "total": len(teachers),
+        "diff_description": 0,
+        "diff_taboos": 0,
+        "diff_button_text": 0,
+        "updated": 0,
+    }
+    for t in teachers:
+        target = _compute_legacy_sync_target(t)
+        uid = int(t["user_id"])
+        any_diff = False
+        if target["description"] and (t.get("description") or "") != target["description"]:
+            ok = await update_teacher_profile_field(uid, "description", target["description"])
+            if ok:
+                stats["diff_description"] += 1
+                any_diff = True
+        if (t.get("taboos") or "") != target["taboos"]:
+            ok = await update_teacher_profile_field(uid, "taboos", target["taboos"])
+            if ok:
+                stats["diff_taboos"] += 1
+                any_diff = True
+        if (t.get("button_text") or "") != target["button_text"]:
+            ok = await update_teacher(uid, "button_text", target["button_text"])
+            if ok:
+                stats["diff_button_text"] += 1
+                any_diff = True
+        if any_diff:
+            stats["updated"] += 1
+    return stats
+
+
+@router.callback_query(F.data == "tprofile:sync_legacy")
+@admin_required
+async def cb_sync_legacy_preview(callback: types.CallbackQuery, state: FSMContext):
+    """[🔄 老数据一键同步] 预览页（不写 DB，仅扫描差异）"""
+    from bot.keyboards.admin_kb import tprofile_sync_legacy_confirm_kb
+    await state.clear()
+    stats = await _scan_legacy_sync_diff()
+    text = (
+        "🔄 老数据一键同步（预览）\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"📊 共 {stats['total']} 位老师（含停用），其中 {stats['diff_any']} 位有字段需更新\n\n"
+        "将按新规则刷新以下 3 个字段：\n"
+        f"  📋 描述需更新：{stats['diff_description']} 位\n"
+        "       规则：按 price 档位（≤800P→100元 / 900P→150元 / ≥1000P→200元）\n"
+        f"  🚫 禁忌需更新：{stats['diff_taboos']} 位\n"
+        f"       规则：写死 \"{DEFAULT_TABOOS}\"\n"
+        f"  🔠 按钮文字需更新：{stats['diff_button_text']} 位\n"
+        "       规则：「地区 艺名」\n"
+        "━━━━━━━━━━━━━━━\n"
+        "⚠️ 已经手动改过这些字段的老师会被覆盖。\n"
+        "⚠️ 频道帖 caption 不自动重发，下次该老师任何字段变动时自动同步。"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=tprofile_sync_legacy_confirm_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=tprofile_sync_legacy_confirm_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tprofile:sync_legacy_ok")
+@admin_required
+async def cb_sync_legacy_execute(callback: types.CallbackQuery, state: FSMContext):
+    """实际执行同步"""
+    from bot.database import log_admin_audit
+    await callback.answer("⏳ 正在同步...")
+    stats = await _run_legacy_sync()
+    try:
+        await log_admin_audit(
+            admin_id=callback.from_user.id,
+            action="teacher_sync_legacy",
+            target_type="teachers",
+            target_id="",
+            detail=stats,
+        )
+    except Exception:
+        pass
+    text = (
+        "✅ 老数据同步完成\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"📊 共 {stats['total']} 位老师，{stats['updated']} 位实际更新\n\n"
+        f"  📋 描述字段写入：{stats['diff_description']} 位\n"
+        f"  🚫 禁忌字段写入：{stats['diff_taboos']} 位\n"
+        f"  🔠 按钮文字写入：{stats['diff_button_text']} 位\n"
+        "━━━━━━━━━━━━━━━\n"
+        "ℹ️ 已发布的频道帖 caption 不会自动重发；可用 [🔄 重发档案帖] 逐位重发，\n"
+        "   或等下次评价审核 / 字段编辑触发自动刷新。"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=teacher_profile_menu_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=teacher_profile_menu_kb())
+
+
 # ============ /cancel 文本退出（任意 FSM 步骤）============
 
 @router.message(F.text == "/cancel", TeacherProfileAddStates())
