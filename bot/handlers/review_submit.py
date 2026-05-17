@@ -19,6 +19,7 @@ import re
 from typing import Optional
 
 from aiogram import Router, types, F
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.database import (
@@ -389,20 +390,43 @@ async def step_evidence_invalid(message: types.Message):
     await message.reply("❌ 请发送图片（约课截图 + 手势照片 共 2 张，支持媒体组）。")
 
 
-# ============ Step 2：评级（文本输入） ============
+# ============ Step 2：评级（按钮 + 文本均可） ============
 
 async def _enter_rating(msg_or_cb, state: FSMContext, *, via_edit: bool = False):
     await state.set_state(ReviewSubmitStates.waiting_rating)
-    options_inline = " / ".join(f"{r['emoji']} {r['label']}" for r in REVIEW_RATINGS)
     text = (
         "[Step 2/10] 评级（必填）\n\n"
-        "请**输入文字**回复你对老师的整体印象：\n"
-        f"  {options_inline}\n\n"
-        "（直接发送 "
-        + "、".join(f'「{r["label"]}」' for r in REVIEW_RATINGS)
-        + " 其中之一）"
+        "请选择对老师的整体印象（也可直接输入文字「好评 / 中评 / 差评」）："
     )
-    await _show(msg_or_cb, text, review_cancel_kb(), via_edit=via_edit)
+    await _show(msg_or_cb, text, review_rating_kb(), via_edit=via_edit)
+
+
+async def _accept_rating(msg_or_cb, state: FSMContext, rating_key: str, *, via_edit: bool):
+    """评级被选定（按钮或文本）→ 落数据，进入下一步或回确认页"""
+    await state.update_data(rating=rating_key)
+    label = next(r["label"] for r in REVIEW_RATINGS if r["key"] == rating_key)
+    data = await state.get_data()
+    if data.get("jump_back"):
+        await state.update_data(jump_back=False)
+        await _ack(msg_or_cb, f"✅ 评级 = {label}")
+        await _enter_confirm(_extract_msg(msg_or_cb), state, via_edit=via_edit)
+        return
+    await _ack(msg_or_cb, f"✅ 评级 = {label}")
+    await _enter_score_step(_extract_msg(msg_or_cb), state, "humanphoto", via_edit=via_edit)
+
+
+@router.callback_query(F.data.startswith("review:rating:"), ReviewSubmitStates.waiting_rating)
+async def cb_rating(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    rating_key = parts[2]
+    valid = {r["key"] for r in REVIEW_RATINGS}
+    if rating_key not in valid:
+        await callback.answer("非法评级", show_alert=True)
+        return
+    await _accept_rating(callback, state, rating_key, via_edit=True)
 
 
 @router.message(ReviewSubmitStates.waiting_rating)
@@ -410,7 +434,6 @@ async def msg_rating(message: types.Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "/cancel":
         return await cmd_cancel(message, state)
-    # 匹配 label（去 emoji 前缀）
     norm = text.lstrip("👍😐👎").strip()
     rating_key = None
     for r in REVIEW_RATINGS:
@@ -419,17 +442,9 @@ async def msg_rating(message: types.Message, state: FSMContext):
             break
     if rating_key is None:
         valid = " / ".join(r["label"] for r in REVIEW_RATINGS)
-        await message.reply(f"❌ 评级需输入：{valid}")
+        await message.reply(f"❌ 评级需输入：{valid}（或点上方按钮）")
         return
-    await state.update_data(rating=rating_key)
-    data = await state.get_data()
-    if data.get("jump_back"):
-        await state.update_data(jump_back=False)
-        await message.reply(f"✅ 评级 = {next(r['label'] for r in REVIEW_RATINGS if r['key'] == rating_key)}")
-        await _enter_confirm(message, state)
-        return
-    await message.reply(f"✅ 评级 = {next(r['label'] for r in REVIEW_RATINGS if r['key'] == rating_key)}")
-    await _enter_score_step(message, state, "humanphoto")
+    await _accept_rating(message, state, rating_key, via_edit=False)
 
 
 # ============ Step 3-8：6 维评分（文本输入，无按钮） ============
@@ -446,14 +461,14 @@ async def _enter_score_step(msg, state: FSMContext, dim_key: str, *, via_edit: b
     await _show(msg, text, review_cancel_kb(), via_edit=via_edit)
 
 
-@router.message(
+@router.message(StateFilter(
     ReviewSubmitStates.waiting_score_humanphoto,
     ReviewSubmitStates.waiting_score_appearance,
     ReviewSubmitStates.waiting_score_body,
     ReviewSubmitStates.waiting_score_service,
     ReviewSubmitStates.waiting_score_attitude,
     ReviewSubmitStates.waiting_score_environment,
-)
+))
 async def msg_dim_score(message: types.Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "/cancel":
@@ -728,12 +743,12 @@ async def cb_review_edit(callback: types.CallbackQuery, state: FSMContext):
         return
     dest = _EDIT_DESTINATION[parts[2]]
     if parts[2] == "evidence":
-        # 重传证据时清空已存的 file_id 防止半边新半边旧
         await state.update_data(_evidence_files=[])
     await state.set_state(dest["state"])
     await state.update_data(jump_back=True)
-    # 所有跳回都用统一的 cancel 键盘（无快捷按钮）
-    await callback.message.edit_text(dest["prompt"], reply_markup=review_cancel_kb())
+    # 评级跳回时用按钮键盘；其它（证据/评分/总结）用 cancel 键盘
+    kb = review_rating_kb() if dest["kind"] == "rating" else review_cancel_kb()
+    await callback.message.edit_text(dest["prompt"], reply_markup=kb)
     await callback.answer()
 
 
