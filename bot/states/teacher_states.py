@@ -223,27 +223,38 @@ class ReportSettingsStates(StatesGroup):
 
 
 class TeacherProfileAddStates(StatesGroup):
-    """Phase 9.1：完整老师档案录入 FSM（13 步）
+    """老师完整档案录入 FSM（v2 2026-05-17：9 步精简版 + 3 备用步）
 
-    state.data 会累加：display_name/age/height_cm/weight_kg/bra_size/description/
-    service_content/price_detail/taboos/contact_telegram/region/price/tags/
-    button_url/button_text/photos(list[str])。
+    主路径：
+        Step 1 转发老师消息  → 自动抓 user_id + username + @contact_telegram
+        Step 2 艺名 display_name
+        Step 3 基本信息 age/height_cm/weight_kg/bra_size
+        Step 4 地区 region
+        Step 5 价格描述 price_detail → 自动派生 price（最大金额）+ description（积分/报销档）+ taboos（写死）
+        Step 6 服务内容 service_content（可跳过）
+        Step 7 标签 tags
+        Step 8 跳转链接 button_url
+        Step 9 上传相册 photos（支持媒体组）
+        → button_text 自动 = "{region} {display_name}"
+        → confirm 预览 + 保存
+
+    Step 1 备用：转发消息缺 forward_from 时进 3 个手动步骤
     """
-    waiting_user_id          = State()  # 复用 Telegram user_id（新建必须）
-    waiting_username         = State()  # @ username
+    # Step 1 主：转发
+    waiting_forward          = State()
+    # Step 1 备用（fallback：转发缺 forward_from 时手动 3 步）
+    waiting_manual_user_id   = State()
+    waiting_manual_username  = State()
+    waiting_manual_contact   = State()
+    # Step 2-9
     waiting_display_name     = State()
     waiting_basic_info       = State()  # 一行 "年龄 身高 体重 罩杯"
-    waiting_description      = State()  # 可跳过
-    waiting_service_content  = State()  # 可跳过
-    waiting_price_detail     = State()  # 必填
-    waiting_taboos           = State()  # 可跳过
-    waiting_contact_telegram = State()  # 必须含 @
     waiting_region           = State()
-    waiting_price            = State()
+    waiting_price_detail     = State()  # 必填；自动派生 price / description / taboos
+    waiting_service_content  = State()  # 可跳过
     waiting_tags             = State()
     waiting_button_url       = State()
-    waiting_button_text      = State()  # 可跳过
-    waiting_photos           = State()  # 多图 + 回复 "完成"
+    waiting_photos           = State()  # 支持媒体组聚合 + "完成"
     waiting_confirm          = State()
 
 

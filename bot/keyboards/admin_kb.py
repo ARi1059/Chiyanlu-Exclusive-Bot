@@ -272,12 +272,9 @@ def dashboard_audit_back_kb() -> InlineKeyboardMarkup:
 def teacher_menu_kb() -> InlineKeyboardMarkup:
     """老师管理子面板
 
-    Phase 9.1：新增 [📋 老师档案管理] 入口，进入完整档案的录入/编辑/相册/预览。
-    旧 [➕ 添加老师] / [✏️ 编辑老师]（简版录入）保留，向后兼容。
+    2026-05-17：移除简版录入入口；统一通过 [📋 老师档案管理] 进入完整档案流程。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ 添加老师 (简版)", callback_data="teacher:add")],
-        [InlineKeyboardButton(text="✏️ 编辑老师 (简版)", callback_data="teacher:edit")],
         [InlineKeyboardButton(text="📋 老师档案管理", callback_data="tprofile:menu")],
         [
             InlineKeyboardButton(text="停用老师", callback_data="teacher:delete"),

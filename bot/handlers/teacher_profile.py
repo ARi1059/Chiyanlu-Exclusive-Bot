@@ -46,8 +46,77 @@ from bot.utils.url import normalize_url
 router = Router(name="teacher_profile")
 
 
-# 总步数（用于"Step X/15"提示）
-_TOTAL_STEPS = 15
+# 总步数（v2 2026-05-17：精简到 9 步主路径）
+_TOTAL_STEPS = 9
+
+# Step 5 自动写死禁忌
+DEFAULT_TABOOS: str = "桩机 粗大长 口嗨 变态 后花园 醉酒 无套 暴力 嗑药"
+
+
+def _extract_largest_price(text: str) -> Optional[str]:
+    """从「价格描述」抽出所有形如 '\\d+P' 的数字，取最大值作为价格（排序用）
+
+    返回 'NP' 字符串；找不到任何 P 数字时返 None。
+    """
+    if not text:
+        return None
+    matches = re.findall(r"(\d+)\s*[Pp](?![a-zA-Z])", text)
+    if not matches:
+        return None
+    try:
+        nums = [int(m) for m in matches]
+    except (TypeError, ValueError):
+        return None
+    return f"{max(nums)}P"
+
+
+def _compute_description_from_price(price: Optional[str]) -> str:
+    """按 raw price 抽数字 // 100 = displayed 价位档自动生成描述
+
+    - displayed ≤ 8  → 报销 100 元 → "出击加分 1分 报销金额 100元"
+    - displayed == 9 → 报销 150 元 → "出击加分 1分 报销金额 150元"
+    - displayed ≥ 10 → 报销 200 元 → "出击加分 1分 报销金额 200元"
+    - 解析失败 / 无数字 → ""（保留空字符串，不影响保存）
+    """
+    if not price:
+        return ""
+    digits = "".join(c for c in str(price) if c.isdigit())
+    if not digits:
+        return ""
+    n = int(digits) // 100
+    if n <= 8:
+        amount = 100
+    elif n == 9:
+        amount = 150
+    else:
+        amount = 200
+    return f"出击加分 1分 报销金额 {amount}元"
+
+
+def _extract_from_forward(message: types.Message) -> Optional[dict]:
+    """从转发消息抽取老师身份：user_id / username / @contact_telegram
+
+    成功 → {"user_id", "username", "contact_telegram"}（username/contact 可能为 None）
+    失败（forward_from 缺失 / 被隐藏）→ None
+    """
+    src = getattr(message, "forward_from", None)
+    if src is None:
+        # 老 API fallback：forward_origin（pydantic v2 / aiogram 3.x）
+        origin = getattr(message, "forward_origin", None)
+        if origin is not None and getattr(origin, "type", "") == "user":
+            src = getattr(origin, "sender_user", None)
+    if src is None:
+        return None
+    uid = getattr(src, "id", None)
+    if uid is None:
+        return None
+    uname = getattr(src, "username", None)
+    contact = f"@{uname}" if uname else None
+    return {
+        "user_id": int(uid),
+        "username": uname,
+        "contact_telegram": contact,
+    }
 
 
 # ============ 子菜单入口 ============
@@ -86,21 +155,79 @@ async def cb_profile_cancel(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "tprofile:add")
 @admin_required
 async def cb_profile_add_start(callback: types.CallbackQuery, state: FSMContext):
-    """[➕ 完整档案录入] 入口 → 进入 Step 1（user_id）"""
-    await state.set_state(TeacherProfileAddStates.waiting_user_id)
+    """[➕ 完整档案录入] 入口 → Step 1 转发老师消息"""
+    await state.set_state(TeacherProfileAddStates.waiting_forward)
     await state.set_data({"photos": []})
     await callback.message.edit_text(
-        f"[Step 1/{_TOTAL_STEPS}] 老师 Telegram 数字 ID\n\n"
-        "请输入老师的 Telegram user_id（纯数字）。\n"
+        f"[Step 1/{_TOTAL_STEPS}] 转发老师消息\n\n"
+        "请直接转发一条老师本人发出的消息。\n"
+        "bot 会自动抓取 user_id / username / @contact_telegram 三项信息。\n\n"
+        "⚠️ 若老师 Telegram 隐私设置了「转发消息 → 没有人」，bot 收不到\n"
+        "→ 会自动跳到手动录入 3 个字段。\n\n"
         "任意一步发 /cancel 中止。",
         reply_markup=teacher_profile_cancel_kb(),
     )
     await callback.answer()
 
 
-@router.message(TeacherProfileAddStates.waiting_user_id)
+# --- Step 1 主：转发消息（自动抓 user_id + username + contact） ---
+
+@router.message(TeacherProfileAddStates.waiting_forward)
 @admin_required
-async def step_user_id(message: types.Message, state: FSMContext):
+async def step_forward(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await _do_cancel(message, state)
+    info = _extract_from_forward(message)
+    if info is None:
+        await state.set_state(TeacherProfileAddStates.waiting_manual_user_id)
+        await message.reply(
+            "⚠️ 未获取到老师信息（可能老师隐藏了转发来源）。请手动录入：\n\n"
+            f"[Step 1a/{_TOTAL_STEPS}] 老师 Telegram 数字 ID",
+            reply_markup=teacher_profile_cancel_kb(),
+        )
+        return
+    existing = await get_teacher(info["user_id"])
+    if existing:
+        status = "启用中" if existing["is_active"] else "已停用"
+        await message.reply(
+            f"⚠️ user_id={info['user_id']} 已存在老师："
+            f"{existing['display_name']}（{status}）\n"
+            "请转发其他老师的消息，或 /cancel。"
+        )
+        return
+    uname = info.get("username")
+    if uname and not re.fullmatch(r"[A-Za-z0-9_]{4,32}", uname):
+        uname = None
+    contact = f"@{uname}" if uname else None
+    if not contact:
+        # 有 user_id 但无 username → 手动补
+        await state.update_data(user_id=info["user_id"])
+        await state.set_state(TeacherProfileAddStates.waiting_manual_username)
+        await message.reply(
+            f"✅ 已抓取 user_id={info['user_id']}\n"
+            "⚠️ 老师无 username，无法自动构造 @contact_telegram\n\n"
+            f"[Step 1b/{_TOTAL_STEPS}] 请输入 username（不带 @）",
+            reply_markup=teacher_profile_cancel_kb(),
+        )
+        return
+    await state.update_data(
+        user_id=info["user_id"], username=uname, contact_telegram=contact,
+    )
+    await message.reply(
+        f"✅ 自动抓取：\n"
+        f"  user_id = {info['user_id']}\n"
+        f"  username = {uname}\n"
+        f"  contact = {contact}"
+    )
+    await _enter_display_name(message, state)
+
+
+# --- Step 1 备用：手动 3 子步 ---
+
+@router.message(TeacherProfileAddStates.waiting_manual_user_id)
+@admin_required
+async def step_manual_user_id(message: types.Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "/cancel":
         return await _do_cancel(message, state)
@@ -112,33 +239,55 @@ async def step_user_id(message: types.Message, state: FSMContext):
     if existing:
         status = "启用中" if existing["is_active"] else "已停用"
         await message.reply(
-            f"⚠️ 该 ID 已存在老师：{existing['display_name']}（{status}）\n"
-            "如需编辑请用 [✏️ 编辑老师档案]；或换一个 user_id。"
+            f"⚠️ 该 ID 已存在：{existing['display_name']}（{status}）"
         )
         return
     await state.update_data(user_id=user_id)
-    await state.set_state(TeacherProfileAddStates.waiting_username)
+    await state.set_state(TeacherProfileAddStates.waiting_manual_username)
     await message.answer(
-        f"[Step 2/{_TOTAL_STEPS}] Telegram 用户名\n\n"
-        "请输入老师的 Telegram username（不带 @，例如 chixiaoxia）。",
+        f"[Step 1b/{_TOTAL_STEPS}] Telegram username（不带 @；4-32 字母/数字/下划线）",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
 
-@router.message(TeacherProfileAddStates.waiting_username)
+@router.message(TeacherProfileAddStates.waiting_manual_username)
 @admin_required
-async def step_username(message: types.Message, state: FSMContext):
+async def step_manual_username(message: types.Message, state: FSMContext):
     text = (message.text or "").strip().lstrip("@")
     if text == "/cancel":
         return await _do_cancel(message, state)
     if not text or not re.fullmatch(r"[A-Za-z0-9_]{4,32}", text):
-        await message.reply("❌ username 需 4-32 个字母/数字/下划线，不带 @。")
+        await message.reply("❌ username 需 4-32 字母/数字/下划线。")
         return
     await state.update_data(username=text)
-    await state.set_state(TeacherProfileAddStates.waiting_display_name)
+    await state.set_state(TeacherProfileAddStates.waiting_manual_contact)
     await message.answer(
-        f"[Step 3/{_TOTAL_STEPS}] 老师艺名\n\n"
-        "请输入老师的艺名（如：丁小夏）。",
+        f"[Step 1c/{_TOTAL_STEPS}] 联系电报（必须 @ 开头，如 @chixiaoxia）",
+        reply_markup=teacher_profile_cancel_kb(),
+    )
+
+
+@router.message(TeacherProfileAddStates.waiting_manual_contact)
+@admin_required
+async def step_manual_contact(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await _do_cancel(message, state)
+    if not text.startswith("@") or not re.fullmatch(r"@[A-Za-z0-9_]{4,32}", text):
+        await message.reply(
+            "❌ 联系电报必须 @ 开头，4-32 字母/数字/下划线（如 @chixiaoxia）。"
+        )
+        return
+    await state.update_data(contact_telegram=text)
+    await _enter_display_name(message, state)
+
+
+# --- Step 2 艺名 ---
+
+async def _enter_display_name(msg, state: FSMContext):
+    await state.set_state(TeacherProfileAddStates.waiting_display_name)
+    await msg.answer(
+        f"[Step 2/{_TOTAL_STEPS}] 艺名\n\n请输入老师的艺名（如：丁小夏）。",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
@@ -155,13 +304,15 @@ async def step_display_name(message: types.Message, state: FSMContext):
     await state.update_data(display_name=text)
     await state.set_state(TeacherProfileAddStates.waiting_basic_info)
     await message.answer(
-        f"[Step 4/{_TOTAL_STEPS}] 基本信息\n\n"
+        f"[Step 3/{_TOTAL_STEPS}] 基本信息\n\n"
         "请用一行回复：年龄 身高(cm) 体重(kg) 罩杯，空格分隔。\n"
         "例如：25 172 90 B\n"
         "范围：年龄 15-60 / 身高 140-200 / 体重 35-120。",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
+
+# --- Step 3 基本信息 ---
 
 @router.message(TeacherProfileAddStates.waiting_basic_info)
 @admin_required
@@ -173,91 +324,18 @@ async def step_basic_info(message: types.Message, state: FSMContext):
     if info is None:
         await message.reply(
             "❌ 格式不对或数值越界。请重发，例如：25 172 90 B\n"
-            "年龄 15-60 / 身高 140-200 / 体重 35-120 / 罩杯 1-3 个字母。"
+            "年龄 15-60 / 身高 140-200 / 体重 35-120 / 罩杯 1-3 字母。"
         )
         return
     await state.update_data(**info)
-    await state.set_state(TeacherProfileAddStates.waiting_description)
-    await message.answer(
-        f"[Step 5/{_TOTAL_STEPS}] 描述（可跳过）\n\n"
-        "请输入对老师的简短描述，或点击 [⏭️ 跳过]。",
-        reply_markup=teacher_profile_skip_cancel_kb(),
-    )
-
-
-@router.message(TeacherProfileAddStates.waiting_description)
-@admin_required
-async def step_description(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await _do_cancel(message, state)
-    if text == "跳过":
-        text = ""
-    await state.update_data(description=(text or None))
-    await _enter_service_content(message, state)
-
-
-@router.message(TeacherProfileAddStates.waiting_service_content)
-@admin_required
-async def step_service_content(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await _do_cancel(message, state)
-    if text == "跳过":
-        text = ""
-    await state.update_data(service_content=(text or None))
-    await _enter_price_detail(message, state)
-
-
-@router.message(TeacherProfileAddStates.waiting_price_detail)
-@admin_required
-async def step_price_detail(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await _do_cancel(message, state)
-    if not text:
-        await message.reply("❌ 价格详述不能为空。")
-        return
-    await state.update_data(price_detail=text)
-    await state.set_state(TeacherProfileAddStates.waiting_taboos)
-    await message.answer(
-        f"[Step 8/{_TOTAL_STEPS}] 禁忌（可跳过）\n\n"
-        "请输入老师的禁忌项（如不接受的服务），或点击 [⏭️ 跳过]。",
-        reply_markup=teacher_profile_skip_cancel_kb(),
-    )
-
-
-@router.message(TeacherProfileAddStates.waiting_taboos)
-@admin_required
-async def step_taboos(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await _do_cancel(message, state)
-    if text == "跳过":
-        text = ""
-    await state.update_data(taboos=(text or None))
-    await _enter_contact_telegram(message, state)
-
-
-@router.message(TeacherProfileAddStates.waiting_contact_telegram)
-@admin_required
-async def step_contact_telegram(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await _do_cancel(message, state)
-    # 必须以 @ 开头
-    if not text.startswith("@") or not re.fullmatch(r"@[A-Za-z0-9_]{4,32}", text):
-        await message.reply(
-            "❌ 联系电报必须以 @ 开头，4-32 个字母/数字/下划线，例如：@chixiaoxia"
-        )
-        return
-    await state.update_data(contact_telegram=text)
     await state.set_state(TeacherProfileAddStates.waiting_region)
     await message.answer(
-        f"[Step 10/{_TOTAL_STEPS}] 地区\n\n请输入老师所在地区（如：天府一街）。",
+        f"[Step 4/{_TOTAL_STEPS}] 地区\n\n请输入老师所在地区（如：金融城 · 成都）。",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
+
+# --- Step 4 地区 ---
 
 @router.message(TeacherProfileAddStates.waiting_region)
 @admin_required
@@ -269,31 +347,77 @@ async def step_region(message: types.Message, state: FSMContext):
         await message.reply("❌ 地区不能为空。")
         return
     await state.update_data(region=text)
-    await state.set_state(TeacherProfileAddStates.waiting_price)
+    await state.set_state(TeacherProfileAddStates.waiting_price_detail)
     await message.answer(
-        f'[Step 11/{_TOTAL_STEPS}] 价格（排序用）\n\n'
-        "请输入老师的价格短标签（用于列表排序与展示，如：3000P）。",
+        f"[Step 5/{_TOTAL_STEPS}] 价格描述\n\n"
+        "请输入价格详情（如：包夜 800P 半天 500P）。\n"
+        "bot 会自动派生：\n"
+        "  - 价格（排序用）= 最大数字+P\n"
+        "  - 描述 = 按价位档生成「出击加分 / 报销金额」\n"
+        "  - 禁忌 = 默认硬编码",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
 
-@router.message(TeacherProfileAddStates.waiting_price)
+# --- Step 5 价格描述（自动派生 price + description + taboos） ---
+
+@router.message(TeacherProfileAddStates.waiting_price_detail)
 @admin_required
-async def step_price(message: types.Message, state: FSMContext):
+async def step_price_detail(message: types.Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "/cancel":
         return await _do_cancel(message, state)
     if not text:
-        await message.reply("❌ 价格不能为空。")
+        await message.reply("❌ 价格描述不能为空。")
         return
-    await state.update_data(price=text)
+    price = _extract_largest_price(text)
+    if not price:
+        await message.reply(
+            "❌ 价格描述里找不到「数字+P」格式（如 800P）。\n"
+            "请补上至少一个数字+P，例如：包夜 800P 半天 500P"
+        )
+        return
+    description = _compute_description_from_price(price)
+    await state.update_data(
+        price_detail=text,
+        price=price,
+        description=description,
+        taboos=DEFAULT_TABOOS,
+    )
+    await message.reply(
+        f"✅ 自动派生：\n"
+        f"  价格 = {price}\n"
+        f"  描述 = {description}\n"
+        f"  禁忌 = {DEFAULT_TABOOS}"
+    )
+    await state.set_state(TeacherProfileAddStates.waiting_service_content)
+    await message.answer(
+        f"[Step 6/{_TOTAL_STEPS}] 服务内容（可跳过）\n\n"
+        "请输入老师的服务范围（如：包夜 ¥3000 含 X 项），或点击 [⏭️ 跳过]。",
+        reply_markup=teacher_profile_skip_cancel_kb(),
+    )
+
+
+# --- Step 6 服务内容（可跳过） ---
+
+@router.message(TeacherProfileAddStates.waiting_service_content)
+@admin_required
+async def step_service_content(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await _do_cancel(message, state)
+    if text == "跳过":
+        text = ""
+    await state.update_data(service_content=(text or None))
     await state.set_state(TeacherProfileAddStates.waiting_tags)
     await message.answer(
-        f"[Step 12/{_TOTAL_STEPS}] 标签\n\n"
+        f"[Step 7/{_TOTAL_STEPS}] 标签\n\n"
         "用空格或逗号分隔多个标签（如：御姐 高颜值 服务好）。",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
+
+# --- Step 7 标签 ---
 
 @router.message(TeacherProfileAddStates.waiting_tags)
 @admin_required
@@ -308,11 +432,13 @@ async def step_tags(message: types.Message, state: FSMContext):
     await state.update_data(tags=tags)
     await state.set_state(TeacherProfileAddStates.waiting_button_url)
     await message.answer(
-        f"[Step 13/{_TOTAL_STEPS}] 跳转链接\n\n"
+        f"[Step 8/{_TOTAL_STEPS}] 跳转链接\n\n"
         "请输入老师卡片按钮的跳转链接（http://、https:// 或 tg://）。",
         reply_markup=teacher_profile_cancel_kb(),
     )
 
+
+# --- Step 8 跳转链接（直接进相册，button_text 在 save 时自动生成 = "地区 艺名"） ---
 
 @router.message(TeacherProfileAddStates.waiting_button_url)
 @admin_required
@@ -327,30 +453,24 @@ async def step_button_url(message: types.Message, state: FSMContext):
         )
         return
     await state.update_data(button_url=url)
-    await state.set_state(TeacherProfileAddStates.waiting_button_text)
-    await message.answer(
-        f"[Step 14/{_TOTAL_STEPS}] 按钮文字（可跳过）\n\n"
-        "请输入卡片按钮上显示的文字（默认用艺名）。",
-        reply_markup=teacher_profile_skip_cancel_kb(),
-    )
-
-
-@router.message(TeacherProfileAddStates.waiting_button_text)
-@admin_required
-async def step_button_text(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if text == "/cancel":
-        return await _do_cancel(message, state)
-    if text == "跳过":
-        text = ""
-    await state.update_data(button_text=(text or None))
     await _enter_photos(message, state)
+
+
+# --- Step 9 上传相册（支持媒体组聚合 reply） ---
+
+# 媒体组 reply debounce：chat_id → asyncio.Task；同 group 600ms 内只 reply 一次
+import asyncio as _asyncio
+_PHOTO_GROUP_REPLY_TASKS: dict[int, "_asyncio.Task"] = {}
 
 
 @router.message(TeacherProfileAddStates.waiting_photos, F.photo)
 @admin_required
 async def step_photos_recv(message: types.Message, state: FSMContext):
-    """收图：累加到 photos 列表（上限 10 张）"""
+    """收图：累加到 photos 列表（上限 10 张）
+
+    单张照片 → 立即 reply 进度
+    媒体组（多张连发）→ 600ms debounce 后 reply 一次，避免刷屏
+    """
     data = await state.get_data()
     photos: list = list(data.get("photos") or [])
     if len(photos) >= 10:
@@ -359,16 +479,47 @@ async def step_photos_recv(message: types.Message, state: FSMContext):
     file_id = message.photo[-1].file_id
     photos.append(file_id)
     await state.update_data(photos=photos)
-    await message.reply(
-        f"✅ 已收到，当前 {len(photos)}/10。\n"
-        "继续发送更多照片，或点击 [✅ 完成上传]。"
-    )
+
+    chat_id = message.chat.id
+    if message.media_group_id is None:
+        await message.reply(
+            f"✅ 已收到，当前 {len(photos)}/10。\n"
+            "继续发送更多照片，或点击 [✅ 完成上传]。"
+        )
+        return
+
+    # 媒体组：取消旧 debounce task，重新起一个
+    old = _PHOTO_GROUP_REPLY_TASKS.get(chat_id)
+    if old and not old.done():
+        old.cancel()
+    bot_ref = message.bot
+
+    async def _debounced_reply():
+        try:
+            await _asyncio.sleep(0.6)
+            d = await state.get_data()
+            n = len(d.get("photos") or [])
+            await bot_ref.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"✅ 已接收媒体组，当前 {n}/10。\n"
+                    "继续发送更多照片，或点击 [✅ 完成上传]。"
+                ),
+            )
+        except _asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            _PHOTO_GROUP_REPLY_TASKS.pop(chat_id, None)
+
+    _PHOTO_GROUP_REPLY_TASKS[chat_id] = _asyncio.create_task(_debounced_reply())
 
 
 @router.message(TeacherProfileAddStates.waiting_photos)
 @admin_required
 async def step_photos_text(message: types.Message, state: FSMContext):
-    """非图片消息：识别"完成" / /cancel / 其他文字"""
+    """非图片：识别"完成" / /cancel / 其他文字"""
     text = (message.text or "").strip()
     if text == "/cancel":
         return await _do_cancel(message, state)
@@ -384,23 +535,22 @@ async def step_photos_text(message: types.Message, state: FSMContext):
 @router.callback_query(F.data == "tprofile:skip")
 @admin_required
 async def cb_profile_skip(callback: types.CallbackQuery, state: FSMContext):
+    """v2：仅 service_content 一步可跳"""
     cur = await state.get_state()
-    if cur == TeacherProfileAddStates.waiting_description.state:
-        await state.update_data(description=None)
-        await _enter_service_content(callback.message, state, via_edit=True)
-    elif cur == TeacherProfileAddStates.waiting_service_content.state:
+    if cur == TeacherProfileAddStates.waiting_service_content.state:
         await state.update_data(service_content=None)
-        await _enter_price_detail(callback.message, state, via_edit=True)
-    elif cur == TeacherProfileAddStates.waiting_taboos.state:
-        await state.update_data(taboos=None)
-        await _enter_contact_telegram(callback.message, state, via_edit=True)
-    elif cur == TeacherProfileAddStates.waiting_button_text.state:
-        await state.update_data(button_text=None)
-        await _enter_photos(callback.message, state, via_edit=True)
+        await state.set_state(TeacherProfileAddStates.waiting_tags)
+        text = (
+            f"[Step 7/{_TOTAL_STEPS}] 标签\n\n"
+            "用空格或逗号分隔多个标签（如：御姐 高颜值 服务好）。"
+        )
+        try:
+            await callback.message.edit_text(text, reply_markup=teacher_profile_cancel_kb())
+        except Exception:
+            await callback.message.answer(text, reply_markup=teacher_profile_cancel_kb())
+        await callback.answer("已跳过")
     else:
         await callback.answer("当前步骤不支持跳过", show_alert=True)
-        return
-    await callback.answer("已跳过")
 
 
 # ============ 照片步骤的按钮 ============
@@ -441,23 +591,27 @@ async def cb_photos_undo(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "tprofile:save", TeacherProfileAddStates.waiting_confirm)
 @admin_required
 async def cb_profile_save(callback: types.CallbackQuery, state: FSMContext):
-    """[✅ 保存到 DB] → 入库 + 写相册"""
+    """[✅ 保存到 DB] → 入库 + 写相册（button_text 自动 = '地区 艺名'）"""
     data = await state.get_data()
     photos: list = list(data.get("photos") or [])
     if not photos:
         await callback.answer("缺少照片，无法保存", show_alert=True)
         return
 
+    region = data.get("region", "")
+    display_name = data.get("display_name", "")
+    auto_button_text = f"{region} {display_name}".strip() or display_name
+
     teacher_data = {
         "user_id":     data["user_id"],
         "username":    data["username"],
-        "display_name": data["display_name"],
-        "region":      data["region"],
+        "display_name": display_name,
+        "region":      region,
         "price":       data["price"],
         "tags":        json.dumps(data["tags"], ensure_ascii=False),
-        "photo_file_id": photos[0],  # 旧字段兼容（set_teacher_photos 也会写）
+        "photo_file_id": photos[0],
         "button_url":  data["button_url"],
-        "button_text": data.get("button_text") or data["display_name"],
+        "button_text": auto_button_text,
     }
     ok = await add_teacher(teacher_data)
     if not ok:
@@ -1298,49 +1452,17 @@ async def cmd_cancel_in_edit_album(message: types.Message, state: FSMContext):
 
 # ============ 内部转移辅助 ============
 
-async def _enter_service_content(
-    msg: types.Message, state: FSMContext, *, via_edit: bool = False
-):
-    await state.set_state(TeacherProfileAddStates.waiting_service_content)
-    text = (
-        f"[Step 6/{_TOTAL_STEPS}] 服务内容（可跳过）\n\n"
-        "请输入老师的服务范围（如：包夜 ¥3000），或点击 [⏭️ 跳过]。"
-    )
-    await _show(msg, text, teacher_profile_skip_cancel_kb(), via_edit)
-
-
-async def _enter_price_detail(
-    msg: types.Message, state: FSMContext, *, via_edit: bool = False
-):
-    await state.set_state(TeacherProfileAddStates.waiting_price_detail)
-    text = (
-        f"[Step 7/{_TOTAL_STEPS}] 价格详述\n\n"
-        "请输入价格详情（如：包夜 3000 ¥；半天 1500 ¥）。"
-    )
-    await _show(msg, text, teacher_profile_cancel_kb(), via_edit)
-
-
-async def _enter_contact_telegram(
-    msg: types.Message, state: FSMContext, *, via_edit: bool = False
-):
-    await state.set_state(TeacherProfileAddStates.waiting_contact_telegram)
-    text = (
-        f"[Step 9/{_TOTAL_STEPS}] 联系电报\n\n"
-        "请输入老师的电报联系账号，必须以 @ 开头（例如 @chixiaoxia）。"
-    )
-    await _show(msg, text, teacher_profile_cancel_kb(), via_edit)
-
-
 async def _enter_photos(
     msg: types.Message, state: FSMContext, *, via_edit: bool = False
 ):
+    """Step 9：上传相册（支持媒体组）"""
     await state.set_state(TeacherProfileAddStates.waiting_photos)
     data = await state.get_data()
     n = len(data.get("photos") or [])
     text = (
-        f"[Step 15/{_TOTAL_STEPS}] 上传照片相册\n\n"
-        "请发送 1-10 张图片，每发一张回复进度。\n"
-        "全部发送完后点击 [✅ 完成上传]。\n"
+        f"[Step 9/{_TOTAL_STEPS}] 上传照片相册\n\n"
+        "请发送 1-10 张图片（支持 Telegram 媒体组多选一次性发送）。\n"
+        "全部发完后点击 [✅ 完成上传]。\n"
         f"当前已上传：{n}/10"
     )
     await _show(msg, text, teacher_profile_photos_done_kb(), via_edit)
@@ -1356,29 +1478,39 @@ async def _enter_confirm(
 
 
 def _render_confirm_text(d: dict) -> str:
+    """档案预览（v2 9 步精简版）
+
+    自动派生字段以「(自动)」标注：
+        🆔 / @username / ☎ 联系电报 → 来自转发或手动 3 步
+        📋 描述 / 💰 价格(排序) / 🚫 禁忌 → 来自 Step 5 价格描述
+        🔠 按钮文字 → 保存时自动 = "地区 艺名"
+    """
     tags = d.get("tags") or []
     photos = d.get("photos") or []
+    region = d.get("region", "")
+    display_name = d.get("display_name", "?")
+    auto_button_text = f"{region} {display_name}".strip() or display_name
     lines = [
         "📋 档案预览（确认前最后一步）",
         "━━━━━━━━━━━━━━━",
-        f"👤 {d.get('display_name', '?')}",
-        f"🆔 {d.get('user_id', '?')} (@{d.get('username', '?')})",
+        f"👤 {display_name}",
+        f"🆔 {d.get('user_id', '?')} (@{d.get('username', '?')}) (自动)",
         f"📋 {d.get('age', '?')} 岁 · {d.get('height_cm', '?')}cm · "
         f"{d.get('weight_kg', '?')}kg · 胸 {d.get('bra_size', '?')}",
+        f"📍 地区：{region or '?'}",
+        f"💰 价格描述：{d.get('price_detail', '?')}",
+        f"💰 价格(排序)：{d.get('price', '?')} (自动)",
+        f"📋 描述：{d.get('description', '?')} (自动)",
+        f"🚫 禁忌：{d.get('taboos', '?')} (自动)",
     ]
-    if d.get("description"):
-        lines.append(f"📋 描述：{d['description']}")
     if d.get("service_content"):
         lines.append(f"📋 服务：{d['service_content']}")
-    lines.append(f"💰 价格详述：{d.get('price_detail', '?')}")
-    if d.get("taboos"):
-        lines.append(f"🚫 禁忌：{d['taboos']}")
-    lines.append(f"☎ 联系电报：{d.get('contact_telegram', '?')}")
-    lines.append(f"📍 地区：{d.get('region', '?')}")
-    lines.append(f"💰 价格(排序)：{d.get('price', '?')}")
+    else:
+        lines.append("📋 服务：(跳过)")
+    lines.append(f"☎ 联系电报：{d.get('contact_telegram', '?')} (自动)")
     lines.append(f"🏷 标签：{' | '.join(tags) if tags else '-'}")
     lines.append(f"🔗 跳转链接：{d.get('button_url', '?')}")
-    lines.append(f"🔠 按钮文字：{d.get('button_text') or d.get('display_name', '?')}")
+    lines.append(f"🔠 按钮文字：{auto_button_text} (自动 = 地区 艺名)")
     lines.append(f"📸 已上传 {len(photos)} 张照片")
     lines.append("━━━━━━━━━━━━━━━")
     lines.append("确认无误后点击 [✅ 保存到 DB]。")
