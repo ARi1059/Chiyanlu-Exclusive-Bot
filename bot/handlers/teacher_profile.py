@@ -70,6 +70,43 @@ def _extract_largest_price(text: str) -> Optional[str]:
     return f"{max(nums)}P"
 
 
+def _price_tag_bare(price: Optional[str]) -> str:
+    """从 raw price（如 '800P'）抽展示价位 tag bare（无 #），如 '8P'
+
+    规则：抽数字 // 100，附加 P。无数字 → 空串。
+    """
+    if not price:
+        return ""
+    digits = "".join(ch for ch in str(price) if ch.isdigit())
+    if not digits:
+        return ""
+    return f"{int(digits) // 100}P"
+
+
+def _inject_price_tag_into_tags(tags: list, price: Optional[str]) -> list:
+    """让 tags 列表的价位 tag 与 price 字段对齐
+
+    流程：
+        1. 剥掉所有形如「数字+P」的旧 tag（不区分大小写）
+        2. 若 price 可解析 → 在末尾追加新的价位 tag bare（如 '8P'）
+
+    幂等：再次调用结果相同；price 变化后调用结果跟随变化。
+    存储约定：tag 字符串不含 '#'（渲染时统一加）。
+    """
+    if not isinstance(tags, list):
+        return tags
+    cleaned: list = []
+    for t in tags:
+        s = str(t).strip().lstrip("#").upper()
+        if re.fullmatch(r"\d+P", s):
+            continue
+        cleaned.append(t)
+    pt = _price_tag_bare(price)
+    if pt:
+        cleaned.append(pt)
+    return cleaned
+
+
 def _compute_description_from_price(price: Optional[str]) -> str:
     """按 raw price 抽数字 // 100 = displayed 价位档自动生成描述
 
@@ -417,7 +454,7 @@ async def step_service_content(message: types.Message, state: FSMContext):
     )
 
 
-# --- Step 7 标签 ---
+# --- Step 7 标签（自动追加价位 tag） ---
 
 @router.message(TeacherProfileAddStates.waiting_tags)
 @admin_required
@@ -429,7 +466,13 @@ async def step_tags(message: types.Message, state: FSMContext):
     if not tags:
         await message.reply("❌ 至少输入一个标签。")
         return
+    # 自动注入价位 tag：admin 不需要手敲 #8P / #9P，从 Step 5 的 price 自动派生
+    data = await state.get_data()
+    tags = _inject_price_tag_into_tags(tags, data.get("price"))
     await state.update_data(tags=tags)
+    price_tag = _price_tag_bare(data.get("price"))
+    if price_tag:
+        await message.reply(f"✅ 已自动追加价位 tag：#{price_tag}")
     await state.set_state(TeacherProfileAddStates.waiting_button_url)
     await message.answer(
         f"[Step 8/{_TOTAL_STEPS}] 跳转链接\n\n"
@@ -658,28 +701,34 @@ async def cb_profile_save(callback: types.CallbackQuery, state: FSMContext):
 
 
 def _compute_legacy_sync_target(t: dict) -> dict:
-    """对一个老师计算 3 个新字段值（不写 DB）
+    """对一个老师计算 4 个新字段值（不写 DB）
 
-    返回 {description, taboos, button_text}；其中 description 在老师 price
-    无数字时为 ""（此时跳过更新），button_text 缺地区时退化为 display_name。
+    返回 {description, taboos, button_text, tags}；其中 description 在老师 price
+    无数字时为 ""（此时跳过更新），button_text 缺地区时退化为 display_name，
+    tags 注入与 price 对齐的价位 tag。
     """
+    from bot.utils.teacher_format import parse_teacher_tags
     desc = _compute_description_from_price(t.get("price"))
     taboos = DEFAULT_TABOOS
     region = (t.get("region") or "").strip()
     name = (t.get("display_name") or "").strip()
     bt = f"{region} {name}".strip() or name
-    return {"description": desc, "taboos": taboos, "button_text": bt}
+    existing_tags = parse_teacher_tags(t)
+    tags = _inject_price_tag_into_tags(existing_tags, t.get("price"))
+    return {"description": desc, "taboos": taboos, "button_text": bt, "tags": tags}
 
 
 async def _scan_legacy_sync_diff() -> dict:
     """扫描所有老师，统计将变更的字段数（不写 DB），用于预览页"""
     from bot.database import get_all_teachers
+    from bot.utils.teacher_format import parse_teacher_tags
     teachers = await get_all_teachers(active_only=False)
     stats = {
         "total": len(teachers),
         "diff_description": 0,
         "diff_taboos": 0,
         "diff_button_text": 0,
+        "diff_tags": 0,
         "diff_any": 0,
     }
     for t in teachers:
@@ -693,6 +742,10 @@ async def _scan_legacy_sync_diff() -> dict:
             any_diff = True
         if (t.get("button_text") or "") != target["button_text"]:
             stats["diff_button_text"] += 1
+            any_diff = True
+        existing_tags = parse_teacher_tags(t)
+        if existing_tags != target["tags"]:
+            stats["diff_tags"] += 1
             any_diff = True
         if any_diff:
             stats["diff_any"] += 1
@@ -716,12 +769,14 @@ async def _run_legacy_sync(bot=None) -> dict:
         update_teacher,
         update_teacher_profile_field,
     )
+    from bot.utils.teacher_format import parse_teacher_tags
     teachers = await get_all_teachers(active_only=False)
     stats = {
         "total": len(teachers),
         "diff_description": 0,
         "diff_taboos": 0,
         "diff_button_text": 0,
+        "diff_tags": 0,
         "updated": 0,
         "caption_refreshed": 0,
         "caption_failed": 0,
@@ -753,6 +808,12 @@ async def _run_legacy_sync(bot=None) -> dict:
             ok = await update_teacher(uid, "button_text", target["button_text"])
             if ok:
                 stats["diff_button_text"] += 1
+                any_diff = True
+        existing_tags = parse_teacher_tags(t)
+        if existing_tags != target["tags"]:
+            ok = await update_teacher_profile_field(uid, "tags", target["tags"])
+            if ok:
+                stats["diff_tags"] += 1
                 any_diff = True
         if any_diff:
             stats["updated"] += 1
@@ -786,13 +847,15 @@ async def cb_sync_legacy_preview(callback: types.CallbackQuery, state: FSMContex
         "🔄 老数据一键同步（预览）\n"
         "━━━━━━━━━━━━━━━\n"
         f"📊 共 {stats['total']} 位老师（含停用），其中 {stats['diff_any']} 位有字段需更新\n\n"
-        "将按新规则刷新以下 3 个字段：\n"
+        "将按新规则刷新以下 4 个字段：\n"
         f"  📋 描述需更新：{stats['diff_description']} 位\n"
         "       规则：按 price 档位（≤800P→100元 / 900P→150元 / ≥1000P→200元）\n"
         f"  🚫 禁忌需更新：{stats['diff_taboos']} 位\n"
         f"       规则：写死 \"{DEFAULT_TABOOS}\"\n"
         f"  🔠 按钮文字需更新：{stats['diff_button_text']} 位\n"
         "       规则：「地区 艺名」\n"
+        f"  🏷 标签价位 tag 需更新：{stats['diff_tags']} 位\n"
+        "       规则：根据 price 自动注入「8P/9P/10P」等价位 tag\n"
         "━━━━━━━━━━━━━━━\n"
         "⚠️ 已经手动改过这些字段的老师会被覆盖。\n"
         "📣 同时会同步刷新所有已发布老师的频道帖 caption。\n"
@@ -845,7 +908,8 @@ async def cb_sync_legacy_execute(callback: types.CallbackQuery, state: FSMContex
         "DB 写入统计：\n"
         f"  📋 描述：{stats['diff_description']} 位\n"
         f"  🚫 禁忌：{stats['diff_taboos']} 位\n"
-        f"  🔠 按钮文字：{stats['diff_button_text']} 位\n\n"
+        f"  🔠 按钮文字：{stats['diff_button_text']} 位\n"
+        f"  🏷 标签价位 tag：{stats['diff_tags']} 位\n\n"
         "频道帖 caption 同步：\n"
         f"  📣 已刷新：{stats['caption_refreshed']} 位\n"
         f"  ⚪ 未发布（跳过）：{stats['caption_skipped_unpublished']} 位\n"
@@ -1098,6 +1162,11 @@ async def on_profile_edit_value(message: types.Message, state: FSMContext):
         if not tags:
             await message.reply("❌ 至少输入一个标签。")
             return
+        # 改 tags 时：取老师当前 price，自动注入价位 tag
+        from bot.database import get_teacher
+        cur_teacher = await get_teacher(target)
+        cur_price = cur_teacher.get("price") if cur_teacher else None
+        tags = _inject_price_tag_into_tags(tags, cur_price)
         ok = await update_teacher_profile_field(target, "tags", tags)
         await _finish_edit(message, state, "tags", target, success=ok)
         return
@@ -1117,6 +1186,15 @@ async def on_profile_edit_value(message: types.Message, state: FSMContext):
         await message.reply("❌ 艺名长度需 ≤ 40 字。")
         return
     ok = await update_teacher_profile_field(target, field, text)
+    # 改 price 时：同步刷新 tags 里的价位 tag
+    if ok and field == "price":
+        from bot.database import get_teacher
+        from bot.utils.teacher_format import parse_teacher_tags
+        cur_teacher = await get_teacher(target)
+        if cur_teacher:
+            existing_tags = parse_teacher_tags(cur_teacher)
+            new_tags = _inject_price_tag_into_tags(existing_tags, text)
+            await update_teacher_profile_field(target, "tags", new_tags)
     await _finish_edit(message, state, field, target, success=ok)
 
 
