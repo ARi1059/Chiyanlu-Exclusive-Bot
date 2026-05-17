@@ -504,22 +504,89 @@ async def cmd_cancel_in_profile_fsm(message: types.Message, state: FSMContext):
 
 # ============ 编辑老师档案 FSM ============
 
-@router.callback_query(F.data == "tprofile:edit")
-@admin_required
-async def cb_profile_edit_start(callback: types.CallbackQuery, state: FSMContext):
-    """[✏️ 编辑老师档案] 入口：列出老师，选择目标"""
+# 老师选择列表分页大小（edit / album / preview 共用）
+_TPROFILE_LIST_PAGE_SIZE = 20
+
+# action → (中文标题, FSM 状态)
+_TPROFILE_LIST_ACTION_MAP: dict = {
+    "edit":    ("✏️ 选择要编辑档案的老师", TeacherProfileEditStates.waiting_target_teacher),
+    "album":   ("🖼 选择要管理相册的老师", TeacherProfileAlbumStates.waiting_target_teacher),
+    "preview": ("👁 选择要预览档案 caption 的老师", None),  # preview 不进 FSM
+}
+
+
+async def _render_teacher_list_page(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    action: str,
+    page: int,
+) -> None:
+    """统一渲染老师选择列表（含分页）
+
+    action ∈ {'edit','album','preview'}；page 从 0 起。
+    handler 负责：取 teachers / 排序 / 分页切片 / 设 FSM 状态 / 渲染 + 答 callback。
+    """
     from bot.database import get_all_teachers
     teachers = await get_all_teachers(active_only=False)
     if not teachers:
         await callback.answer("当前没有老师", show_alert=True)
         return
-    await state.set_state(TeacherProfileEditStates.waiting_target_teacher)
-    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)[:20]
-    await callback.message.edit_text(
-        "✏️ 选择要编辑档案的老师（按创建时间倒序，最多 20 位）：",
-        reply_markup=teacher_profile_select_kb(teachers, action="edit"),
+
+    title, target_state = _TPROFILE_LIST_ACTION_MAP.get(action, ("选择老师", None))
+
+    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)
+    total = len(teachers)
+    page_size = _TPROFILE_LIST_PAGE_SIZE
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    offset = page * page_size
+    chunk = teachers[offset:offset + page_size]
+
+    # 设/清 FSM 状态
+    if target_state is not None:
+        await state.set_state(target_state)
+    elif action == "preview":
+        await state.clear()
+
+    text = (
+        f"{title}\n"
+        f"（按创建时间倒序，共 {total} 位 · 第 {page + 1}/{total_pages} 页）"
     )
+    kb = teacher_profile_select_kb(
+        chunk, action=action, page=page, total_pages=total_pages,
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tprofile:list:"))
+@admin_required
+async def cb_profile_list_paginate(callback: types.CallbackQuery, state: FSMContext):
+    """老师选择列表分页：tprofile:list:{action}:{page}"""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    action = parts[2]
+    if action not in _TPROFILE_LIST_ACTION_MAP:
+        await callback.answer("未知 action", show_alert=True)
+        return
+    try:
+        page = max(0, int(parts[3]))
+    except ValueError:
+        await callback.answer("参数错误", show_alert=True)
+        return
+    await _render_teacher_list_page(callback, state, action, page)
+
+
+@router.callback_query(F.data == "tprofile:edit")
+@admin_required
+async def cb_profile_edit_start(callback: types.CallbackQuery, state: FSMContext):
+    """[✏️ 编辑老师档案] 入口：从第 1 页开始"""
+    await _render_teacher_list_page(callback, state, "edit", 0)
 
 
 @router.callback_query(F.data.startswith("tprofile:select:edit:"))
@@ -735,19 +802,8 @@ async def _finish_edit(
 @router.callback_query(F.data == "tprofile:album")
 @admin_required
 async def cb_album_start(callback: types.CallbackQuery, state: FSMContext):
-    """[🖼 管理照片相册] 入口：选老师"""
-    from bot.database import get_all_teachers
-    teachers = await get_all_teachers(active_only=False)
-    if not teachers:
-        await callback.answer("当前没有老师", show_alert=True)
-        return
-    await state.set_state(TeacherProfileAlbumStates.waiting_target_teacher)
-    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)[:20]
-    await callback.message.edit_text(
-        "🖼 选择要管理相册的老师：",
-        reply_markup=teacher_profile_select_kb(teachers, action="album"),
-    )
-    await callback.answer()
+    """[🖼 管理照片相册] 入口：从第 1 页开始"""
+    await _render_teacher_list_page(callback, state, "album", 0)
 
 
 @router.callback_query(F.data.startswith("tprofile:select:album:"))
@@ -967,19 +1023,8 @@ async def cb_album_remove_idx(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "tprofile:preview")
 @admin_required
 async def cb_preview_start(callback: types.CallbackQuery, state: FSMContext):
-    """[👁 预览档案 caption] 入口：选老师"""
-    from bot.database import get_all_teachers
-    teachers = await get_all_teachers(active_only=False)
-    if not teachers:
-        await callback.answer("当前没有老师", show_alert=True)
-        return
-    await state.clear()
-    teachers = sorted(teachers, key=lambda t: t.get("created_at", ""), reverse=True)[:20]
-    await callback.message.edit_text(
-        "👁 选择要预览档案 caption 的老师：",
-        reply_markup=teacher_profile_select_kb(teachers, action="preview"),
-    )
-    await callback.answer()
+    """[👁 预览档案 caption] 入口：从第 1 页开始"""
+    await _render_teacher_list_page(callback, state, "preview", 0)
 
 
 _FIELD_LABEL_CN: dict = {

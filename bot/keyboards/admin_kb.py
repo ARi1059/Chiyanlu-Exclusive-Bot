@@ -343,16 +343,20 @@ def teacher_profile_select_kb(
     teachers: list[dict],
     *,
     action: str,
+    page: int = 0,
+    total_pages: int = 1,
     per_row: int = 2,
 ) -> InlineKeyboardMarkup:
-    """选择老师列表（用于编辑 / 相册 / 预览）
+    """选择老师列表（用于编辑 / 相册 / 预览），含分页
 
     action: "edit" / "album" / "preview"
-        callback: tprofile:select:{action}:{user_id}
+        老师按钮 callback: tprofile:select:{action}:{user_id}
+    分页按钮 callback: tprofile:list:{action}:{page}
     """
     rows: list[list[InlineKeyboardButton]] = []
     cur: list[InlineKeyboardButton] = []
-    for t in teachers[:30]:
+    # teachers 已由 handler 切到当前页窗口；这里不再二次截断
+    for t in teachers:
         cur.append(InlineKeyboardButton(
             text=t["display_name"],
             callback_data=f"tprofile:select:{action}:{t['user_id']}",
@@ -362,6 +366,26 @@ def teacher_profile_select_kb(
             cur = []
     if cur:
         rows.append(cur)
+
+    # 多页时显示分页 nav
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(
+                text="⬅️ 上一页",
+                callback_data=f"tprofile:list:{action}:{page - 1}",
+            ))
+        nav.append(InlineKeyboardButton(
+            text=f"📄 {page + 1}/{total_pages}",
+            callback_data="noop:tprofile_page",
+        ))
+        if page + 1 < total_pages:
+            nav.append(InlineKeyboardButton(
+                text="➡️ 下一页",
+                callback_data=f"tprofile:list:{action}:{page + 1}",
+            ))
+        rows.append(nav)
+
     rows.append([InlineKeyboardButton(text="🔙 返回", callback_data="tprofile:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
