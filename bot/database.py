@@ -641,27 +641,46 @@ async def _migrate_teacher_profile_columns(db: aiosqlite.Connection) -> None:
 
 DEFAULT_PUBLISH_TEMPLATE_TEXT: str = (
     "📅 {date} 今日开课老师 {count} 位\n\n"
-    "{grouped_teachers}\n\n"
     "点击下方按钮查看详情。"
+)
+
+# 历史默认模板文本集合（用于检测「未被 admin 自定义」时自动更新到最新默认）
+_LEGACY_DEFAULT_PUBLISH_TEMPLATES: tuple[str, ...] = (
+    # v1 (含 {grouped_teachers} 重复列表) — 2026-05-17 被替换
+    "📅 {date} 今日开课老师 {count} 位\n\n"
+    "{grouped_teachers}\n\n"
+    "点击下方按钮查看详情。",
 )
 
 
 async def _ensure_default_publish_template(db: aiosqlite.Connection) -> None:
-    """Phase 6.2：若没有"默认且启用"的模板则插入一条（幂等，不覆盖管理员配置）"""
+    """若没有"默认且启用"的模板则插入；已存在且与旧默认完全一致 → 自动升级到新默认
+
+    管理员手动改过的模板不会被覆盖（只匹配 verbatim 旧文本）。
+    """
     try:
         cur = await db.execute(
-            "SELECT 1 FROM publish_templates "
+            "SELECT id, template_text FROM publish_templates "
             "WHERE is_default = 1 AND is_active = 1 LIMIT 1"
         )
         row = await cur.fetchone()
-        if row:
+        if row is None:
+            await db.execute(
+                """INSERT INTO publish_templates
+                   (name, template_text, is_default, is_active)
+                   VALUES (?, ?, 1, 1)""",
+                ("默认模板", DEFAULT_PUBLISH_TEMPLATE_TEXT),
+            )
             return
-        await db.execute(
-            """INSERT INTO publish_templates
-               (name, template_text, is_default, is_active)
-               VALUES (?, ?, 1, 1)""",
-            ("默认模板", DEFAULT_PUBLISH_TEMPLATE_TEXT),
-        )
+        # 已存在：若 verbatim 匹配某个历史默认 → 升级到新默认
+        if row["template_text"] in _LEGACY_DEFAULT_PUBLISH_TEMPLATES:
+            await db.execute(
+                "UPDATE publish_templates SET template_text = ? WHERE id = ?",
+                (DEFAULT_PUBLISH_TEMPLATE_TEXT, row["id"]),
+            )
+            logger.info(
+                "默认发布模板已从历史版本升级到最新（id=%s）", row["id"],
+            )
     except Exception:
         # init 阶段不能因为模板初始化失败而阻断 bot 启动
         pass

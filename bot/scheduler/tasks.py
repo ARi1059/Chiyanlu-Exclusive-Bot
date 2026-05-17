@@ -398,10 +398,11 @@ async def build_daily_checkin_payload(date_str: str) -> Optional[Tuple[str, Inli
     if not valid:
         return None
 
+    # 一行 2 个按钮（频道帖紧凑显示）
     row: list[InlineKeyboardButton] = []
     for btn in valid_buttons:
         row.append(btn)
-        if len(row) == 3:
+        if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
