@@ -12,7 +12,6 @@ from bot.handlers.admin_panel import router as admin_panel_router
 from bot.handlers.admin_review import router as admin_review_router
 from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
-from bot.handlers.promo_links import router as promo_links_router
 from bot.handlers.publish_templates import router as publish_templates_router
 from bot.handlers.admin_lottery import router as admin_lottery_router
 from bot.handlers.admin_points import router as admin_points_router
@@ -23,7 +22,6 @@ from bot.handlers.noop_handlers import router as noop_router
 from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.review_submit import router as review_submit_router
 from bot.handlers.rreview_admin import router as rreview_admin_router
-from bot.handlers.source_stats import router as source_stats_router
 from bot.handlers.subreq_admin import router as subreq_admin_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
@@ -125,11 +123,8 @@ async def main():
     # FSM 状态 HotManageStates 保证文字消息只在该状态下被截获，
     # 与 admin_panel / teacher_self / user_search / keyword 的 message handler 不冲突
     dp.include_router(hot_teachers_router)
-    # promo_links_router / source_stats_router（Phase 4）：
-    # 推广链接生成器 + 渠道统计 + 用户来源查询
-    # PromoLinkStates / UserSourceLookupStates 保证文字消息只在对应状态下被截获
-    dp.include_router(promo_links_router)
-    dp.include_router(source_stats_router)
+    # promo_links / source_stats（Phase 4）：2026-05-18 已下线
+    # 入口按钮 + router 注册都已移除；handler 文件 + DB 表保留作 dead code 兼容
     # teacher_daily_status_router（Phase 5）：
     # 老师今日状态（设置时间/取消/已满）+ 时间选择器 + 管理员今日总览 + noop 占位
     # 注册位置：在 teacher_self / user_panel / keyword 之前，保证 teacher:*/admin:today_status

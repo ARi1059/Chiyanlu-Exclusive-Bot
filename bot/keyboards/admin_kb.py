@@ -65,10 +65,6 @@ def main_menu_kb(
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
         [
-            InlineKeyboardButton(text="🔗 推广链接", callback_data="admin:promo_links"),
-            InlineKeyboardButton(text="📈 渠道统计", callback_data="admin:source_stats"),
-        ],
-        [
             InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status"),
             InlineKeyboardButton(text="🏷 用户画像", callback_data="admin:user_tags"),
         ],
