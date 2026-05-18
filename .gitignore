@@ -16,6 +16,7 @@ logs/
 
 # === Python virtual env ===
 .venv/
+.venv.old-py39/
 venv/
 
 # === Python 缓存 ===
