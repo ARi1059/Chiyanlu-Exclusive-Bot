@@ -4,7 +4,7 @@
 
 项目从 v1 的「老师签到 + 每日发布 + 关键词查询」起步，已逐步扩展为覆盖**老师档案、用户私聊菜单、评价/报告、积分、报销、抽奖、必关订阅、推广追踪、发布模板、日报/周报**的运营平台。所有子系统共用一套 SQLite 后台、一套 systemd 单进程部署。
 
-> 本 README 反映截至 2026-05-18 的实际代码能力。早期版本的产品需求与设计见 [`docs/DESIGN.md`](docs/DESIGN.md)（v1）和 [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量），各阶段实施记录在 `docs/PHASE-*-IMPL.md` / `docs/*-FEATURE-DRAFT.md`。运维稳定化路线见 [`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md)。
+> 本 README 反映截至 2026-05-18 的实际代码能力。早期版本的产品需求与设计见 [`docs/DESIGN.md`](docs/DESIGN.md)（v1）和 [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量）。运维稳定化路线见 [`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md)。
 
 ---
 
@@ -174,7 +174,7 @@ SQLite 单文件，默认 `./data/bot.db`，**已启用 WAL 模式**（`PRAGMA j
 | 抽奖 | `lotteries`, `lottery_entries`, `lottery_required_chats` |
 | 操作记录 | `admin_audit_logs`, `user_events`, `sent_messages` |
 
-> 详细字段定义见 [`bot/database.py`](bot/database.py)（DDL 在文件开头 `init_db`）。迁移历史与设计记录见 `docs/PHASE-*-IMPL.md`。
+> 详细字段定义见 [`bot/database.py`](bot/database.py)（DDL 在文件开头 `init_db`）。迁移注册器设计与 baseline 见 [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md)。
 
 ---
 
@@ -545,11 +545,25 @@ scripts/backup.sh / scripts/prune.sh` 四类检查。workflow 定义见
 
 ## 相关文档
 
-- 早期设计：[`docs/DESIGN.md`](docs/DESIGN.md)（v1） / [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量）
-- 子系统设计草稿：`docs/REVIEW-FEATURE-DRAFT.md` · `docs/POINTS-FEATURE-DRAFT.md` · `docs/LOTTERY-FEATURE-DRAFT.md` · `docs/REIMBURSEMENT-IMPL.md`
-- 阶段实施记录：`docs/PHASE-9.*-IMPL.md`（评价系统）· `docs/PHASE-L.*-IMPL.md`（抽奖）· `docs/PHASE-P.*-IMPL.md`（积分）
-- 部署：[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-- 稳定化审查：[`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md)
+### 运维与部署
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — 部署 / `update.sh` / WAL / 备份 / 验收 Checklist
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — 值守手册（14 节，事故处理流程）
+- [`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md) — 稳定化起点审查
+- [`docs/STABILIZATION-SUMMARY-2026-05-18.md`](docs/STABILIZATION-SUMMARY-2026-05-18.md) — 稳定化轮次总结
+
+### 运营规则
+- [`docs/POLICY-points.md`](docs/POLICY-points.md) — 积分获取 / 消耗规则
+- [`docs/POLICY-reimbursement.md`](docs/POLICY-reimbursement.md) — 报销规则、池模型、每周上限
+- [`docs/POLICY-lottery.md`](docs/POLICY-lottery.md) — 抽奖发布 / 参与 / 开奖规则
+
+### 数据库与维护设计
+- [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) — 迁移注册器（P2 baseline 已落地）
+- [`docs/PRUNING-DESIGN.md`](docs/PRUNING-DESIGN.md) — 历史数据清理策略（P2 dry-run 已落地）
+- [`docs/DEAD-CODE-AUDIT-2026-05-18.md`](docs/DEAD-CODE-AUDIT-2026-05-18.md) — 死代码审查（P3-A 注释已落地）
+
+### 历史设计
+- [`docs/DESIGN.md`](docs/DESIGN.md) — v1 原始产品设计
+- [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md) — v2 增量功能清单
 
 ---
 
