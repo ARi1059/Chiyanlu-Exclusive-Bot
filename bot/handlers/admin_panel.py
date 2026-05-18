@@ -37,6 +37,7 @@ from bot.keyboards.admin_kb import (
     dashboard_menu_kb,
     dashboard_audit_back_kb,
     admin_dashboard_kb,
+    admin_review_tasks_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
@@ -1138,6 +1139,58 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=dashboard_audit_back_kb(),
+    )
+    await callback.answer()
+
+
+# ============ 审核处理二级菜单（admin:review_tasks） ============
+
+
+@router.callback_query(F.data == "admin:review_tasks")
+@admin_required
+async def cb_admin_review_tasks(callback: types.CallbackQuery):
+    """二级「✅ 审核处理」入口：聚合四个审核 callback 入口
+
+    所有 callback 字面量 (review:enter / rreview:enter / reimburse:enter /
+    reimburse:queued:0) 含义不变；本 handler 仅按权限计算 pending count 并渲染
+    聚合页。
+    """
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
+
+    pending_edit_count = await count_pending_edits()
+    pending_review_count = 0
+    pending_reimburse_count = 0
+    queued_reimburse_count = 0
+    if is_super:
+        pending_review_count = await count_pending_reviews()
+        try:
+            from bot.database import (
+                count_pending_reimbursements,
+                count_queued_reimbursements,
+            )
+            pending_reimburse_count = await count_pending_reimbursements()
+            queued_reimburse_count = await count_queued_reimbursements()
+        except Exception:
+            pending_reimburse_count = 0
+            queued_reimburse_count = 0
+
+    lines = ["✅ 审核处理", "", "请选择要处理的事项：", "", "👩‍🏫 老师资料审核"]
+    if is_super:
+        lines.append("📝 评价审核")
+        lines.append("💰 报销审核")
+        if queued_reimburse_count > 0:
+            lines.append("📋 报销名单")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=admin_review_tasks_kb(
+            pending_edit_count=pending_edit_count,
+            pending_review_count=pending_review_count,
+            pending_reimburse_count=pending_reimburse_count,
+            queued_reimburse_count=queued_reimburse_count,
+            is_super=is_super,
+        ),
     )
     await callback.answer()
 

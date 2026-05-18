@@ -14,14 +14,22 @@ def main_menu_kb(
     """管理员主菜单面板
 
     Args:
-        pending_count: 老师改资料待审核数量
-        pending_review_count: 用户评价待审核数量（Phase 9.4）
-        pending_reimburse_count: 待审核报销数量
-        queued_reimburse_count: 报销功能关闭期间静默录入名单的数量
-        is_super: 是否超管；仅超管可见 [📝 报告审核 (M)] 行
+        pending_count: 老师改资料待审核数量（review:enter 内容）
+        pending_review_count: 用户评价待审核数量（rreview:enter 内容；仅超管）
+        pending_reimburse_count: 待审核报销数量（reimburse:enter 内容；仅超管）
+        queued_reimburse_count: queued 报销名单数量（reimburse:queued:0 内容；仅超管）
+        is_super: 是否超管
+
+    审核相关四个 callback（review:enter / rreview:enter / reimburse:enter /
+    reimburse:queued:0）已统一收纳进 admin:review_tasks 二级页；本主菜单不
+    再直接含这四个 callback。
     """
-    review_label = (
-        f"📝 待审核 ({pending_count})" if pending_count > 0 else "📝 待审核"
+    # ✅ 审核处理 综合 badge：非超管只算 pending_count；超管再加 review + reimburse pending
+    review_total = pending_count
+    if is_super:
+        review_total += pending_review_count + pending_reimburse_count
+    review_tasks_label = (
+        f"✅ 审核处理 ({review_total})" if review_total > 0 else "✅ 审核处理"
     )
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -34,34 +42,15 @@ def main_menu_kb(
         ],
         [
             InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
-            InlineKeyboardButton(text=review_label, callback_data="review:enter"),
+            InlineKeyboardButton(text=review_tasks_label, callback_data="admin:review_tasks"),
         ],
     ]
     if is_super:
-        rreview_label = (
-            f"📝 报告审核 ({pending_review_count})"
-            if pending_review_count > 0 else "📝 报告审核"
-        )
+        # 积分管理 + 抽奖管理 合并为一行（原四审核入口已迁入 admin:review_tasks）
         rows.append([
-            InlineKeyboardButton(text=rreview_label, callback_data="rreview:enter"),
             InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points"),
-        ])
-        reimburse_label = (
-            f"💰 报销审核 ({pending_reimburse_count})"
-            if pending_reimburse_count > 0 else "💰 报销审核"
-        )
-        rows.append([
             InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery"),
-            InlineKeyboardButton(text=reimburse_label, callback_data="reimburse:enter"),
         ])
-        # 仅当存在静默录入条目时显示，避免冗余按钮
-        if queued_reimburse_count > 0:
-            rows.append([
-                InlineKeyboardButton(
-                    text=f"📋 报销名单 ({queued_reimburse_count})",
-                    callback_data="reimburse:queued:0",
-                ),
-            ])
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
         [
@@ -75,6 +64,54 @@ def main_menu_kb(
         # 三个只读看板（运营总览 / 报销池状态 / 抽奖状态）已收纳进二级页 admin:dashboard
         [InlineKeyboardButton(text="📊 数据看板", callback_data="admin:dashboard")],
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_review_tasks_kb(
+    *,
+    pending_edit_count: int = 0,
+    pending_review_count: int = 0,
+    pending_reimburse_count: int = 0,
+    queued_reimburse_count: int = 0,
+    is_super: bool = False,
+) -> InlineKeyboardMarkup:
+    """二级「✅ 审核处理」面板：聚合四个审核入口 + 返回后台
+
+    入口分别对应：
+        - review:enter           老师资料审核（teacher_edit_requests，所有管理员可见）
+        - rreview:enter          评价审核（teacher_reviews，仅超管）
+        - reimburse:enter        报销审核（reimbursements pending，仅超管）
+        - reimburse:queued:0     报销名单（reimbursements queued，仅超管 + 有条目时）
+
+    callback 含义未做任何变更，handler 仍由原模块处理（admin_review.py /
+    rreview_admin.py / admin_reimburse.py）；本 keyboard 仅是聚合视图。
+
+    每个按钮带 pending count badge（>0 时显示）。
+    """
+    def _badge(label_base: str, count: int) -> str:
+        return f"{label_base} ({count})" if count > 0 else label_base
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(
+            text=_badge("👩‍🏫 老师资料审核", pending_edit_count),
+            callback_data="review:enter",
+        )],
+    ]
+    if is_super:
+        rows.append([InlineKeyboardButton(
+            text=_badge("📝 评价审核", pending_review_count),
+            callback_data="rreview:enter",
+        )])
+        rows.append([InlineKeyboardButton(
+            text=_badge("💰 报销审核", pending_reimburse_count),
+            callback_data="reimburse:enter",
+        )])
+        if queued_reimburse_count > 0:
+            rows.append([InlineKeyboardButton(
+                text=f"📋 报销名单 ({queued_reimburse_count})",
+                callback_data="reimburse:queued:0",
+            )])
+    rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
