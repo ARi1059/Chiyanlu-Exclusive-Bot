@@ -47,12 +47,14 @@ jobs:
         # 测试不连真实 Telegram、不读真实 .env、DATABASE_PATH=:memory:
         run: python -m pytest
 
-      - name: Bash 脚本语法检查 (bash -n)
+      - name: Bash 脚本语法检查 (bash syntax checks)
         # 仅做语法检查，不执行：
         # - healthcheck.sh 需要 systemd / 真实 .env / 真实数据库
         # - backup.sh 需要真实 data/bot.db
+        # - prune.sh 需要真实 data/bot.db；且即使带 --dry-run 也访问 sqlite3
         # CI 环境都不具备这些前置条件
         run: |
           bash -n update.sh
           bash -n scripts/healthcheck.sh
           bash -n scripts/backup.sh
+          bash -n scripts/prune.sh
