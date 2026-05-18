@@ -528,6 +528,15 @@ python3 -m pytest tests/test_start_args.py::test_empty_returns_all_defaults
 
 新增测试时请放在 `tests/test_*.py`，遵循"只测纯函数、不连外部依赖"的原则。
 
+### CI
+
+GitHub Actions 会在 push 到 `main` 或 pull request 到 `main` 时自动执行
+`compileall`、`pytest` 和 `bash -n update.sh / scripts/healthcheck.sh /
+scripts/backup.sh` 三类检查。workflow 定义见
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)；CI 环境使用与本地测试
+一致的 dummy 环境变量，不连真实 Telegram、不读真实 `.env`、不触碰
+`data/bot.db`。
+
 ---
 
 ## 相关文档

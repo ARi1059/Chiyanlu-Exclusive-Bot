@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: compileall + pytest + bash -n
+    runs-on: ubuntu-latest
+
+    env:
+      # 测试用虚拟值，绝不要使用真实 token。
+      # 与 tests/conftest.py 保持一致；CI 不读真实 .env、不连 Telegram、不触碰 data/bot.db。
+      BOT_TOKEN: "dummy:token"
+      SUPER_ADMIN_ID: "123456789"
+      DATABASE_PATH: ":memory:"
+      TIMEZONE: "Asia/Shanghai"
+      PUBLISH_TIME: "14:00"
+      COOLDOWN_SECONDS: "30"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Python 语法检查 (compileall)
+        run: python -m compileall -q bot
+
+      - name: 单元测试 (pytest)
+        # pytest==8.3.4 已在 requirements.txt 中
+        # 测试不连真实 Telegram、不读真实 .env、DATABASE_PATH=:memory:
+        run: python -m pytest
+
+      - name: Bash 脚本语法检查 (bash -n)
+        # 仅做语法检查，不执行：
+        # - healthcheck.sh 需要 systemd / 真实 .env / 真实数据库
+        # - backup.sh 需要真实 data/bot.db
+        # CI 环境都不具备这些前置条件
+        run: |
+          bash -n update.sh
+          bash -n scripts/healthcheck.sh
+          bash -n scripts/backup.sh
