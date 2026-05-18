@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from aiogram import Router, types, F
+from aiogram.filters import StateFilter
 from pytz import timezone
 
 from bot.config import config
@@ -12,7 +13,9 @@ router = Router(name="teacher_checkin")
 tz = timezone(config.timezone)
 
 
-@router.message(F.text == "签到")
+# StateFilter(None) 保证只在用户不在任何 FSM 状态时触发，避免误劫持搜索 /
+# 评价 / 资料录入等流程中输入的文字（2026-05-18 P0 修复）。
+@router.message(StateFilter(None), F.text == "签到")
 async def on_checkin(message: types.Message):
     """老师私聊签到"""
     # 仅处理私聊消息

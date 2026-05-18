@@ -334,7 +334,13 @@ async def cb_teacher_edit(callback: types.CallbackQuery, state: FSMContext):
 )
 @admin_required
 async def cb_teacher_selected_for_edit(callback: types.CallbackQuery, state: FSMContext):
-    """选择老师后展示字段编辑面板"""
+    """选择老师后展示字段编辑面板
+
+    注意：`teacher:select:` 这个 callback 前缀在本文件被注册了两次（这里 + 下方
+    cb_teacher_selected_for_delete）。本 handler 因带 `EditTeacherStates.select_teacher`
+    state filter，**仅在编辑流程**生效；其它状态下走下方 delete handler。
+    aiogram 按 (state filter + data filter) 做 AND 匹配，不会 shadow 下方 handler。
+    """
     teacher_id = int(callback.data.split(":")[2])
     teacher = await get_teacher(teacher_id)
     if not teacher:
@@ -465,7 +471,14 @@ async def cb_teacher_delete(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("teacher:select:"))
 @admin_required
 async def cb_teacher_selected_for_delete(callback: types.CallbackQuery, state: FSMContext):
-    """选择老师后展示停用确认"""
+    """选择老师后展示停用确认
+
+    注意：本 handler 与上方 cb_teacher_selected_for_edit 共享 `teacher:select:`
+    前缀。aiogram 按注册顺序 + AND 过滤匹配 —— 上方 handler 因带
+    EditTeacherStates.select_teacher state filter 优先吃掉编辑流程的回调；
+    本 handler 无 state filter，兜底处理其它场景（停用流程）。
+    function body 内的 startswith("EditTeacher") 早返回是双保险，理论上不会触发。
+    """
     current_state = await state.get_state()
     # 如果不在编辑状态，则为停用操作
     if current_state and current_state.startswith("EditTeacher"):

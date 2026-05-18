@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot, Router, types, F
+from aiogram.filters import StateFilter
 from pytz import timezone
 
 from bot.config import config
@@ -244,13 +245,16 @@ async def start_lottery_from_deep_link(
 _CODE_MAX_LEN = 20
 
 
-@router.message(F.chat.type == "private", F.text)
+@router.message(StateFilter(None), F.chat.type == "private", F.text)
 async def on_private_text_maybe_code(message: types.Message):
     """私聊文字 → 尝试匹配抽奖口令（find_lottery_by_entry_code 仅 active）
 
-    注意：本 handler 在 keyword 之前注册；F.text 排除 photo/sticker；
-    `F.chat.type == "private"` 排除群组消息。
-    若文字不匹配任何 active 抽奖 → silent skip（不响应，留给后续 router）。
+    注意：
+    - 本 handler 在 keyword 之前注册；F.text 排除 photo/sticker；
+      `F.chat.type == "private"` 排除群组消息。
+    - StateFilter(None)（2026-05-18 P0）：仅在用户不在任何 FSM 状态时尝试匹配口令，
+      避免未来新增私聊 FSM 时被这里静默吞掉。
+    - 若文字不匹配任何 active 抽奖 → silent skip（不响应，留给后续 router）。
     """
     text = (message.text or "").strip()
     if not text or len(text) > _CODE_MAX_LEN:
