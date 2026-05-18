@@ -39,6 +39,11 @@ cd /opt/Chiyanlu-Exclusive-Bot
 ./scripts/backup.sh                           # WAL-safe，sqlite3 .backup + integrity_check
 ./scripts/backup.sh --keep 10                 # 自定义保留份数（默认 30）
 
+# === 历史数据 pruning · dry-run（只统计，不删除）===
+./scripts/prune.sh --dry-run                  # 默认统计过去 180 天可清理的日志行数
+./scripts/prune.sh --dry-run --days 365       # 自定义保留天数
+                                              # ⚠️ 当前版本无 --confirm 能力；不会删任何数据
+
 # === 服务状态 ===
 systemctl status chiyanlu-bot
 journalctl -u chiyanlu-bot -n 100 --no-pager
@@ -326,6 +331,28 @@ cd /opt/Chiyanlu-Exclusive-Bot
 
 ⚠️ **绝对不要** `cp data/bot.db backups/...`：WAL 模式下复制的是过期数据。
 ⚠️ 即使是临时调试，也**不允许**用 `cp` 替代 `sqlite3 .backup`。
+
+### 6.3 历史数据 pruning · dry-run（不删除任何数据）
+
+```bash
+cd /opt/Chiyanlu-Exclusive-Bot
+
+# 第 1 步：先做一次备份（pruning 任何阶段的前置依赖）
+./scripts/backup.sh
+
+# 第 2 步：跑只读 dry-run，看过去 180 天可清理的日志行数
+./scripts/prune.sh --dry-run --days 180
+```
+
+输出会列出 `user_events` / `user_teacher_views` 两张表的命中行数、最早 / 最新
+时间戳与 `action`。
+
+> ⚠️ **当前 `scripts/prune.sh` 不支持 `--confirm`，无法真正删除数据**。
+> 任何 `--confirm` / `--delete` / `--vacuum` / `--execute` 参数都会被脚本直接
+> 拒绝（exit 1）。如果未来 P3 启用了删除路径，必须仍按"备份 → dry-run →
+> confirm → integrity_check"四步顺序执行；详见 [PRUNING-DESIGN §六](PRUNING-DESIGN.md#六执行设计)。
+> 永远**不要**对 `point_transactions` / `reimbursements` / `teacher_reviews` /
+> `lottery_entries` 等权益类表手工 `DELETE` —— 见 [PRUNING-DESIGN §十一](PRUNING-DESIGN.md#十一明确不做)。
 
 #### 6.2.x 降级方案：scripts/backup.sh 也跑不起来时
 

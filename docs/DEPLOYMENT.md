@@ -734,10 +734,16 @@ cd /opt/Chiyanlu-Exclusive-Bot
 # 0.5 单元测试（纯逻辑回归，不连真实 Telegram / 不访问真实数据库）
 cd /opt/Chiyanlu-Exclusive-Bot
 .venv/bin/python -m pytest
-# 期望：全部通过（约 60+ 测试，1 秒内完成）
+# 期望：全部通过（80+ 测试，1 秒内完成）
 # 测试覆盖：parse_start_args / compute_reimbursement_amount /
-#           group_search 工具函数 / 抽奖状态常量
+#           group_search 工具函数 / 抽奖状态常量 / schema_migrations baseline
 # 测试不会读取真实 .env、不会触碰 data/bot.db
+
+# 0.6 历史数据 pruning · dry-run（评估日志规模，不删除任何数据）
+./scripts/prune.sh --dry-run --days 180
+# 期望：列出 user_events / user_teacher_views 命中行数；exit 0
+# 当前版本严格只读，不支持 --confirm；任何危险参数都会 exit 1
+# 详见 docs/PRUNING-DESIGN.md
 
 # 1. 代码语法
 cd /opt/Chiyanlu-Exclusive-Bot
