@@ -446,7 +446,6 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | 迁移注册器 P5 | [`update.sh`](update.sh) 检测 hard failed migration 时阻断并提示 rollback（[设计 §八阶段 D](docs/MIGRATION-REGISTRY-DESIGN.md#阶段-d-updatesh-接入)） | P2 |
 | CI | 把 `pytest` + `compileall` + `bash -n scripts/*.sh` 接入 GitHub Actions（push / PR 触发） | P2 |
 | 清理 | scheduler 加 `prune_old_records`（user_events / audit_logs / point_transactions > 180 天） | P2 |
-| 异地备份 | `scripts/backup.sh` 完成本机快照后，rclone / rsync 推送到对象存储 / 第二台 VPS（[DEPLOYMENT §14.4.1](docs/DEPLOYMENT.md#1441-异地备份建议)） | P2 |
 | 死代码 | 线性 `ReviewSubmitStates` 旧 FSM、`promo_links.py` / `source_stats.py`（router 已下线） | P3 |
 
 ### ❌ 明确不做

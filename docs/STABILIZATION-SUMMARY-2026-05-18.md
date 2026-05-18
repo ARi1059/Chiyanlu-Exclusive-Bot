@@ -87,7 +87,6 @@ Healthcheck summary:
 | **CI** | GitHub Actions 接入 `pytest` + `compileall` + `bash -n scripts/*.sh`，触发条件 push to main / PR | 半天 |
 | **历史数据 pruning** | scheduler 加 `prune_old_records`：`user_events` / `audit_logs` / `point_transactions` > 180 天定时清理；需先确认保留期符合运营/合规要求 | 1-2 天 |
 | ~~**`bot/main.py` 拆分**~~ | ✅ **已完成**：拆为 `bot/app_factory.py` + `bot/routers.py` + `bot/lifecycle.py` + 41 行薄 `bot/main.py`；33 个 router 注册顺序逐行等价；20 个静态测试覆盖；业务行为 0 改变 | 已落地 |
-| **异地备份** | `scripts/backup.sh` 完成本机快照后，rclone / rsync 推送到对象存储 / 第二台 VPS；参考 [DEPLOYMENT §14.4.1](DEPLOYMENT.md#1441-异地备份建议) | 半天 |
 
 ### 3.2 P3（低优先级，技术债清理）
 
@@ -125,10 +124,7 @@ Healthcheck summary:
 4. **`bot/main.py` 拆分**（1-2 天，纯代码重构）
    有了 pytest + CI 之后再做拆分相对安全。
 
-5. **异地备份**（半天）
-   依赖外部基础设施（对象存储账号 / 第二台 VPS）。
-
-6. **死代码清理**（半天，零风险）
+5. **死代码清理**（半天，零风险）
    有 CI 后做，绿色就合并。
 
 > 不建议跳过 CI 直接动 P2。CI 是后续所有改动的安全网。

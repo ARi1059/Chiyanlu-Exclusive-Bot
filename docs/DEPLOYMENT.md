@@ -531,7 +531,7 @@ sqlite3 "$BACKUP" "PRAGMA integrity_check;"
 
 `update.sh` 自动保留最近 10 份 `*.bak`（不含 `*.manual.bak`）。
 `scripts/backup.sh` 默认保留最近 30 份 `*.manual.bak`，不会动 `update.sh` 的备份。
-**`backups/` 目录已被 `.gitignore` 忽略**，不会进 git，但仍建议**异地异机**留一份（拷贝到对象存储 / 另一台 VPS / 本地）。
+**`backups/` 目录已被 `.gitignore` 忽略**，不会进 git。当前不采用异地备份方案；如未来业务规模扩大，可另行评估。
 
 ### 14.4 日常手动备份 / 定时备份：`scripts/backup.sh`
 
@@ -577,18 +577,6 @@ crontab -e
 
 > ⚠️ 仍然**不可** `cp /opt/Chiyanlu-Exclusive-Bot/data/bot.db` —— WAL 模式下会丢失 `-wal` 中未 checkpoint 的最近写入，
 > 即使在 cron 里包装成"脚本"也一样。任何脚本里出现 `cp data/bot.db` 都属于错误用法。
-
-#### 14.4.1 异地备份建议
-
-`scripts/backup.sh` 只解决"本机产生一致性快照"。完成后还应把备份**搬离本机**：
-
-```bash
-# 示例：用 rclone 把当天 manual 备份上传到对象存储
-30 4 * * * rclone copy /opt/Chiyanlu-Exclusive-Bot/backups/ remote:chiyanlu-backups/ \
-    --include 'bot.db.*.manual.bak' --max-age 24h >> /opt/Chiyanlu-Exclusive-Bot/logs/backup-remote.log 2>&1
-```
-
-或使用 `rsync` / `scp` 推送到另一台 VPS。具体命令视基础设施而定。
 
 ### 14.5 手动还原（不推荐，但备查）
 
@@ -818,16 +806,17 @@ ls -lh /opt/Chiyanlu-Exclusive-Bot/backups/
 - ⚠️ **如发现 `.env` 曾被提交**：立即 BotFather `/revoke` 重新生成 token
 - **生产环境用 chiyanlu 独立用户**（§9.2）而非 root
 
-### 17.3 备份与异地
+### 17.3 备份
 
-- `update.sh` 已自动备份到 `backups/`，保留 10 份
-- **异地备份**：建议 crontab 每日把 `backups/` 最新一份 rsync 到对象存储或另一台机器
+- `update.sh` 已自动备份到 `backups/`，保留 10 份（WAL-safe `sqlite3 .backup` + `integrity_check`）
+- `scripts/backup.sh` 可手动 / 定时（crontab）产生 `*.manual.bak`
 - **不要把 `backups/` 进 Git**（已 `.gitignore`，但 `git add backups/` 会绕过 ignore，禁止）
+- 当前不采用异地备份方案；如未来业务规模扩大，可另行评估
 
 ### 17.4 升级前
 
 - 看本次拉取的 commit 是否含 `_migrate_*` 或 `ALTER TABLE`（`update.sh` 会自动提示）
-- 涉及大 schema 改动时，**提前手工 `sqlite3 .backup` 多备一份到异地**
+- 涉及大 schema 改动时，**提前手工 `sqlite3 .backup` 多备一份到独立路径**
 
 ### 17.5 升级后
 
