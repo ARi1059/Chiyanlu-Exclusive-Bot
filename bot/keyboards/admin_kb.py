@@ -37,10 +37,6 @@ def main_menu_kb(
             InlineKeyboardButton(text="👥 管理员管理", callback_data="menu:admin"),
         ],
         [
-            InlineKeyboardButton(text="📢 频道设置", callback_data="menu:channel"),
-            InlineKeyboardButton(text="⚙️ 系统设置", callback_data="menu:system"),
-        ],
-        [
             InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
             InlineKeyboardButton(text=review_tasks_label, callback_data="admin:review_tasks"),
         ],
@@ -56,13 +52,45 @@ def main_menu_kb(
             InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status"),
             InlineKeyboardButton(text="🏷 用户画像", callback_data="admin:user_tags"),
         ],
-        [
-            InlineKeyboardButton(text="📝 发布模板", callback_data="admin:publish_templates"),
-            InlineKeyboardButton(text="📨 报表设置", callback_data="admin:report_settings"),
-        ],
+        # 频道设置 / 系统设置 / 发布模板 / 报表设置 已收纳进二级页 admin:settings
         # 三个只读看板（运营总览 / 报销池状态 / 抽奖状态）已收纳进二级页 admin:dashboard
-        [InlineKeyboardButton(text="📊 数据看板", callback_data="admin:dashboard")],
+        [
+            InlineKeyboardButton(text="📊 数据看板", callback_data="admin:dashboard"),
+            InlineKeyboardButton(text="⚙️ 系统配置", callback_data="admin:settings"),
+        ],
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
+    """二级「⚙️ 系统配置」面板：聚合配置类入口 + 返回后台
+
+    入口（按 admin_required 权限可见）：
+        - admin:subreq             📢 必关订阅（handler 在 subreq_admin.py）
+        - admin:publish_templates  🧩 发布模板（handler 在 publish_templates.py）
+        - menu:channel             📣 频道 / 群组设置（handler 在 admin_panel.py）
+        - admin:report_settings    📅 日报 / 周报设置（handler 在 report_settings.py）
+        - menu:system              ⚙️ 系统设置（含发布时间 / 冷却 / 提醒 / 品牌等深层项）
+
+    超管专属：
+        - system:reimburse_pool    💰 报销池设置 (@super_admin_required)
+        - system:reimburse_toggle  🔛 报销功能开关 (@super_admin_required)
+
+    callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
+    聚合视图组合。关键词管理无独立 callback（群关键词是 message handler），
+    本菜单不构造伪入口。
+    """
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="📢 必关订阅",        callback_data="admin:subreq")],
+        [InlineKeyboardButton(text="🧩 发布模板",        callback_data="admin:publish_templates")],
+        [InlineKeyboardButton(text="📣 频道 / 群组设置", callback_data="menu:channel")],
+        [InlineKeyboardButton(text="📅 日报 / 周报设置", callback_data="admin:report_settings")],
+        [InlineKeyboardButton(text="⚙️ 系统设置",        callback_data="menu:system")],
+    ]
+    if is_super:
+        rows.append([InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool")])
+        rows.append([InlineKeyboardButton(text="🔛 报销功能开关", callback_data="system:reimburse_toggle")])
+    rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

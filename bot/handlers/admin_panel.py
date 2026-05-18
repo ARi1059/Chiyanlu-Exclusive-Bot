@@ -39,6 +39,7 @@ from bot.keyboards.admin_kb import (
     admin_dashboard_kb,
     admin_review_tasks_kb,
     admin_operations_kb,
+    admin_settings_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
@@ -1140,6 +1141,45 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=dashboard_audit_back_kb(),
+    )
+    await callback.answer()
+
+
+# ============ 系统配置二级菜单（admin:settings） ============
+
+
+@router.callback_query(F.data == "admin:settings")
+@admin_required
+async def cb_admin_settings(callback: types.CallbackQuery):
+    """二级「⚙️ 系统配置」入口：聚合配置类入口
+
+    所有子入口 callback 含义保持不变；本 handler 仅按权限渲染聚合页。
+
+    @admin_required：基础入口（必关订阅 / 发布模板 / 频道群组 / 日报周报 /
+    系统设置）对所有 admin 开放；超管专属的报销池设置 / 报销开关在
+    admin_settings_kb 中由 is_super 分支控制可见。
+    """
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
+
+    lines = [
+        "⚙️ 系统配置",
+        "",
+        "系统与发布配置：",
+        "",
+        "📢 必关订阅",
+        "🧩 发布模板",
+        "📣 频道 / 群组设置",
+        "📅 日报 / 周报设置",
+        "⚙️ 系统设置",
+    ]
+    if is_super:
+        lines.append("💰 报销池设置")
+        lines.append("🔛 报销功能开关")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=admin_settings_kb(is_super=is_super),
     )
     await callback.answer()
 
