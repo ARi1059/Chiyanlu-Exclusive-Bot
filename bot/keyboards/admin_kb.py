@@ -72,8 +72,19 @@ def main_menu_kb(
             InlineKeyboardButton(text="📝 发布模板", callback_data="admin:publish_templates"),
             InlineKeyboardButton(text="📨 报表设置", callback_data="admin:report_settings"),
         ],
+        [InlineKeyboardButton(text="📊 运营总览", callback_data="admin:overview")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_overview_kb() -> InlineKeyboardMarkup:
+    """运营总览面板：刷新 / 返回主菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:overview:refresh"),
+            InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main"),
+        ],
+    ])
 
 
 # ============ 报表设置（Phase 6.3） ============

@@ -36,6 +36,7 @@ from bot.keyboards.admin_kb import (
     admin_remove_kb,
     dashboard_menu_kb,
     dashboard_audit_back_kb,
+    admin_overview_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -1136,6 +1137,48 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
         reply_markup=dashboard_audit_back_kb(),
     )
     await callback.answer()
+
+
+# ============ 运营总览（admin:overview） ============
+
+
+@router.callback_query(F.data == "admin:overview")
+@admin_required
+async def cb_admin_overview(callback: types.CallbackQuery):
+    """运营总览：今日数据 / 待处理 / 抽奖 / 系统迁移失败统计
+
+    只读聚合，不修改任何业务流程。
+    """
+    from bot.services.admin_overview import (
+        get_admin_overview_stats,
+        render_admin_overview,
+    )
+    stats = await get_admin_overview_stats()
+    await callback.message.edit_text(
+        render_admin_overview(stats),
+        reply_markup=admin_overview_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:overview:refresh")
+@admin_required
+async def cb_admin_overview_refresh(callback: types.CallbackQuery):
+    """运营总览刷新按钮（重新拉取数据并重绘）。"""
+    from bot.services.admin_overview import (
+        get_admin_overview_stats,
+        render_admin_overview,
+    )
+    stats = await get_admin_overview_stats()
+    try:
+        await callback.message.edit_text(
+            render_admin_overview(stats),
+            reply_markup=admin_overview_kb(),
+        )
+    except Exception:
+        # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
+        pass
+    await callback.answer("已刷新")
 
 
 # ============ 通用取消 ============

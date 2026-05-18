@@ -140,6 +140,13 @@
 - 所有超管/管理员关键操作（老师增删 / 报销批驳 / 加分 / 配置变更等）写入 `admin_audit_logs`
 - 后台「审计」入口分页查看
 
+### 15. 管理员运营总览（admin:overview）
+
+- 后台主菜单按钮「📊 运营总览」入口（超管 / 管理员可见）
+- 只读聚合：今日签到老师 / 今日新增用户 / 今日新增收藏 / 今日新增评价 / 待审核评价 / 待审核报销 / queued 报销名单 / 进行中抽奖 / 待发布抽奖 / 待开奖抽奖 / schema_migrations 失败迁移数（hard / soft）
+- 不修改任何业务流程，单点查询失败时该字段显示 `N/A`，不影响其它指标
+- 实现位于 [`bot/services/admin_overview.py`](bot/services/admin_overview.py)，callback 命名空间 `admin:overview` / `admin:overview:refresh`
+
 ---
 
 ## 技术栈
