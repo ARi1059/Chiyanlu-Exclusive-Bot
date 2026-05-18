@@ -147,6 +147,13 @@
 - 不修改任何业务流程，单点查询失败时该字段显示 `N/A`，不影响其它指标
 - 实现位于 [`bot/services/admin_overview.py`](bot/services/admin_overview.py)，callback 命名空间 `admin:overview` / `admin:overview:refresh`
 
+### 16. 管理员报销池状态（admin:reimbursement_pool）
+
+- 后台主菜单按钮「💰 报销池状态」入口（超管 / 管理员可见）
+- 只读聚合：月度额度 / 本月已批准金额 / 剩余额度（含 ⚠️ 已超额提示）/ pending / queued / 本月已通过 / 本月已驳回 / 本周通过用户数 / 本周通过金额 / 本周 reset voucher 使用次数 / 报销功能开关 / 当前月份与周
+- 月度池为 0 时显示"不限"，超额时显示负值与超额量；不修改报销审核流程、不修改金额计算规则
+- 实现位于 [`bot/services/reimbursement_pool.py`](bot/services/reimbursement_pool.py)，callback 命名空间 `admin:reimbursement_pool` / `admin:reimbursement_pool:refresh`
+
 ---
 
 ## 技术栈

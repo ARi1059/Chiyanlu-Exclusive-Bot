@@ -37,6 +37,7 @@ from bot.keyboards.admin_kb import (
     dashboard_menu_kb,
     dashboard_audit_back_kb,
     admin_overview_kb,
+    admin_reimbursement_pool_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -1174,6 +1175,48 @@ async def cb_admin_overview_refresh(callback: types.CallbackQuery):
         await callback.message.edit_text(
             render_admin_overview(stats),
             reply_markup=admin_overview_kb(),
+        )
+    except Exception:
+        # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
+        pass
+    await callback.answer("已刷新")
+
+
+# ============ 报销池状态（admin:reimbursement_pool） ============
+
+
+@router.callback_query(F.data == "admin:reimbursement_pool")
+@admin_required
+async def cb_admin_reimbursement_pool(callback: types.CallbackQuery):
+    """报销池状态：月度额度 / 已批准 / 剩余 / pending / queued / 周通过情况
+
+    只读聚合，不修改报销审核流程，不修改金额规则。
+    """
+    from bot.services.reimbursement_pool import (
+        get_reimbursement_pool_stats,
+        render_reimbursement_pool,
+    )
+    stats = await get_reimbursement_pool_stats()
+    await callback.message.edit_text(
+        render_reimbursement_pool(stats),
+        reply_markup=admin_reimbursement_pool_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:reimbursement_pool:refresh")
+@admin_required
+async def cb_admin_reimbursement_pool_refresh(callback: types.CallbackQuery):
+    """报销池状态刷新按钮（重新拉取数据并重绘）。"""
+    from bot.services.reimbursement_pool import (
+        get_reimbursement_pool_stats,
+        render_reimbursement_pool,
+    )
+    stats = await get_reimbursement_pool_stats()
+    try:
+        await callback.message.edit_text(
+            render_reimbursement_pool(stats),
+            reply_markup=admin_reimbursement_pool_kb(),
         )
     except Exception:
         # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
