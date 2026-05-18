@@ -30,7 +30,6 @@ from bot.database import (
     get_user,
     is_checked_in,
     is_favorited,
-    list_recent_teacher_views,
     record_teacher_view,
     set_user_notify_enabled,
     toggle_favorite,
@@ -38,8 +37,8 @@ from bot.database import (
     upsert_user,
 )
 from bot.keyboards.user_kb import (
-    back_to_user_main_kb,
-    recent_views_kb,
+    recent_views_empty_kb,
+    recent_views_rich_kb,
     teacher_detail_kb,
 )
 
@@ -489,26 +488,49 @@ async def cb_teacher_similar(callback: types.CallbackQuery):
     )
 
 
-# ============ user:recent —— 最近浏览列表 ============
+# ============ user:recent —— 最近浏览列表（增强版） ============
+
+
+async def _render_user_recent(user_id: int) -> tuple[str, "types.InlineKeyboardMarkup"]:
+    """生成最近看过的文本 + keyboard。
+
+    抽出便于复用给 user:recent 与 user:recent:refresh。
+    """
+    from bot.services.recent_views import (
+        get_recent_teacher_views,
+        render_recent_views,
+    )
+    items = await get_recent_teacher_views(user_id, limit=10)
+    now_local = datetime.now(_tz)
+    text = render_recent_views(items, generated_at=now_local, now_local=now_local)
+    if not items:
+        return text, recent_views_empty_kb()
+    return text, recent_views_rich_kb(items)
 
 
 @router.callback_query(F.data == "user:recent")
 async def cb_user_recent(callback: types.CallbackQuery):
-    """最近浏览过的老师列表（Phase 2 新增主菜单入口）"""
+    """最近浏览过的老师列表（用户留存 Sprint 增强：显示时间 / 状态 / 收藏）"""
     if callback.message and callback.message.chat.type != "private":
         await callback.answer("仅在私聊中可用", show_alert=True)
         return
 
-    user_id = callback.from_user.id
-    views = await list_recent_teacher_views(user_id, limit=10)
-    if not views:
-        await callback.message.edit_text(
-            "🕘 最近看过\n\n你还没有浏览过老师。\n可以先去 🔍 搜索老师 看看。",
-            reply_markup=back_to_user_main_kb(),
-        )
-        await callback.answer()
+    text, kb = await _render_user_recent(callback.from_user.id)
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "user:recent:refresh")
+async def cb_user_recent_refresh(callback: types.CallbackQuery):
+    """最近看过刷新按钮（重绘，不改业务流程）。"""
+    if callback.message and callback.message.chat.type != "private":
+        await callback.answer("仅在私聊中可用", show_alert=True)
         return
 
-    text = f"🕘 最近看过（{len(views)} 位）\n\n最近浏览的老师如下："
-    await callback.message.edit_text(text, reply_markup=recent_views_kb(views))
-    await callback.answer()
+    text, kb = await _render_user_recent(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        # 文本未变时 Telegram 抛 "message is not modified"，吞掉即可
+        pass
+    await callback.answer("已刷新")

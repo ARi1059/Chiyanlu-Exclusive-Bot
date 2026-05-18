@@ -161,6 +161,15 @@
 - 无任何抽奖时显示"暂无抽奖活动"；不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑
 - 实现位于 [`bot/services/lottery_status.py`](bot/services/lottery_status.py)，callback 命名空间 `admin:lottery_status` / `admin:lottery_status:refresh`
 
+### 18. 用户「👀 最近看过」（user:recent）增强
+
+- 入口复用主菜单既有「🕘 最近看过」按钮（callback `user:recent`），不新增入口
+- 列表展示每位老师：编号 / 艺名 / 最近查看（今天 HH:mm / 昨天 HH:mm / YYYY-MM-DD HH:mm 相对时间）/ 今日是否签到 / 是否已收藏
+- 每条带 `[📋 #N 艺名]` 进入既有 `teacher:view:<id>` 详情页（详情页内已有「收藏切换」按钮，避免新增重复收藏 callback）
+- 空记录时展示固定引导：`[🔥 热门推荐] [🔎 条件搜索] [🔙 返回主菜单]`
+- 新增 `user:recent:refresh` 刷新；不修改 record_teacher_view / 收藏 / 签到流程
+- 实现位于 [`bot/services/recent_views.py`](bot/services/recent_views.py)
+
 ---
 
 ## 技术栈

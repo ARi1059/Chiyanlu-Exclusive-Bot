@@ -326,6 +326,44 @@ def recent_views_kb(views: list[dict]) -> InlineKeyboardMarkup:
     )
 
 
+def recent_views_rich_kb(items: list) -> InlineKeyboardMarkup:
+    """最近看过增强版 keyboard（用户留存 Sprint）
+
+    每位老师一行 [查看详情 #N（艺名）]，callback 复用 teacher:view:<id>。
+    末尾两行：刷新 / 返回主菜单。
+
+    Args:
+        items: list[RecentTeacherViewItem] —— 用 list 类型注释而不绑 service 内
+               dataclass，避免 keyboards 反向依赖 services。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, it in enumerate(items, start=1):
+        # 兼容 dict 与 dataclass —— attrgetter 失败时回退到 dict.get
+        teacher_id = getattr(it, "teacher_id", None) or it.get("teacher_id")
+        display_name = getattr(it, "display_name", None) or it.get("display_name") or "老师"
+        label = f"📋 #{i} {display_name}"
+        if len(label) > 40:
+            label = label[:39] + "…"
+        rows.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"teacher:view:{teacher_id}",
+        )])
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="user:recent:refresh"),
+        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def recent_views_empty_kb() -> InlineKeyboardMarkup:
+    """最近看过为空时的引导 keyboard"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
+        [InlineKeyboardButton(text="🔎 条件搜索", callback_data="user:filter")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
 # ============ 搜索失败推荐 / 搜索结果（Phase 2） ============
 
 
