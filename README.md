@@ -140,28 +140,37 @@
 - 所有超管/管理员关键操作（老师增删 / 报销批驳 / 加分 / 配置变更等）写入 `admin_audit_logs`
 - 后台「审计」入口分页查看
 
-### 15. 管理员运营总览（admin:overview）
+### 15. 管理员数据看板二级菜单（admin:dashboard）
 
-- 后台主菜单按钮「📊 运营总览」入口（超管 / 管理员可见）
+- 后台主菜单按钮「📊 数据看板」入口（超管 / 管理员可见），收纳三个只读看板：
+  - 📊 运营总览 → `admin:overview`
+  - 💰 报销池状态 → `admin:reimbursement_pool`
+  - 🎲 抽奖状态 → `admin:lottery_status`
+- 仅菜单结构调整：原一级菜单中三个独立按钮下沉至二级页，三个子看板的统计逻辑、callback 含义、permission 边界、刷新行为全部保持不变
+- 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) 的 `cb_admin_dashboard` + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py) 的 `admin_dashboard_kb()`
+
+### 16. 管理员运营总览（admin:overview）
+
+- 经 `📊 数据看板` 二级页进入；超管 / 管理员可见
 - 只读聚合：今日签到老师 / 今日新增用户 / 今日新增收藏 / 今日新增评价 / 待审核评价 / 待审核报销 / queued 报销名单 / 进行中抽奖 / 待发布抽奖 / 待开奖抽奖 / schema_migrations 失败迁移数（hard / soft）
 - 不修改任何业务流程，单点查询失败时该字段显示 `N/A`，不影响其它指标
 - 实现位于 [`bot/services/admin_overview.py`](bot/services/admin_overview.py)，callback 命名空间 `admin:overview` / `admin:overview:refresh`
 
-### 16. 管理员报销池状态（admin:reimbursement_pool）
+### 17. 管理员报销池状态（admin:reimbursement_pool）
 
-- 后台主菜单按钮「💰 报销池状态」入口（超管 / 管理员可见）
+- 经 `📊 数据看板` 二级页进入；超管 / 管理员可见
 - 只读聚合：月度额度 / 本月已批准金额 / 剩余额度（含 ⚠️ 已超额提示）/ pending / queued / 本月已通过 / 本月已驳回 / 本周通过用户数 / 本周通过金额 / 本周 reset voucher 使用次数 / 报销功能开关 / 当前月份与周
 - 月度池为 0 时显示"不限"，超额时显示负值与超额量；不修改报销审核流程、不修改金额计算规则
 - 实现位于 [`bot/services/reimbursement_pool.py`](bot/services/reimbursement_pool.py)，callback 命名空间 `admin:reimbursement_pool` / `admin:reimbursement_pool:refresh`
 
-### 17. 管理员抽奖状态总览（admin:lottery_status）
+### 18. 管理员抽奖状态总览（admin:lottery_status）
 
-- 后台主菜单按钮「🎲 抽奖状态」入口（超管 / 管理员可见）
+- 经 `📊 数据看板` 二级页进入；超管 / 管理员可见
 - 只读聚合：6 个状态计数（draft / scheduled / active / drawn / no_entries / cancelled）+ 待发布 / 待开奖（active 且 draw_at > now）/ active 但无人参与 / 积分门票活动 + 最近 5 条抽奖摘要（参与人数 / 中奖人数 / 开奖时间 / 积分门票）
 - 无任何抽奖时显示"暂无抽奖活动"；不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑
 - 实现位于 [`bot/services/lottery_status.py`](bot/services/lottery_status.py)，callback 命名空间 `admin:lottery_status` / `admin:lottery_status:refresh`
 
-### 18. 用户「👀 最近看过」（user:recent）增强
+### 19. 用户「👀 最近看过」（user:recent）增强
 
 - 入口复用主菜单既有「🕘 最近看过」按钮（callback `user:recent`），不新增入口
 - 列表展示每位老师：编号 / 艺名 / 最近查看（今天 HH:mm / 昨天 HH:mm / YYYY-MM-DD HH:mm 相对时间）/ 今日是否签到 / 是否已收藏
@@ -170,7 +179,7 @@
 - 新增 `user:recent:refresh` 刷新；不修改 record_teacher_view / 收藏 / 签到流程
 - 实现位于 [`bot/services/recent_views.py`](bot/services/recent_views.py)
 
-### 19. 用户「⭐ 我的收藏」（user:favorites）增强
+### 20. 用户「⭐ 我的收藏」（user:favorites）增强
 
 - 入口复用主菜单既有「⭐ 我的收藏」按钮（callback `user:favorites`），不新增入口
 - 顶部三个计数：今日可约 / 今日未签到 / 总收藏；每条展示艺名 / 状态 / 收藏时间相对格式
@@ -180,7 +189,7 @@
 - 新增 `user:favorites:refresh` 刷新；不修改 add_favorite / remove_favorite / toggle_favorite / 详情页 / 签到 / 通知逻辑
 - 实现位于 [`bot/services/user_favorites.py`](bot/services/user_favorites.py)；时间格式化复用 [`bot/services/recent_views.py`](bot/services/recent_views.py) 中的 `format_viewed_at_relative`
 
-### 20. 用户「📜 搜索历史」（user:search_history）增强
+### 21. 用户「📜 搜索历史」（user:search_history）增强
 
 - 入口复用主菜单既有「📜 搜索历史」按钮（callback `user:search_history`），不新增入口
 - 展示每条搜索：编号 / 关键词 / 结果数（payload 缺失显示 N/A）/ 搜索时间（今天 HH:mm / 昨天 HH:mm / YYYY-MM-DD HH:mm）

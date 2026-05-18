@@ -522,17 +522,28 @@ def test_fetch_recent_lotteries_missing_table_returns_empty():
 # ============ callback_data 字符串契约 ============
 
 
-def test_lottery_status_callback_present_in_main_menu_kb():
-    """主菜单按钮中必须含有 admin:lottery_status callback。"""
-    from bot.keyboards.admin_kb import main_menu_kb
-    kb = main_menu_kb(is_super=True)
+def test_lottery_status_present_in_dashboard_kb():
+    """admin:lottery_status 已收纳到二级「📊 数据看板」(admin_dashboard_kb)。"""
+    from bot.keyboards.admin_kb import admin_dashboard_kb
+    kb = admin_dashboard_kb()
     found = False
     for row in kb.inline_keyboard:
         for btn in row:
             if btn.callback_data == "admin:lottery_status":
                 found = True
                 assert "抽奖状态" in btn.text
-    assert found, "main_menu_kb 缺少 admin:lottery_status 入口按钮"
+    assert found, "admin_dashboard_kb 缺少 admin:lottery_status 入口按钮"
+
+
+def test_lottery_status_no_longer_in_main_menu_kb():
+    """主菜单不再直接含 admin:lottery_status（已下沉到 admin:dashboard）。"""
+    from bot.keyboards.admin_kb import main_menu_kb
+    for is_super in (True, False):
+        kb = main_menu_kb(is_super=is_super)
+        callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+        assert "admin:lottery_status" not in callbacks, (
+            f"主菜单 (is_super={is_super}) 不应再直接含 admin:lottery_status"
+        )
 
 
 def test_lottery_status_refresh_callback_present_in_kb():
@@ -551,15 +562,3 @@ def test_lottery_status_callbacks_present_in_handler_source():
     src = inspect.getsource(admin_panel_module)
     assert '"admin:lottery_status"' in src
     assert '"admin:lottery_status:refresh"' in src
-
-
-def test_main_menu_button_visible_to_non_super_admin():
-    """普通管理员也应能看到「抽奖状态」入口。"""
-    from bot.keyboards.admin_kb import main_menu_kb
-    kb = main_menu_kb(is_super=False)
-    found = False
-    for row in kb.inline_keyboard:
-        for btn in row:
-            if btn.callback_data == "admin:lottery_status":
-                found = True
-    assert found, "非超管也应能看到 admin:lottery_status 按钮"

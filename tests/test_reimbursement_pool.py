@@ -494,17 +494,28 @@ def test_reset_voucher_join_query_against_real_schema():
 # ============ callback_data 字符串契约 ============
 
 
-def test_admin_reimbursement_pool_callback_present_in_main_menu_kb():
-    """主菜单按钮中必须含有 admin:reimbursement_pool callback。"""
-    from bot.keyboards.admin_kb import main_menu_kb
-    kb = main_menu_kb(is_super=True)
+def test_admin_reimbursement_pool_present_in_dashboard_kb():
+    """admin:reimbursement_pool 已收纳到二级「📊 数据看板」(admin_dashboard_kb)。"""
+    from bot.keyboards.admin_kb import admin_dashboard_kb
+    kb = admin_dashboard_kb()
     found = False
     for row in kb.inline_keyboard:
         for btn in row:
             if btn.callback_data == "admin:reimbursement_pool":
                 found = True
                 assert "报销池状态" in btn.text
-    assert found, "main_menu_kb 缺少 admin:reimbursement_pool 入口按钮"
+    assert found, "admin_dashboard_kb 缺少 admin:reimbursement_pool 入口按钮"
+
+
+def test_admin_reimbursement_pool_no_longer_in_main_menu_kb():
+    """主菜单不再直接含 admin:reimbursement_pool（已下沉到 admin:dashboard）。"""
+    from bot.keyboards.admin_kb import main_menu_kb
+    for is_super in (True, False):
+        kb = main_menu_kb(is_super=is_super)
+        callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+        assert "admin:reimbursement_pool" not in callbacks, (
+            f"主菜单 (is_super={is_super}) 不应再直接含 admin:reimbursement_pool"
+        )
 
 
 def test_admin_reimbursement_pool_refresh_callback_present_in_kb():
@@ -523,18 +534,3 @@ def test_admin_reimbursement_pool_callbacks_present_in_handler_source():
     src = inspect.getsource(admin_panel_module)
     assert '"admin:reimbursement_pool"' in src
     assert '"admin:reimbursement_pool:refresh"' in src
-
-
-def test_main_menu_button_visible_to_non_super_admin():
-    """普通管理员也应能看到「报销池状态」入口。
-
-    使用 admin_required 而非 super_admin_required，与 spec 一致。
-    """
-    from bot.keyboards.admin_kb import main_menu_kb
-    kb = main_menu_kb(is_super=False)
-    found = False
-    for row in kb.inline_keyboard:
-        for btn in row:
-            if btn.callback_data == "admin:reimbursement_pool":
-                found = True
-    assert found, "非超管也应能看到 admin:reimbursement_pool 按钮"

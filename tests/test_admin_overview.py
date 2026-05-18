@@ -315,17 +315,28 @@ def test_failed_migrations_counts_against_real_schema_shape():
 # ============ callback_data 字符串契约 ============
 
 
-def test_admin_overview_callback_present_in_main_menu_kb():
-    """主菜单按钮中必须含有 admin:overview callback。"""
-    from bot.keyboards.admin_kb import main_menu_kb
-    kb = main_menu_kb(is_super=True)
+def test_admin_overview_present_in_dashboard_kb():
+    """admin:overview 已收纳到二级「📊 数据看板」(admin_dashboard_kb)。"""
+    from bot.keyboards.admin_kb import admin_dashboard_kb
+    kb = admin_dashboard_kb()
     found = False
     for row in kb.inline_keyboard:
         for btn in row:
             if btn.callback_data == "admin:overview":
                 found = True
                 assert "运营总览" in btn.text
-    assert found, "main_menu_kb 缺少 admin:overview 入口按钮"
+    assert found, "admin_dashboard_kb 缺少 admin:overview 入口按钮"
+
+
+def test_admin_overview_no_longer_in_main_menu_kb():
+    """主菜单不再直接含 admin:overview（已下沉到 admin:dashboard）。"""
+    from bot.keyboards.admin_kb import main_menu_kb
+    for is_super in (True, False):
+        kb = main_menu_kb(is_super=is_super)
+        callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+        assert "admin:overview" not in callbacks, (
+            f"主菜单 (is_super={is_super}) 不应再直接含 admin:overview"
+        )
 
 
 def test_admin_overview_refresh_callback_present_in_overview_kb():
@@ -347,18 +358,3 @@ def test_admin_overview_callbacks_present_in_handler_source():
     src = inspect.getsource(admin_panel_module)
     assert '"admin:overview"' in src
     assert '"admin:overview:refresh"' in src
-
-
-def test_admin_overview_callbacks_non_super_visible_in_main_menu():
-    """普通管理员（is_super=False）也能看到运营总览入口。
-
-    spec：超管 / 管理员都可访问；用 admin_required 而非 super_admin_required。
-    """
-    from bot.keyboards.admin_kb import main_menu_kb
-    kb = main_menu_kb(is_super=False)
-    found = False
-    for row in kb.inline_keyboard:
-        for btn in row:
-            if btn.callback_data == "admin:overview":
-                found = True
-    assert found, "非超管也应能看到 admin:overview 按钮"

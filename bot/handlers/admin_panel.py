@@ -36,6 +36,7 @@ from bot.keyboards.admin_kb import (
     admin_remove_kb,
     dashboard_menu_kb,
     dashboard_audit_back_kb,
+    admin_dashboard_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
@@ -1138,6 +1139,28 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
         "\n".join(lines),
         reply_markup=dashboard_audit_back_kb(),
     )
+    await callback.answer()
+
+
+# ============ 数据看板二级菜单（admin:dashboard） ============
+
+
+@router.callback_query(F.data == "admin:dashboard")
+@admin_required
+async def cb_admin_dashboard(callback: types.CallbackQuery):
+    """二级「📊 数据看板」入口：聚合三个只读看板
+
+    callback 含义未做任何变更，本 handler 仅渲染聚合页 + 复用既有三个 callback
+    入口（admin:overview / admin:reimbursement_pool / admin:lottery_status）。
+    """
+    text = (
+        "📊 数据看板\n\n"
+        "请选择要查看的数据：\n\n"
+        "📊 运营总览\n"
+        "💰 报销池状态\n"
+        "🎲 抽奖状态"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_dashboard_kb())
     await callback.answer()
 
 

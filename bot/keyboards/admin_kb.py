@@ -72,11 +72,29 @@ def main_menu_kb(
             InlineKeyboardButton(text="📝 发布模板", callback_data="admin:publish_templates"),
             InlineKeyboardButton(text="📨 报表设置", callback_data="admin:report_settings"),
         ],
-        [InlineKeyboardButton(text="📊 运营总览", callback_data="admin:overview")],
-        [InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool")],
-        [InlineKeyboardButton(text="🎲 抽奖状态", callback_data="admin:lottery_status")],
+        # 三个只读看板（运营总览 / 报销池状态 / 抽奖状态）已收纳进二级页 admin:dashboard
+        [InlineKeyboardButton(text="📊 数据看板", callback_data="admin:dashboard")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_dashboard_kb() -> InlineKeyboardMarkup:
+    """二级「📊 数据看板」面板：聚合三个只读看板入口 + 返回后台
+
+    入口分别对应：
+        - admin:overview            运营总览
+        - admin:reimbursement_pool  报销池状态
+        - admin:lottery_status      抽奖状态
+
+    callback 含义未做任何变更，handler 仍由原 admin_panel.py 模块处理；
+    本 keyboard 仅是聚合入口的视图组合。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 运营总览",   callback_data="admin:overview")],
+        [InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool")],
+        [InlineKeyboardButton(text="🎲 抽奖状态",   callback_data="admin:lottery_status")],
+        [InlineKeyboardButton(text="⬅️ 返回后台",   callback_data="menu:main")],
+    ])
 
 
 def admin_overview_kb() -> InlineKeyboardMarkup:
