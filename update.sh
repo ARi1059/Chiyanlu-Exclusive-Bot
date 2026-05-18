@@ -201,9 +201,24 @@ cmd_rollback() {
     fi
 
     # 4. 还原 DB
+    #   WAL 模式下需要先清掉残留的 -wal / -shm，否则 SQLite 启动时会把旧 WAL
+    #   replay 到刚还原的主库上，污染恢复结果。服务已在第 3 步停止，文件锁已释放。
     info "还原数据库..."
+    rm -f "${DB_PATH}-wal" "${DB_PATH}-shm"
     cp -p "$latest_backup" "$DB_PATH"
-    ok "DB 已还原"
+    # 还原后做一次 integrity_check（如果 sqlite3 可用），多一层保险
+    if command -v sqlite3 >/dev/null 2>&1; then
+        RESTORE_CHECK=$(sqlite3 "$DB_PATH" "PRAGMA integrity_check;" 2>&1)
+        if [[ "$RESTORE_CHECK" != "ok" ]]; then
+            err "还原后的 DB integrity_check 失败：'$RESTORE_CHECK'"
+            err "备份文件可能已损坏：$latest_backup"
+            exit 1
+        fi
+        ok "DB 已还原并通过 integrity_check"
+    else
+        warn "未安装 sqlite3 命令，跳过 integrity_check（已 cp 还原）"
+        ok "DB 已还原"
+    fi
 
     # 5. git 回退
     info "git reset --hard HEAD~1..."
@@ -331,24 +346,43 @@ if [[ -n "$MIGRATIONS_TOUCHED" ]]; then
     fi
 fi
 
-# 4. 备份数据库（含完整性校验）
+# 4. 备份数据库（WAL-safe：sqlite3 .backup + integrity_check）
+#
+# 自 2026-05-18 起 bot 启用 WAL 模式（PRAGMA journal_mode=WAL），
+# 单纯 cp data/bot.db 会丢掉仍在 bot.db-wal 里未 checkpoint 的最近写入。
+# 必须用 sqlite3 .backup（在线一致性快照，WAL 内容自动合入备份文件）。
 if [[ -f "$DB_PATH" ]]; then
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        err "未找到 sqlite3 命令。WAL 模式下不能简单 cp 备份。"
+        err "请安装："
+        err "  Debian/Ubuntu: apt install sqlite3"
+        err "  RHEL/CentOS:   yum install sqlite"
+        err "  macOS:         brew install sqlite"
+        exit 1
+    fi
     mkdir -p "$BACKUP_DIR"
     TS=$(date +%Y%m%d-%H%M%S)
     BACKUP_FILE="$BACKUP_DIR/bot.db.${TS}.bak"
-    cp -p "$DB_PATH" "$BACKUP_FILE"
-    # 校验：备份文件存在 + 大小一致
+    info "使用 sqlite3 .backup 创建一致性备份（WAL-safe）..."
+    if ! sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"; then
+        err "sqlite3 .backup 失败"
+        exit 1
+    fi
+    # 校验 1：备份文件存在且非空
     if [[ ! -s "$BACKUP_FILE" ]]; then
         err "备份失败：$BACKUP_FILE 不存在或为空"
         exit 1
     fi
-    ORIG_SIZE=$(stat -c%s "$DB_PATH" 2>/dev/null || stat -f%z "$DB_PATH")
-    BACKUP_SIZE=$(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE")
-    if [[ "$ORIG_SIZE" != "$BACKUP_SIZE" ]]; then
-        err "备份完整性校验失败：原 $ORIG_SIZE bytes，备份 $BACKUP_SIZE bytes"
+    # 校验 2：integrity_check 必须返回 ok
+    info "执行 PRAGMA integrity_check..."
+    INTEGRITY=$(sqlite3 "$BACKUP_FILE" "PRAGMA integrity_check;" 2>&1)
+    if [[ "$INTEGRITY" != "ok" ]]; then
+        err "备份完整性校验失败：integrity_check 返回 '$INTEGRITY'"
+        err "损坏备份已生成于：$BACKUP_FILE （请保留以排查）"
         exit 1
     fi
-    ok "数据库已备份至 $BACKUP_FILE（${BACKUP_SIZE} bytes）"
+    BACKUP_SIZE=$(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE")
+    ok "数据库已备份至 $BACKUP_FILE（${BACKUP_SIZE} bytes，integrity_check=ok）"
     # 清理旧备份
     ls -1t "$BACKUP_DIR"/bot.db.*.bak 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
 else

@@ -390,18 +390,82 @@ Bot 会判断：
 
 ## 14. 备份建议
 
-项目使用 SQLite，建议定期备份数据库文件：
+项目使用 SQLite，自 2026-05-18 起启用 **WAL 模式**（`PRAGMA journal_mode=WAL`）。
+WAL 模式下数据库由 3 个文件组成：
 
 ```text
-/opt/Chiyanlu-Exclusive-Bot/data/bot.db
+/opt/Chiyanlu-Exclusive-Bot/data/bot.db       # 主库
+/opt/Chiyanlu-Exclusive-Bot/data/bot.db-wal   # 预写日志（最近未 checkpoint 的写入）
+/opt/Chiyanlu-Exclusive-Bot/data/bot.db-shm   # 共享内存映射
 ```
 
-手动备份示例：
+### ⚠️ 不要直接 cp 主库
+
+直接 `cp data/bot.db` **会丢掉仍在 `-wal` 里未 checkpoint 的最近写入**。表面上文件大小正常，但备份内容缺最新数据。
+
+### ✅ 推荐：sqlite3 .backup（在线一致性快照）
+
+`sqlite3 .backup` 命令在 SQLite 内部会自动把 WAL 内容合入备份文件，是 WAL 模式下唯一安全的在线备份方式：
 
 ```bash
 mkdir -p /root/chiyanlu-backups
-cp /opt/Chiyanlu-Exclusive-Bot/data/bot.db /root/chiyanlu-backups/bot-$(date +%F-%H%M%S).db
+TS=$(date +%F-%H%M%S)
+BACKUP=/root/chiyanlu-backups/bot-${TS}.db
+
+# 1. 一致性备份（服务无需停机）
+sqlite3 /opt/Chiyanlu-Exclusive-Bot/data/bot.db ".backup '$BACKUP'"
+
+# 2. 完整性校验
+sqlite3 "$BACKUP" "PRAGMA integrity_check;"   # 期望返回：ok
 ```
+
+`update.sh` 在 `update` / `rollback` 两个流程里都已经按这个模式做备份和校验，无需手动执行。
+
+### crontab 定时备份示例
+
+```cron
+# 每天 03:30 自动备份，保留最近 30 份
+30 3 * * * /root/scripts/backup_chiyanlu.sh
+```
+
+`backup_chiyanlu.sh` 简易实现：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+DB=/opt/Chiyanlu-Exclusive-Bot/data/bot.db
+DIR=/root/chiyanlu-backups
+mkdir -p "$DIR"
+TS=$(date +%F-%H%M%S)
+OUT=$DIR/bot-${TS}.db
+sqlite3 "$DB" ".backup '$OUT'"
+[[ "$(sqlite3 "$OUT" 'PRAGMA integrity_check;')" = ok ]] || { echo "BACKUP CORRUPT: $OUT" >&2; exit 1; }
+# 保留最近 30 份
+ls -1t "$DIR"/bot-*.db | tail -n +31 | xargs -r rm -f
+```
+
+### 还原（从已备份的文件恢复）
+
+```bash
+# 1. 停服
+systemctl stop chiyanlu-bot
+
+# 2. 清掉残留 WAL/SHM（必须！否则旧 WAL 会被 replay 到刚还原的主库上）
+rm -f /opt/Chiyanlu-Exclusive-Bot/data/bot.db-wal
+rm -f /opt/Chiyanlu-Exclusive-Bot/data/bot.db-shm
+
+# 3. 覆盖主库
+cp /root/chiyanlu-backups/bot-2026-05-18-030000.db \
+   /opt/Chiyanlu-Exclusive-Bot/data/bot.db
+
+# 4. 校验
+sqlite3 /opt/Chiyanlu-Exclusive-Bot/data/bot.db "PRAGMA integrity_check;"   # 期望 ok
+
+# 5. 起服
+systemctl start chiyanlu-bot
+```
+
+`./update.sh rollback` 已封装上述流程，紧急回滚直接用它即可。
 
 ---
 
