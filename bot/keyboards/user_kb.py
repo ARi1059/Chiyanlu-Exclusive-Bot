@@ -408,6 +408,116 @@ def suggestion_result_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
+# ============ 个人评价主页（2026-05-18） ============
+
+
+# 主页 status 过滤 3 个 + rating 过滤 3 个；rating 选中后兼作"写车评"预选评级。
+_USER_REVIEW_STATUS_FILTERS: list[tuple[str, str]] = [
+    ("pending",  "⏳ 未审核"),
+    ("approved", "✅ 已审核"),
+    ("rejected", "❌ 已驳回"),
+]
+_USER_REVIEW_RATING_FILTERS: list[tuple[str, str]] = [
+    ("positive", "👍 好评"),
+    ("neutral",  "😐 中评"),
+    ("negative", "👎 差评"),
+]
+
+
+def user_reviews_home_kb(
+    *,
+    status_filter: Optional[str],
+    rating_filter: Optional[str],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """个人评价主页键盘
+
+    布局：
+        [⏳ 未审核 / ✅ 已审核 / ❌ 已驳回]    ← 当前选中前缀 ●
+        [👍 好评 / 😐 中评 / 👎 差评]            ← 同上；rating 选中后兼作预选评级
+        [« 首页]  [‹ 上页]  [📄 X/Y]  [下页 ›]  [末页 »]
+        [🤖 写车评]
+        [🔙 返回主菜单]
+
+    callback 命名空间：
+        user:reviews:filter:status:<key|clear>
+        user:reviews:filter:rating:<key|clear>
+        user:reviews:page:<n>
+        user:reviews:write
+        user:main
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    # 第一行：3 个 status 过滤
+    row: list[InlineKeyboardButton] = []
+    for key, label in _USER_REVIEW_STATUS_FILTERS:
+        active = (key == status_filter)
+        text = f"● {label}" if active else label
+        cb = (
+            "user:reviews:filter:status:clear" if active
+            else f"user:reviews:filter:status:{key}"
+        )
+        row.append(InlineKeyboardButton(text=text, callback_data=cb))
+    rows.append(row)
+
+    # 第二行：3 个 rating 过滤
+    row = []
+    for key, label in _USER_REVIEW_RATING_FILTERS:
+        active = (key == rating_filter)
+        text = f"● {label}" if active else label
+        cb = (
+            "user:reviews:filter:rating:clear" if active
+            else f"user:reviews:filter:rating:{key}"
+        )
+        row.append(InlineKeyboardButton(text=text, callback_data=cb))
+    rows.append(row)
+
+    # 第三行：分页
+    nav: list[InlineKeyboardButton] = []
+    cur_page = max(0, min(page, max(0, total_pages - 1)))
+    last = max(0, total_pages - 1)
+    if cur_page > 0:
+        nav.append(InlineKeyboardButton(
+            text="« 首页", callback_data="user:reviews:page:0",
+        ))
+        nav.append(InlineKeyboardButton(
+            text="‹ 上页",
+            callback_data=f"user:reviews:page:{cur_page - 1}",
+        ))
+    nav.append(InlineKeyboardButton(
+        text=f"📄 {cur_page + 1}/{max(1, total_pages)}",
+        callback_data="noop:reviews_page",
+    ))
+    if cur_page < last:
+        nav.append(InlineKeyboardButton(
+            text="下页 ›",
+            callback_data=f"user:reviews:page:{cur_page + 1}",
+        ))
+        nav.append(InlineKeyboardButton(
+            text="末页 »", callback_data=f"user:reviews:page:{last}",
+        ))
+    rows.append(nav)
+
+    # 写车评 + 返回
+    write_label = "🤖 写车评"
+    if rating_filter:
+        emoji = next(
+            (lab for key, lab in _USER_REVIEW_RATING_FILTERS if key == rating_filter),
+            "",
+        )
+        write_label = f"🤖 写车评（预选 {emoji}）"
+    rows.append([InlineKeyboardButton(
+        text=write_label,
+        callback_data="user:reviews:write",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🔙 返回主菜单", callback_data="user:main",
+    )])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 # ============ 评价 FSM 键盘（Phase 9.3） ============
 
 def review_cancel_kb() -> InlineKeyboardMarkup:

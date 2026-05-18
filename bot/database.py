@@ -4725,6 +4725,121 @@ async def count_approved_reviews(teacher_id: int) -> int:
         await db.close()
 
 
+# ============ 用户「我的评价」主页（2026-05-18） ============
+
+
+_VALID_USER_REVIEW_STATUS: set[str] = {"pending", "approved", "rejected"}
+_VALID_USER_REVIEW_RATING: set[str] = {"positive", "neutral", "negative"}
+
+
+def _normalize_user_review_filters(
+    status_filter: Optional[str], rating_filter: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    s = status_filter if status_filter in _VALID_USER_REVIEW_STATUS else None
+    r = rating_filter if rating_filter in _VALID_USER_REVIEW_RATING else None
+    return s, r
+
+
+async def count_user_reviews(
+    user_id: int,
+    status_filter: Optional[str] = None,
+    rating_filter: Optional[str] = None,
+) -> int:
+    """统计某用户已提交评价总数（可叠加 status / rating 过滤）"""
+    s, r = _normalize_user_review_filters(status_filter, rating_filter)
+    sql = "SELECT COUNT(*) AS c FROM teacher_reviews WHERE user_id = ?"
+    params: list = [int(user_id)]
+    if s:
+        sql += " AND status = ?"; params.append(s)
+    if r:
+        sql += " AND rating = ?"; params.append(r)
+    db = await get_db()
+    try:
+        cur = await db.execute(sql, tuple(params))
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+async def list_user_reviews_paged(
+    user_id: int,
+    status_filter: Optional[str] = None,
+    rating_filter: Optional[str] = None,
+    limit: int = 5,
+    offset: int = 0,
+) -> list[dict]:
+    """列出某用户自己提交的评价（用于个人评价主页）
+
+    排序：created_at DESC（最新在前）。可叠加 status / rating 过滤。
+    """
+    s, r = _normalize_user_review_filters(status_filter, rating_filter)
+    sql = "SELECT * FROM teacher_reviews WHERE user_id = ?"
+    params: list = [int(user_id)]
+    if s:
+        sql += " AND status = ?"; params.append(s)
+    if r:
+        sql += " AND rating = ?"; params.append(r)
+    sql += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+    params.extend([int(limit), int(offset)])
+    db = await get_db()
+    try:
+        cur = await db.execute(sql, tuple(params))
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_user_review_stats(user_id: int) -> dict:
+    """返回该用户评价分布：
+
+    {
+        "total": int,
+        "status": {"pending": n, "approved": n, "rejected": n},
+        "rating_approved": {"positive": n, "neutral": n, "negative": n},
+            (仅统计 status='approved' 的评级分布；驳回的不计入)
+    }
+    """
+    db = await get_db()
+    try:
+        # 总数 + status 分布
+        cur = await db.execute(
+            "SELECT status, COUNT(*) AS c FROM teacher_reviews "
+            "WHERE user_id = ? GROUP BY status",
+            (int(user_id),),
+        )
+        rows = await cur.fetchall()
+        status_count = {"pending": 0, "approved": 0, "rejected": 0}
+        total = 0
+        for row in rows:
+            total += int(row["c"])
+            st = row["status"]
+            if st in status_count:
+                status_count[st] = int(row["c"])
+
+        # approved 评级分布
+        cur = await db.execute(
+            "SELECT rating, COUNT(*) AS c FROM teacher_reviews "
+            "WHERE user_id = ? AND status = 'approved' GROUP BY rating",
+            (int(user_id),),
+        )
+        rows = await cur.fetchall()
+        rating_count = {"positive": 0, "neutral": 0, "negative": 0}
+        for row in rows:
+            rt = row["rating"]
+            if rt in rating_count:
+                rating_count[rt] = int(row["c"])
+
+        return {
+            "total": total,
+            "status": status_count,
+            "rating_approved": rating_count,
+        }
+    finally:
+        await db.close()
+
+
 async def get_teachers_by_ids(user_ids: list[int]) -> dict[int, dict]:
     """批量取 teachers（按 user_id 主键）→ {teacher_id: dict}
 

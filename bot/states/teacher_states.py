@@ -132,6 +132,18 @@ class LotteryCreateStates(StatesGroup):
     waiting_entry_cost_input  = State()  # Step 10 确认页 [💰 设置参与所需积分] 子流程
 
 
+class UserReviewsHomeStates(StatesGroup):
+    """主菜单 [📝 写评价] → 个人评价主页 浏览/筛选 状态（2026-05-18）
+
+    state.data 累加：
+        status_filter: "pending"|"approved"|"rejected"|None
+        rating_filter: "positive"|"neutral"|"negative"|None
+        page: int (0-based)
+        pre_rating: str|None  ← 用户在主页选中的评级（兼作写车评的预选评级）
+    """
+    viewing = State()
+
+
 class WriteReviewLookupStates(StatesGroup):
     """主菜单 [📝 写评价] → 等待用户输入艺名 → 查到老师后转 ReviewSubmitStates"""
     waiting_teacher_name = State()
