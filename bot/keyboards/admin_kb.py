@@ -33,7 +33,7 @@ def main_menu_kb(
     )
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="menu:teacher"),
+            InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="admin:teachers"),
             InlineKeyboardButton(text="👥 管理员管理", callback_data="menu:admin"),
         ],
         [
@@ -47,11 +47,7 @@ def main_menu_kb(
             InlineKeyboardButton(text="🎲 活动运营", callback_data="admin:operations"),
         ])
     rows.extend([
-        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
-        [
-            InlineKeyboardButton(text="📅 今日状态", callback_data="admin:today_status"),
-            InlineKeyboardButton(text="🏷 用户画像", callback_data="admin:user_tags"),
-        ],
+        # 热门推荐 / 今日状态 / 用户画像 已收纳进二级页 admin:teachers
         # 频道设置 / 系统设置 / 发布模板 / 报表设置 已收纳进二级页 admin:settings
         # 三个只读看板（运营总览 / 报销池状态 / 抽奖状态）已收纳进二级页 admin:dashboard
         [
@@ -60,6 +56,29 @@ def main_menu_kb(
         ],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_teachers_kb() -> InlineKeyboardMarkup:
+    """二级「👩‍🏫 老师管理」面板：聚合老师资料 / 状态 / 推荐 / 标签类入口 + 返回后台
+
+    入口（全部 @admin_required，所有 admin 可见）：
+        - menu:teacher          👥 老师档案与启停（既有子菜单，含 老师档案管理 /
+                                启停 / 老师列表）
+        - admin:hot_manage      🔥 热门推荐（handler 在 hot_teachers.py）
+        - admin:today_status    📅 今日发布状态（handler 在 teacher_daily_status.py）
+        - admin:user_tags       🏷 用户画像（handler 在 user_tags.py；当前项目仅
+                                有用户画像，无独立的"老师标签"callback）
+
+    callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
+    聚合视图组合。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 老师列表与启停", callback_data="menu:teacher")],
+        [InlineKeyboardButton(text="🔥 热门推荐",       callback_data="admin:hot_manage")],
+        [InlineKeyboardButton(text="📅 今日发布状态",   callback_data="admin:today_status")],
+        [InlineKeyboardButton(text="🏷 用户画像",       callback_data="admin:user_tags")],
+        [InlineKeyboardButton(text="⬅️ 返回后台",       callback_data="menu:main")],
+    ])
 
 
 def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:

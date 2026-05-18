@@ -40,6 +40,7 @@ from bot.keyboards.admin_kb import (
     admin_review_tasks_kb,
     admin_operations_kb,
     admin_settings_kb,
+    admin_teachers_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
@@ -1142,6 +1143,29 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
         "\n".join(lines),
         reply_markup=dashboard_audit_back_kb(),
     )
+    await callback.answer()
+
+
+# ============ 老师管理二级菜单（admin:teachers） ============
+
+
+@router.callback_query(F.data == "admin:teachers")
+@admin_required
+async def cb_admin_teachers(callback: types.CallbackQuery):
+    """二级「👩‍🏫 老师管理」入口：聚合老师档案 / 状态 / 推荐 / 标签类入口
+
+    所有子入口都是 @admin_required（管理员均可访问）；本 handler 同样使用
+    @admin_required，与原 menu:teacher 行为一致。callback 含义全部保持不变。
+    """
+    text = (
+        "👩‍🏫 老师管理\n\n"
+        "老师资料与状态管理：\n\n"
+        "👥 老师列表与启停\n"
+        "🔥 热门推荐\n"
+        "📅 今日发布状态\n"
+        "🏷 用户画像"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_teachers_kb())
     await callback.answer()
 
 
