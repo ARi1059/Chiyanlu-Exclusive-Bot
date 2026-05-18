@@ -12,11 +12,30 @@ logger = logging.getLogger(__name__)
 
 
 async def get_db() -> aiosqlite.Connection:
-    """获取数据库连接"""
-    os.makedirs(os.path.dirname(config.database_path), exist_ok=True)
+    """获取数据库连接
+
+    每个连接都启用一组基础 SQLite PRAGMA（2026-05-18 Sprint 2 P1）：
+      - foreign_keys=ON     —— 维持外键约束
+      - journal_mode=WAL    —— 写不阻塞读、读不阻塞写；持久化属性，一次写入即长期生效
+      - synchronous=NORMAL  —— WAL 模式下的推荐档：fsync 频率从 FULL 降到 NORMAL，
+                              写吞吐显著提升；崩溃恢复仍依赖 WAL，零数据丢失风险
+      - busy_timeout=5000   —— SQLite 锁等待 5s 再报 SQLITE_BUSY，
+                              避免高峰瞬时锁冲突直接报错
+
+    不引入连接池：当前单进程 polling 模式，open/close 开销可接受。
+    """
+    # dirname 可能为空（database_path 是裸文件名时），需先判空再 makedirs
+    db_dir = os.path.dirname(config.database_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     db = await aiosqlite.connect(config.database_path)
     db.row_factory = aiosqlite.Row
+    # PRAGMA 顺序：FK → WAL → synchronous → busy_timeout
     await db.execute("PRAGMA foreign_keys = ON")
+    await db.execute("PRAGMA journal_mode = WAL")
+    await db.execute("PRAGMA synchronous = NORMAL")
+    await db.execute("PRAGMA busy_timeout = 5000")
     return db
 
 
