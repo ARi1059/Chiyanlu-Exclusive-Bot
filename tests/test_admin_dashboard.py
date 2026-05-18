@@ -19,7 +19,8 @@ from __future__ import annotations
 
 
 def test_main_menu_kb_contains_admin_dashboard():
-    """主菜单必须新增 admin:dashboard 入口（含『数据看板』文案）。"""
+    """主菜单必须含 admin:dashboard 入口（文案『📊 运营看板』，区分于
+    dashboard:enter 的『📈 数据分析』）。"""
     from bot.keyboards.admin_kb import main_menu_kb
     for is_super in (True, False):
         kb = main_menu_kb(is_super=is_super)
@@ -28,8 +29,64 @@ def test_main_menu_kb_contains_admin_dashboard():
             for btn in row:
                 if btn.callback_data == "admin:dashboard":
                     found = True
-                    assert "数据看板" in btn.text
+                    assert "运营看板" in btn.text, (
+                        f"admin:dashboard 按钮文案应含「运营看板」，实际：{btn.text}"
+                    )
+                    # 防御：不应再叫「数据看板」（与 dashboard:enter 冲突）
+                    assert "数据看板" not in btn.text, (
+                        f"admin:dashboard 按钮文案不应再叫「数据看板」，与 dashboard:enter 冲突"
+                    )
         assert found, f"主菜单 (is_super={is_super}) 缺少 admin:dashboard 入口"
+
+
+def test_main_menu_kb_dashboard_enter_renamed_to_data_analysis():
+    """dashboard:enter 按钮文案应为「📈 数据分析」（旧 Phase 1 user_events 看板）。"""
+    from bot.keyboards.admin_kb import main_menu_kb
+    for is_super in (True, False):
+        kb = main_menu_kb(is_super=is_super)
+        found = False
+        for row in kb.inline_keyboard:
+            for btn in row:
+                if btn.callback_data == "dashboard:enter":
+                    found = True
+                    assert "数据分析" in btn.text, (
+                        f"dashboard:enter 按钮文案应含「数据分析」，实际：{btn.text}"
+                    )
+                    # 防御：不应再叫「数据看板」
+                    assert "数据看板" not in btn.text
+        assert found, f"主菜单 (is_super={is_super}) 缺少 dashboard:enter 入口"
+
+
+def test_main_menu_kb_two_dashboards_have_distinct_labels():
+    """主菜单中 dashboard:enter 与 admin:dashboard 必须文案不同（命名优化目标）。"""
+    from bot.keyboards.admin_kb import main_menu_kb
+    kb = main_menu_kb(is_super=True)
+    label_by_callback: dict[str, str] = {}
+    for row in kb.inline_keyboard:
+        for btn in row:
+            if btn.callback_data in ("dashboard:enter", "admin:dashboard"):
+                label_by_callback[btn.callback_data] = btn.text
+    assert "dashboard:enter" in label_by_callback
+    assert "admin:dashboard" in label_by_callback
+    assert label_by_callback["dashboard:enter"] != label_by_callback["admin:dashboard"], (
+        f"两个看板入口文案不应相同：{label_by_callback}"
+    )
+
+
+def test_admin_dashboard_handler_title_uses_new_label():
+    """cb_admin_dashboard 渲染文本应使用「📊 运营看板」标题，不再是「📊 数据看板」。"""
+    import bot.handlers.admin_panel as admin_panel_module
+    import inspect
+    src = inspect.getsource(admin_panel_module)
+    # 定位 cb_admin_dashboard 函数体（窗口约 500 字符）
+    idx = src.find("async def cb_admin_dashboard(")
+    assert idx > 0
+    window = src[idx:idx + 700]
+    assert "📊 运营看板" in window, "cb_admin_dashboard 应渲染「📊 运营看板」标题"
+    # cb_admin_dashboard 函数体内不应再有「📊 数据看板」字面量
+    assert "📊 数据看板" not in window, (
+        "cb_admin_dashboard 函数体不应再含『📊 数据看板』字面量"
+    )
 
 
 def test_main_menu_kb_no_longer_contains_three_dashboards():

@@ -140,12 +140,13 @@
 - 所有超管/管理员关键操作（老师增删 / 报销批驳 / 加分 / 配置变更等）写入 `admin_audit_logs`
 - 后台「审计」入口分页查看
 
-### 15. 管理员数据看板二级菜单（admin:dashboard）
+### 15. 管理员运营看板二级菜单（admin:dashboard）
 
-- 后台主菜单按钮「📊 数据看板」入口（超管 / 管理员可见），收纳三个只读看板：
+- 后台主菜单按钮「📊 运营看板」入口（超管 / 管理员可见），收纳三个只读看板：
   - 📊 运营总览 → `admin:overview`
   - 💰 报销池状态 → `admin:reimbursement_pool`
   - 🎲 抽奖状态 → `admin:lottery_status`
+- 与主菜单中「📈 数据分析」(callback `dashboard:enter`，旧 Phase 1 user_events + 审计 + 7 日窗口看板) 区分命名：本入口聚焦运营状态，数据分析入口聚焦事件 / 审计 / 历史分析
 - 仅菜单结构调整：原一级菜单中三个独立按钮下沉至二级页，三个子看板的统计逻辑、callback 含义、permission 边界、刷新行为全部保持不变
 - 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) 的 `cb_admin_dashboard` + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py) 的 `admin_dashboard_kb()`
 
@@ -205,21 +206,21 @@
 
 ### 21. 管理员运营总览（admin:overview）
 
-- 经 `📊 数据看板` 二级页进入；超管 / 管理员可见
+- 经 `📊 运营看板` 二级页进入；超管 / 管理员可见
 - 只读聚合：今日签到老师 / 今日新增用户 / 今日新增收藏 / 今日新增评价 / 待审核评价 / 待审核报销 / queued 报销名单 / 进行中抽奖 / 待发布抽奖 / 待开奖抽奖 / schema_migrations 失败迁移数（hard / soft）
 - 不修改任何业务流程，单点查询失败时该字段显示 `N/A`，不影响其它指标
 - 实现位于 [`bot/services/admin_overview.py`](bot/services/admin_overview.py)，callback 命名空间 `admin:overview` / `admin:overview:refresh`
 
 ### 22. 管理员报销池状态（admin:reimbursement_pool）
 
-- 经 `📊 数据看板` 二级页进入；超管 / 管理员可见
+- 经 `📊 运营看板` 二级页进入；超管 / 管理员可见
 - 只读聚合：月度额度 / 本月已批准金额 / 剩余额度（含 ⚠️ 已超额提示）/ pending / queued / 本月已通过 / 本月已驳回 / 本周通过用户数 / 本周通过金额 / 本周 reset voucher 使用次数 / 报销功能开关 / 当前月份与周
 - 月度池为 0 时显示"不限"，超额时显示负值与超额量；不修改报销审核流程、不修改金额计算规则
 - 实现位于 [`bot/services/reimbursement_pool.py`](bot/services/reimbursement_pool.py)，callback 命名空间 `admin:reimbursement_pool` / `admin:reimbursement_pool:refresh`
 
 ### 23. 管理员抽奖状态总览（admin:lottery_status）
 
-- 经 `📊 数据看板` 二级页进入；超管 / 管理员可见
+- 经 `📊 运营看板` 二级页进入；超管 / 管理员可见
 - 只读聚合：6 个状态计数（draft / scheduled / active / drawn / no_entries / cancelled）+ 待发布 / 待开奖（active 且 draw_at > now）/ active 但无人参与 / 积分门票活动 + 最近 5 条抽奖摘要（参与人数 / 中奖人数 / 开奖时间 / 积分门票）
 - 无任何抽奖时显示"暂无抽奖活动"；不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑
 - 实现位于 [`bot/services/lottery_status.py`](bot/services/lottery_status.py)，callback 命名空间 `admin:lottery_status` / `admin:lottery_status:refresh`

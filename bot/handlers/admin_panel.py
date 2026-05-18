@@ -1076,7 +1076,7 @@ async def cb_dashboard_enter(callback: types.CallbackQuery):
         return events.get(name, 0)
 
     lines = [
-        "📊 数据看板",
+        "📈 数据分析",
         f"📅 {today_str}（近 7 日窗口含今日）",
         "━━━━━━━━━━━━━━━",
         "【用户】",
@@ -1303,20 +1303,23 @@ async def cb_admin_review_tasks(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ============ 数据看板二级菜单（admin:dashboard） ============
+# ============ 运营看板二级菜单（admin:dashboard） ============
 
 
 @router.callback_query(F.data == "admin:dashboard")
 @admin_required
 async def cb_admin_dashboard(callback: types.CallbackQuery):
-    """二级「📊 数据看板」入口：聚合三个只读看板
+    """二级「📊 运营看板」入口：聚合三个只读看板
 
     callback 含义未做任何变更，本 handler 仅渲染聚合页 + 复用既有三个 callback
     入口（admin:overview / admin:reimbursement_pool / admin:lottery_status）。
+
+    主菜单中「📈 数据分析」对应 dashboard:enter（user_events / 审计 / 7 日窗口），
+    与本「📊 运营看板」职责区分。
     """
     text = (
-        "📊 数据看板\n\n"
-        "请选择要查看的数据：\n\n"
+        "📊 运营看板\n\n"
+        "请选择要查看的运营数据：\n\n"
         "📊 运营总览\n"
         "💰 报销池状态\n"
         "🎲 抽奖状态"

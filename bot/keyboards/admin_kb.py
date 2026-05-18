@@ -44,7 +44,8 @@ def main_menu_kb(
     rows: list[list[InlineKeyboardButton]] = [
         row1,
         [
-            InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
+            # 📈 数据分析：旧 Phase 1 看板，user_events + 审计 + 7 日窗口分析
+            InlineKeyboardButton(text="📈 数据分析", callback_data="dashboard:enter"),
             InlineKeyboardButton(text=review_tasks_label, callback_data="admin:review_tasks"),
         ],
     ]
@@ -56,9 +57,9 @@ def main_menu_kb(
     rows.extend([
         # 热门推荐 / 今日状态 / 用户画像 已收纳进二级页 admin:teachers
         # 频道设置 / 系统设置 / 发布模板 / 报表设置 已收纳进二级页 admin:settings
-        # 三个只读看板（运营总览 / 报销池状态 / 抽奖状态）已收纳进二级页 admin:dashboard
+        # 📊 运营看板：admin:dashboard 二级页，含运营总览 / 报销池状态 / 抽奖状态
         [
-            InlineKeyboardButton(text="📊 数据看板", callback_data="admin:dashboard"),
+            InlineKeyboardButton(text="📊 运营看板", callback_data="admin:dashboard"),
             InlineKeyboardButton(text="⚙️ 系统配置", callback_data="admin:settings"),
         ],
     ])
