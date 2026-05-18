@@ -489,6 +489,35 @@ yum install sqlite        # RHEL/CentOS
 
 ---
 
+## 开发与测试
+
+项目自带一套轻量级 pytest 套件，覆盖最容易出错的纯逻辑（deep link 解析、
+报销金额计算、群组搜索工具函数、抽奖状态常量），全部**不连真实 Telegram、
+不访问真实数据库、不读取真实 .env**，1 秒内跑完。
+
+```bash
+# 1. 安装依赖（含 pytest）
+pip install -r requirements.txt
+
+# 2. 运行全部测试
+python3 -m pytest
+
+# 3. 详细模式（看每个 test 用例）
+python3 -m pytest -v
+
+# 4. 只跑某个文件 / 某个用例
+python3 -m pytest tests/test_start_args.py
+python3 -m pytest tests/test_start_args.py::test_empty_returns_all_defaults
+```
+
+> 测试如何隔离真实环境：`tests/conftest.py` 在所有 `bot.*` 模块 import 之前
+> 强制设置 `BOT_TOKEN=dummy:token`、`DATABASE_PATH=:memory:` 等环境变量，
+> 并 stub 掉 `dotenv.load_dotenv` 防止读取生产服务器上的 `.env`。
+
+新增测试时请放在 `tests/test_*.py`，遵循"只测纯函数、不连外部依赖"的原则。
+
+---
+
 ## 相关文档
 
 - 早期设计：[`docs/DESIGN.md`](docs/DESIGN.md)（v1） / [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量）

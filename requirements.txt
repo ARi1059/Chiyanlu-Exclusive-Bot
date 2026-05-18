@@ -2,3 +2,6 @@ aiogram==3.13.1
 aiosqlite==0.20.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
+
+# 测试依赖（本地 / CI 运行 pytest 时需要；生产部署可忽略）
+pytest==8.3.4

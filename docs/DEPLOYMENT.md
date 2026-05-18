@@ -729,7 +729,15 @@ cd /opt/Chiyanlu-Exclusive-Bot
 ./scripts/healthcheck.sh
 # 期望：summary 显示 ERR=0；只读检查，覆盖文件 / .env 权限 / Python / .venv /
 #       SQLite WAL & integrity_check / 核心表 / systemd / Git 工作区。
-# 退出码：ERR=0 时返回 0，存在 ERR 时返回 1（适合放进 CI 或部署后脚本断言）
+# 退出码：ERR=0 时返回 0，存在 ERR 时返回 1（适合放进 CI 或部署后脚本断言)
+
+# 0.5 单元测试（纯逻辑回归，不连真实 Telegram / 不访问真实数据库）
+cd /opt/Chiyanlu-Exclusive-Bot
+.venv/bin/python -m pytest
+# 期望：全部通过（约 60+ 测试，1 秒内完成）
+# 测试覆盖：parse_start_args / compute_reimbursement_amount /
+#           group_search 工具函数 / 抽奖状态常量
+# 测试不会读取真实 .env、不会触碰 data/bot.db
 
 # 1. 代码语法
 cd /opt/Chiyanlu-Exclusive-Bot
