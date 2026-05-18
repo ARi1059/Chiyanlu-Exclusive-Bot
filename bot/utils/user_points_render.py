@@ -5,7 +5,7 @@
 - format_points_detail_block: 明细列表每条
 - fetch_teacher_names_for_txs: 反查 review_approved 类型的老师名
 
-按 [POINTS-FEATURE-DRAFT.md §2.2] 格式。
+按 [docs/POLICY-points.md](../../docs/POLICY-points.md) 当前积分政策文档的格式。
 """
 from __future__ import annotations
 
