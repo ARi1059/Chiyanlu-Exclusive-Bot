@@ -1,8 +1,19 @@
 # MIGRATION-REGISTRY-DESIGN.md
 
-> **本文档仅是设计方案**，不代表项目已经实现 `schema_migrations` 表或迁移注册器。
-> 任何描述"将"、"建议"、"P2 阶段引入"的小节，都是**尚未落地**的目标。
-> 当前线上系统仍按 [第一节](#一当前迁移方式) 描述的方式运行。
+> **实施进度（更新于 2026-05-18）**
+>
+> | 阶段 | 状态 | 说明 |
+> | --- | --- | --- |
+> | P1 设计文档 | ✅ 已完成 | 本文档（commit `1f7f273`） |
+> | **P2 baseline** | **✅ 已完成** | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 已落地 [bot/database.py](../bot/database.py)；`init_db()` 已接入；现有 9 个 `_migrate_*` **照旧执行、顺序未改**；本表当前**仅记录历史 baseline，不参与执行决策**。详见 [第八节阶段 A](#阶段-abaseline承认现状) 的实际实现。 |
+> | P3 新迁移走注册器 | ⬜ 未启动 | 当前**没有**任何新迁移通过 `MIGRATIONS` 列表注册；新增 schema 变更仍按"加一个 `_migrate_*` 函数 + 加 baseline 行"的模式 |
+> | P4 healthcheck 接入 | ✅ 已完成（与 P2 同期） | [scripts/healthcheck.sh](../scripts/healthcheck.sh) 已能识别 `success=0` 行，按 kind 分级输出（hard → ERR，soft / 未知 → WARN，表不存在 → WARN 兼容口径） |
+> | P5 update.sh 接入 | ⬜ 未启动 | `update.sh` 仍只看 systemd / journalctl，不读 `schema_migrations` |
+> | P6 pytest 覆盖 | ✅ 已完成（与 P2 同期） | [tests/test_schema_migrations_baseline.py](../tests/test_schema_migrations_baseline.py) 13 用例 |
+>
+> **重要：当前的 P2 实现仍处于"baseline 录入"阶段，不是完整的迁移注册器。**
+> 文档中所有以"建议"、"将"措辞的小节，仍是未落地的目标 —— 阅读时请对照本表。
+> 现有 9 个 `_migrate_*` 函数**仍按原顺序无条件执行**，与 P2 之前完全一致。
 
 面向人群：后续接手 `bot/database.py` schema 维护、`update.sh` / `healthcheck.sh`
 线上排查路径、以及任何想要给数据库做"破坏性变更"的开发者。
@@ -256,6 +267,15 @@ async def init_db():
 
 ### 阶段 A：Baseline（"承认现状"）
 
+> **✅ 此阶段已实现**（2026-05-18）。
+> 实际代码位于 [bot/database.py](../bot/database.py) 中：
+> - 常量 `SCHEMA_MIGRATIONS_BASELINE`：9 条历史迁移的 (version, name, kind) 元组
+> - 函数 `ensure_schema_migrations_table(db)`：幂等创建表
+> - 函数 `baseline_schema_migrations(db)`：用 `INSERT OR IGNORE` 写入 baseline
+> - `init_db()` 在 INSERT super_admin 之后调用 `ensure_*`，
+>   在 9 个 `_migrate_*` 全部执行完之后调用 `baseline_*`
+> 现有 9 个 `_migrate_*` 函数**仍按原顺序无条件执行**，本表当前不参与执行决策。
+
 在 P2 引入 `schema_migrations` 表的同一次启动里：
 
 1. 创建 `schema_migrations` 表（幂等）。
@@ -264,13 +284,21 @@ async def init_db():
 
    ```sql
    INSERT OR IGNORE INTO schema_migrations
-       (version, name, kind, applied_at, success, checksum)
+       (version, name, kind, applied_at, success, error)
    VALUES
-       ('2026-05-18-001-teacher-rank', 'Phase 3: ...', 'soft',
-        CURRENT_TIMESTAMP, 1, NULL),
+       ('20260518_001_migrate_teacher_ranking_columns',
+        'Phase 3: teachers 排序/精选字段',
+        'soft', CURRENT_TIMESTAMP, 1, NULL),
        ……;
    ```
-4. 之后再启动，这些 baseline 版本就会被跳过。
+4. 之后再启动，这些 baseline 行已存在，`INSERT OR IGNORE` 静默跳过。
+
+> ⚠️ **当前 P2 实现的限制**：
+> baseline 是"无条件追加 success=1"。如果 9 个 `_migrate_*` 中某个真实失败了
+> （现状下被 `try/except: pass` 吞掉），baseline 仍会写 success=1。这就是"承认
+> 现状"的代价——但因为现有 `_migrate_*` 全部是 `PRAGMA table_info` 检测后才
+> ALTER 的真幂等迁移，这种偏差在实践中极小。**P3 阶段引入的新迁移**会按
+> [第六节](#六迁移执行流程) 的真实成功/失败写入，行为更精确。
 
 > ⚠️ baseline 的关键陷阱：如果旧库**本来就装过**这些迁移、新库**从未装过**，二者
 > 跑到这一步看到的 `applied` 集合不同。必须保证 **step 2 的"先执行一次"是真正
@@ -284,6 +312,12 @@ async def init_db():
 
 ### 阶段 C：healthcheck.sh 接入
 
+> **✅ 此阶段已实现**（2026-05-18，与 P2 同期）。
+> 实际位置：[scripts/healthcheck.sh](../scripts/healthcheck.sh) 「三、SQLite 检查」
+> 区段末尾的 `if grep -Fxq "schema_migrations" <<<"${existing_tables}"` 分支。
+> 实现细节与下方设计完全一致；唯一区别是**只输出数量**，不打印 `error` 内容
+> （满足"不打印数据片段"的安全约束）。
+
 在 [scripts/healthcheck.sh](../scripts/healthcheck.sh) 增加一节"数据库迁移检查"：
 
 ```sql
@@ -294,7 +328,9 @@ WHERE success = 0;
 - 若返回行数 > 0：
   - kind='hard' 的失败 → `[ERR ]`，退出码 1
   - kind='soft' 的失败 → `[WARN]`
-- 列出 version + name + error 摘要（**不要打印完整 error，可能含数据片段**）。
+  - kind 不在 {soft, hard} 中的失败 → `[WARN]`（防御未来扩展）
+- **只输出数量**，不打印 `error` 内容（避免日志冗长 / 潜在敏感信息）
+- 表不存在 → `[WARN]` 兼容旧库
 
 ### 阶段 D：update.sh 接入
 
@@ -390,14 +426,14 @@ Alembic 是优秀的工具，但**对本项目成本大于收益**：
 
 按风险递增分 6 阶段：
 
-| 阶段 | 内容 | 风险 | 业务影响 |
-| --- | --- | --- | --- |
-| **P1** | 仅新增本设计文档 | 无 | 无 |
-| **P2** | 引入 `schema_migrations` 表 + baseline 写入（[阶段 A](#阶段-abaseline承认现状)） | 低 | 启动时多一次 INSERT |
-| **P3** | 新迁移开始走 `MIGRATIONS` 注册器（[阶段 B](#阶段-b新迁移走注册器)） | 中 | 仅影响**新增**迁移代码风格 |
-| **P4** | `scripts/healthcheck.sh` 增加迁移状态检查（[阶段 C](#阶段-chealthchecksh-接入)） | 低 | 只读 |
-| **P5** | `update.sh` 检测 hard failed migration 并提示 rollback（[阶段 D](#阶段-d-updatesh-接入)） | 中 | 部署流程多一步判断 |
-| **P6** | 补 pytest 覆盖迁移注册器逻辑（applied 集合、kind 路由、checksum 比对、幂等性） | 低 | 仅测试代码 |
+| 阶段 | 内容 | 状态 | 风险 | 业务影响 |
+| --- | --- | --- | --- | --- |
+| **P1** | 仅新增本设计文档 | ✅ 已完成 | 无 | 无 |
+| **P2** | 引入 `schema_migrations` 表 + baseline 写入（[阶段 A](#阶段-abaseline承认现状)） | ✅ 已完成 | 低 | 启动时多一次 INSERT |
+| **P3** | 新迁移开始走 `MIGRATIONS` 注册器（[阶段 B](#阶段-b新迁移走注册器)） | ⬜ 未启动 | 中 | 仅影响**新增**迁移代码风格 |
+| **P4** | `scripts/healthcheck.sh` 增加迁移状态检查（[阶段 C](#阶段-chealthchecksh-接入)） | ✅ 已完成 | 低 | 只读 |
+| **P5** | `update.sh` 检测 hard failed migration 并提示 rollback（[阶段 D](#阶段-d-updatesh-接入)） | ⬜ 未启动 | 中 | 部署流程多一步判断 |
+| **P6** | 补 pytest 覆盖迁移注册器逻辑（applied 集合、kind 路由、checksum 比对、幂等性） | 🟡 部分完成 | 低 | 仅测试代码 |
 
 P1 即为本文档。P2-P6 必须在确认 P1 设计被 review、达成共识后再依次推进。
 P3 之后**不要**再把现有 `_migrate_*` 改写——它们已通过 baseline 被认作"已应用"，

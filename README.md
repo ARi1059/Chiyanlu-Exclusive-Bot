@@ -433,12 +433,14 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | 数据库备份脚本 | [`scripts/backup.sh`](scripts/backup.sh) 独立 WAL-safe 备份 + `integrity_check`，产物 `*.manual.bak`；不影响 `update.sh` 的 `*.bak` | `6680e83` |
 | pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |
 | 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
+| 迁移注册器 P2 baseline | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 落地 [bot/database.py](bot/database.py)；接入 `init_db()`；9 个 `_migrate_*` **顺序未改、行为未改**；[scripts/healthcheck.sh](scripts/healthcheck.sh) 新增 `success=0` 行的 hard/soft 分级检查；13 个 pytest 用例 | (本次) |
 
 ### 🟡 后续建议补充
 
 | 类别 | 任务 | 优先级 |
 |---|---|---|
-| 迁移注册器实施 | 按 [`MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) §12 P2-P6 落地 `schema_migrations` 表 / baseline / healthcheck 接入 / update.sh 接入 / 注册器 pytest | P2 |
+| 迁移注册器 P3 | 新迁移走 `MIGRATIONS` 注册器（[设计 §八阶段 B](docs/MIGRATION-REGISTRY-DESIGN.md#阶段-b新迁移走注册器)），失败按 kind 路由 ERR/WARN；P2 baseline 已就绪 | P2 |
+| 迁移注册器 P5 | [`update.sh`](update.sh) 检测 hard failed migration 时阻断并提示 rollback（[设计 §八阶段 D](docs/MIGRATION-REGISTRY-DESIGN.md#阶段-d-updatesh-接入)） | P2 |
 | CI | 把 `pytest` + `compileall` + `bash -n scripts/*.sh` 接入 GitHub Actions（push / PR 触发） | P2 |
 | 清理 | scheduler 加 `prune_old_records`（user_events / audit_logs / point_transactions > 180 天） | P2 |
 | 结构 | `bot/main.py` 拆分（30 个 router 注册 + scheduler + logging 一身多职） | P2 |

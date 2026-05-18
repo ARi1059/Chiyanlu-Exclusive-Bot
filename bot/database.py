@@ -423,6 +423,10 @@ async def init_db():
             (config.super_admin_id,),
         )
 
+        # schema_migrations 表（P2 baseline）：现有 _migrate_* 仍照旧执行，
+        # 本表当前只用于"记录历史迁移"，不参与执行决策。
+        await ensure_schema_migrations_table(db)
+
         # Phase 3 schema 增量：teachers 表新增 4 个字段
         await _migrate_teacher_ranking_columns(db)
         # Phase 4 schema 增量：users 表新增 4 个来源字段
@@ -443,9 +447,107 @@ async def init_db():
         # 报销子系统：reimbursements.status CHECK 加 'queued'（功能关闭时静默录入）
         await _migrate_reimbursements_queued_status(db)
 
+        # 上述 9 个 _migrate_* 执行完之后，把它们作为 baseline 写入 schema_migrations
+        # （INSERT OR IGNORE，幂等；失败只 warning，不阻断启动）
+        await baseline_schema_migrations(db)
+
         await db.commit()
     finally:
         await db.close()
+
+
+# ============ schema_migrations baseline (P2，详见 docs/MIGRATION-REGISTRY-DESIGN.md) ============
+#
+# 本阶段仅做 baseline：
+#   - 新增 schema_migrations 表
+#   - 把当前版本已承认的 9 个历史迁移作为 baseline 记录写入（success=1）
+#
+# 现有 _migrate_* 函数仍按原顺序在 init_db() 中无条件执行。本表当前不参与执行
+# 决策，仅供 healthcheck.sh / 运维查询使用。完整的"按 version 驱动执行"的注册器
+# 见设计文档 §六；当前实现等价于设计文档 §八「阶段 A：Baseline」。
+
+# (version, name, kind) — version 字典序 = 当前 init_db 中的执行顺序
+SCHEMA_MIGRATIONS_BASELINE: list[tuple[str, str, str]] = [
+    ("20260518_001_migrate_teacher_ranking_columns",
+     "Phase 3: teachers 排序/精选字段（sort_weight/hot_score/is_featured/featured_until）",
+     "soft"),
+    ("20260518_002_migrate_users_source_fields",
+     "Phase 4: users 来源追踪 4 字段（first_source_type/id, last_source_type/id）",
+     "soft"),
+    ("20260518_003_migrate_users_onboarding_seen",
+     "Phase 7.1: users.onboarding_seen",
+     "soft"),
+    ("20260518_004_migrate_teacher_profile_columns",
+     "Phase 9.1: teachers 老师档案 10 字段",
+     "soft"),
+    ("20260518_005_migrate_users_total_points",
+     "Phase P.1: users.total_points",
+     "soft"),
+    ("20260518_006_migrate_lotteries_entry_cost_points",
+     "抽奖参与积分门槛: lotteries.entry_cost_points",
+     "soft"),
+    ("20260518_007_migrate_reviews_request_reimbursement",
+     "报销子系统: teacher_reviews.request_reimbursement",
+     "soft"),
+    ("20260518_008_migrate_reviews_anonymous",
+     "评价匿名: teacher_reviews.anonymous",
+     "soft"),
+    ("20260518_009_migrate_reimbursements_queued_status",
+     "报销 CHECK 重建 + 半完成态自愈（表重建型）",
+     "hard"),
+]
+
+
+async def ensure_schema_migrations_table(db: aiosqlite.Connection) -> None:
+    """幂等创建 schema_migrations 表。
+
+    失败时只 logger.warning，不阻断启动 —— 本阶段（P2 baseline）尚未把该表纳入
+    执行链路，缺失它不会影响业务 schema 与 _migrate_* 的正常运行。
+    """
+    try:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version     TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                kind        TEXT NOT NULL DEFAULT 'soft',
+                applied_at  TEXT,
+                success     INTEGER NOT NULL DEFAULT 1,
+                error       TEXT,
+                checksum    TEXT,
+                duration_ms INTEGER,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception as e:
+        logger.warning("ensure_schema_migrations_table 失败: %s", e)
+
+
+async def baseline_schema_migrations(db: aiosqlite.Connection) -> None:
+    """把 SCHEMA_MIGRATIONS_BASELINE 中的历史迁移作为 baseline 写入（success=1）。
+
+    用 INSERT OR IGNORE，幂等：
+      - 同一 version 已存在时静默跳过，不覆盖
+      - 这保证未来 P3 阶段如果给同一 version 写入了真实执行结果（success=0
+        或更长的 error 内容），不会被这里的"已承认"基线覆盖
+
+    失败时只 logger.warning，不阻断启动。
+    """
+    try:
+        for version, name, kind in SCHEMA_MIGRATIONS_BASELINE:
+            try:
+                await db.execute(
+                    "INSERT OR IGNORE INTO schema_migrations "
+                    "(version, name, kind, applied_at, success, error) "
+                    "VALUES (?, ?, ?, CURRENT_TIMESTAMP, 1, NULL)",
+                    (version, name, kind),
+                )
+            except Exception as e:
+                logger.warning("baseline_schema_migrations row %s 失败: %s",
+                               version, e)
+    except Exception as e:
+        logger.warning("baseline_schema_migrations 失败: %s", e)
 
 
 async def _migrate_teacher_ranking_columns(db: aiosqlite.Connection) -> None:

@@ -209,6 +209,40 @@ if [[ -f "${DB_PATH}" ]] && command -v sqlite3 >/dev/null 2>&1; then
         new_count=$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM reimbursements_new;" 2>/dev/null || echo "?")
         warn "存在 reimbursements_new 表（行数 ${new_count}），属于迁移残留，请按 docs/POLICY-reimbursement.md 处理"
     fi
+
+    # schema_migrations 失败迁移检查（P2 baseline；表不存在视为旧库或未启动新版本 → WARN）
+    # 仅统计数量，不打印 error 内容（避免日志冗长或潜在敏感信息）
+    if grep -Fxq "schema_migrations" <<<"${existing_tables}"; then
+        hard_failed=$(sqlite3 "${DB_PATH}" \
+            "SELECT COUNT(*) FROM schema_migrations WHERE success = 0 AND kind = 'hard';" \
+            2>/dev/null || echo "0")
+        soft_failed=$(sqlite3 "${DB_PATH}" \
+            "SELECT COUNT(*) FROM schema_migrations WHERE success = 0 AND kind = 'soft';" \
+            2>/dev/null || echo "0")
+        unknown_failed=$(sqlite3 "${DB_PATH}" \
+            "SELECT COUNT(*) FROM schema_migrations WHERE success = 0 AND kind NOT IN ('soft','hard');" \
+            2>/dev/null || echo "0")
+
+        any_failed=0
+        if [[ "${hard_failed}" -gt 0 ]]; then
+            err "schema_migrations 存在 hard failed migration: ${hard_failed}"
+            any_failed=1
+        fi
+        if [[ "${soft_failed}" -gt 0 ]]; then
+            warn "schema_migrations 存在 soft failed migration: ${soft_failed}"
+            any_failed=1
+        fi
+        if [[ "${unknown_failed}" -gt 0 ]]; then
+            warn "schema_migrations 存在 unknown-kind failed migration: ${unknown_failed}"
+            any_failed=1
+        fi
+        if [[ "${any_failed}" -eq 0 ]]; then
+            total=$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM schema_migrations;" 2>/dev/null || echo "?")
+            ok "schema_migrations 无失败迁移（共 ${total} 条记录）"
+        fi
+    else
+        warn "schema_migrations 表不存在（旧库或尚未启动新版本，兼容口径）"
+    fi
 else
     if [[ ! -f "${DB_PATH}" ]]; then
         err "数据库文件不存在：${DB_PATH}"

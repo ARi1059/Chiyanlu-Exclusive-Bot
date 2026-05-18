@@ -32,6 +32,8 @@
 | `6680e83` | 值守手册 + 健康检查 + 备份脚本（**本会话**） | [RUNBOOK.md](RUNBOOK.md) / [scripts/healthcheck.sh](../scripts/healthcheck.sh) / [scripts/backup.sh](../scripts/backup.sh) |
 | `bea20c1` | pytest 测试体系，67 用例（**本会话**） | [tests/](../tests/) / [pytest.ini](../pytest.ini) |
 | `1f7f273` | 迁移注册器设计方案（**本会话**） | [MIGRATION-REGISTRY-DESIGN.md](MIGRATION-REGISTRY-DESIGN.md) |
+| `91e30cb` | GitHub Actions CI（compileall + pytest + bash -n） | [.github/workflows/ci.yml](../.github/workflows/ci.yml) |
+| (本次) | **迁移注册器 P2 baseline** + P4 healthcheck 接入 + P6 测试 | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 在 [bot/database.py](../bot/database.py)；现有 9 个 `_migrate_*` 顺序与行为**未改**；[healthcheck.sh](../scripts/healthcheck.sh) 新增 hard/soft 分级检查；[tests/test_schema_migrations_baseline.py](../tests/test_schema_migrations_baseline.py) 13 用例 |
 
 ### 1.3 本轮新增工件一览（**本会话**重点）
 
