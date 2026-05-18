@@ -520,39 +520,75 @@ sqlite3 "$BACKUP" "PRAGMA integrity_check;"
 
 `update.sh` 在 `update` / `rollback` 流程里已按这个模式做备份和校验。**只要使用 `update.sh` 做版本更新，每次更新前会自动产生一份带完整性校验的备份**。
 
+但注意：`update.sh` 只在检测到**远程有新提交**的情况下才会备份；如果你只是做 `restart`、或者远程没有新提交而本地服务长时间运行，**它不会产生新备份**。
+
 历史备份位于：
 
 ```text
-/opt/Chiyanlu-Exclusive-Bot/backups/bot.db.YYYYMMDD-HHMMSS.bak
+/opt/Chiyanlu-Exclusive-Bot/backups/bot.db.YYYYMMDD-HHMMSS.bak              # update.sh 自动产生
+/opt/Chiyanlu-Exclusive-Bot/backups/bot.db.YYYYMMDD-HHMMSS.manual.bak       # scripts/backup.sh 产生
 ```
 
-`update.sh` 自动保留最近 10 份。**`backups/` 目录已被 `.gitignore` 忽略**，不会进 git，但仍建议**异地异机**留一份（拷贝到对象存储 / 另一台 VPS / 本地）。
+`update.sh` 自动保留最近 10 份 `*.bak`（不含 `*.manual.bak`）。
+`scripts/backup.sh` 默认保留最近 30 份 `*.manual.bak`，不会动 `update.sh` 的备份。
+**`backups/` 目录已被 `.gitignore` 忽略**，不会进 git，但仍建议**异地异机**留一份（拷贝到对象存储 / 另一台 VPS / 本地）。
 
-### 14.4 crontab 定时备份（独立于 update.sh）
+### 14.4 日常手动备份 / 定时备份：`scripts/backup.sh`
 
-```cron
-# 每天 03:30 自动备份，保留最近 30 份
-30 3 * * * /root/scripts/backup_chiyanlu.sh
-```
+项目自带 `scripts/backup.sh`，是独立于 `update.sh` 的备份脚本：
+- 内部使用 `sqlite3 .backup`，WAL-safe，**绝不 cp 主库**
+- 备份后强制执行 `PRAGMA integrity_check`，返回 `ok` 才算成功
+- 备份文件命名 `backups/bot.db.YYYYMMDD-HHMMSS.manual.bak`，与 `update.sh` 的 `*.bak` 互不干扰
+- 不会读取或输出 `.env` / `BOT_TOKEN`
 
-`backup_chiyanlu.sh`：
+**人工备份（重大操作前 / 排查异常前）：**
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-DB=/opt/Chiyanlu-Exclusive-Bot/data/bot.db
-DIR=/root/chiyanlu-backups
-mkdir -p "$DIR"
-TS=$(date +%F-%H%M%S)
-OUT=$DIR/bot-${TS}.db
-sqlite3 "$DB" ".backup '$OUT'"
-[[ "$(sqlite3 "$OUT" 'PRAGMA integrity_check;')" = ok ]] \
-    || { echo "BACKUP CORRUPT: $OUT" >&2; exit 1; }
-# 保留最近 30 份
-ls -1t "$DIR"/bot-*.db | tail -n +31 | xargs -r rm -f
+cd /opt/Chiyanlu-Exclusive-Bot
+./scripts/backup.sh                 # 默认保留最近 30 份 manual 备份
+./scripts/backup.sh --keep 10       # 仅保留最近 10 份
+./scripts/backup.sh --help          # 查看帮助
 ```
 
-记得 `chmod +x /root/scripts/backup_chiyanlu.sh`。
+成功时输出形如：
+
+```text
+[ OK ] 备份成功
+  路径：/opt/Chiyanlu-Exclusive-Bot/backups/bot.db.20260518-033000.manual.bak
+  大小：12345678 bytes
+  integrity_check=ok
+```
+
+**crontab 定时备份：**
+
+```bash
+# 1. 准备日志目录（仅首次）
+mkdir -p /opt/Chiyanlu-Exclusive-Bot/logs
+
+# 2. 编辑 root（或运行用户）的 crontab
+crontab -e
+```
+
+加入一行（每天凌晨 03:30 自动备份，保留最近 30 份）：
+
+```cron
+30 3 * * * cd /opt/Chiyanlu-Exclusive-Bot && ./scripts/backup.sh --keep 30 >> logs/backup.log 2>&1
+```
+
+> ⚠️ 仍然**不可** `cp /opt/Chiyanlu-Exclusive-Bot/data/bot.db` —— WAL 模式下会丢失 `-wal` 中未 checkpoint 的最近写入，
+> 即使在 cron 里包装成"脚本"也一样。任何脚本里出现 `cp data/bot.db` 都属于错误用法。
+
+#### 14.4.1 异地备份建议
+
+`scripts/backup.sh` 只解决"本机产生一致性快照"。完成后还应把备份**搬离本机**：
+
+```bash
+# 示例：用 rclone 把当天 manual 备份上传到对象存储
+30 4 * * * rclone copy /opt/Chiyanlu-Exclusive-Bot/backups/ remote:chiyanlu-backups/ \
+    --include 'bot.db.*.manual.bak' --max-age 24h >> /opt/Chiyanlu-Exclusive-Bot/logs/backup-remote.log 2>&1
+```
+
+或使用 `rsync` / `scp` 推送到另一台 VPS。具体命令视基础设施而定。
 
 ### 14.5 手动还原（不推荐，但备查）
 
@@ -592,6 +628,16 @@ journalctl -u chiyanlu-bot -n 50 --no-pager
 ---
 
 ## 15. 排错指南
+
+> 💡 **遇到任何异常先跑一次：**
+> ```bash
+> cd /opt/Chiyanlu-Exclusive-Bot
+> ./scripts/healthcheck.sh
+> ```
+> 这个脚本是只读的，能在 1～2 秒内给出 Python、SQLite（WAL / integrity_check / 核心表）、
+> systemd 状态、journalctl 关键字命中、Git 工作区是否干净的整体快照。
+> 它不会输出 `.env` 内容、不会打印 BOT_TOKEN，也不会修改任何业务数据。
+> 看 summary 的 ERR/WARN 项再对照下方小节定位问题，比盲查日志快很多。
 
 ### 15.1 服务无法启动
 
@@ -678,6 +724,13 @@ whoami      # 应该是 root
 部署完成后，按顺序执行下列命令；全部正常即可视为部署完成。
 
 ```bash
+# 0. 一键体检（推荐先跑）
+cd /opt/Chiyanlu-Exclusive-Bot
+./scripts/healthcheck.sh
+# 期望：summary 显示 ERR=0；只读检查，覆盖文件 / .env 权限 / Python / .venv /
+#       SQLite WAL & integrity_check / 核心表 / systemd / Git 工作区。
+# 退出码：ERR=0 时返回 0，存在 ERR 时返回 1（适合放进 CI 或部署后脚本断言）
+
 # 1. 代码语法
 cd /opt/Chiyanlu-Exclusive-Bot
 python3 -m compileall bot
