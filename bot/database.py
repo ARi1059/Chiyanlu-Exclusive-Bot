@@ -592,21 +592,123 @@ async def _migrate_reviews_anonymous(db: aiosqlite.Connection) -> None:
 async def _migrate_reimbursements_queued_status(db: aiosqlite.Connection) -> None:
     """扩展 reimbursements.status CHECK 接受 'queued'（功能关闭时静默录入名单）
 
-    SQLite 不支持 ALTER CHECK；通过 sqlite_master 检测是否已含 'queued'，
-    否则重建表（保留数据 + 索引）。幂等可重入。
+    SQLite 不支持 ALTER CHECK；本函数维护 5 种状态分支，确保幂等可重入
+    且**对半完成态可自愈**（2026-05-18 P1 修复）：
+
+      State A (正常已迁移)
+        reimbursements 存在 + CHECK 已含 'queued' + 无 reimbursements_new
+        → 直接 return
+
+      State B (半完成态：DROP 已成功但 RENAME 前死亡)
+        reimbursements 不存在 + reimbursements_new 存在
+        → 自愈 RENAME + 重建 3 个索引
+
+      State C (残留空 _new)
+        reimbursements 存在 + CHECK 已含 'queued' + reimbursements_new 为空
+        → DROP TABLE reimbursements_new 清理
+
+      State D (残留非空 _new) ⚠
+        reimbursements 存在 + reimbursements_new 非空（无论主表 CHECK 状态）
+        → 不自动处理，warn 提示人工核对，避免数据丢失
+
+      State E (标准重建)
+        reimbursements 存在 + CHECK 不含 'queued' + 无 reimbursements_new
+        → CREATE _new → INSERT SELECT → DROP 旧 → RENAME → 建索引
+          全程包在 BEGIN IMMEDIATE / COMMIT 中以获得 SQLite 原生事务原子性
+
+      表都不存在（首次 init_db 已含新 CHECK）→ return
     """
     try:
+        # 一次性查两张表的 sqlite_master 元信息
         cur = await db.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='reimbursements'"
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='table' AND name IN ('reimbursements','reimbursements_new')"
         )
-        row = await cur.fetchone()
-        if not row:
-            return  # 表不存在（首次 init 已含新 CHECK）
-        sql_text = (row["sql"] or "")
-        if "'queued'" in sql_text or "\"queued\"" in sql_text:
-            return  # 已含
-        # 重建表：CREATE NEW → COPY → DROP OLD → RENAME
+        master_rows = await cur.fetchall()
+        tables = {row["name"]: (row["sql"] or "") for row in master_rows}
+        has_main = "reimbursements" in tables
+        has_new = "reimbursements_new" in tables
+
+        # ---- 空 schema：两张表都没有（首次 init_db 已带新 CHECK） ----
+        if not has_main and not has_new:
+            return
+
+        # ---- State B：半完成态自愈 ----
+        if (not has_main) and has_new:
+            logger.warning(
+                "检测到 reimbursements 半完成迁移：主表缺失但 reimbursements_new 存在。"
+                "执行自愈 RENAME + 重建索引..."
+            )
+            await db.executescript("""
+                ALTER TABLE reimbursements_new RENAME TO reimbursements;
+                CREATE INDEX IF NOT EXISTS idx_reimb_user_week
+                    ON reimbursements(user_id, week_key);
+                CREATE INDEX IF NOT EXISTS idx_reimb_status
+                    ON reimbursements(status);
+                CREATE INDEX IF NOT EXISTS idx_reimb_month
+                    ON reimbursements(month_key);
+            """)
+            logger.info(
+                "reimbursements 半完成迁移已自愈：_new → reimbursements，"
+                "索引已重建"
+            )
+            return
+
+        # 此处 has_main == True，可以读 main_sql / 数 _new 行数
+        main_sql = tables["reimbursements"]
+        main_has_queued = ("'queued'" in main_sql) or ('"queued"' in main_sql)
+
+        # ---- has_new 残留分支 ----
+        if has_new:
+            cur = await db.execute("SELECT COUNT(*) AS c FROM reimbursements_new")
+            cnt_row = await cur.fetchone()
+            new_count = int(cnt_row["c"]) if cnt_row else 0
+
+            if main_has_queued and new_count == 0:
+                # State C：主表正常 + _new 空残留 → 清理
+                await db.execute("DROP TABLE reimbursements_new")
+                logger.info("清理残留空表 reimbursements_new")
+                return
+
+            if new_count > 0:
+                # State D：_new 非空 —— 无论主表 CHECK 状态都不自动处理
+                #   - 若主表已含 queued：可能是上次清理失败遗留
+                #   - 若主表未含 queued：可能是上次迁移 INSERT 之后、DROP 之前死亡
+                # 两种情况都需要人工对比两表数据后决定如何收尾
+                logger.warning(
+                    "检测到残留非空 reimbursements_new（行数=%d）。"
+                    "主表 CHECK 是否已含 queued: %s。"
+                    "为避免数据丢失不自动处理，请人工对比两表后清理。"
+                    "排查命令： sqlite3 data/bot.db "
+                    "'SELECT COUNT(*) FROM reimbursements_new; "
+                    "SELECT COUNT(*) FROM reimbursements;'",
+                    new_count, main_has_queued,
+                )
+                return
+
+            # 走到这里：has_new=True, new_count=0, main_has_queued=False
+            # → 残留空 _new + 主表未迁移：DROP 空 _new，让后续 State E 走标准重建
+            logger.warning(
+                "检测到空残留 reimbursements_new 且主表 CHECK 未含 'queued'，"
+                "DROP 空 _new 后走标准重建路径"
+            )
+            await db.execute("DROP TABLE reimbursements_new")
+            # 继续 fall-through 到 State E
+            has_new = False
+
+        # ---- State A：主表正常 + 无 _new ----
+        if main_has_queued:
+            return
+
+        # ---- State E：标准重建 ----
+        # 整个重建过程包在 BEGIN IMMEDIATE / COMMIT 之内：SQLite 对包含 DDL
+        # 的显式事务支持原子提交，任何一步失败都会整体回滚到 BEGIN 之前的状态。
+        # 若进程在 COMMIT 前死亡，重启时 sqlite_master 仍只见旧主表（无 _new），
+        # 重新走 State E；若进程在 COMMIT 之后死亡，进入 State A 直接 return。
+        # 残留半完成态只有在 SQLite 引擎本身崩溃于 COMMIT 中间时才可能出现，
+        # 那种极少数情况由 State B 兜底自愈。
         await db.executescript("""
+            BEGIN IMMEDIATE;
             CREATE TABLE reimbursements_new (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id       INTEGER NOT NULL,
@@ -639,6 +741,7 @@ async def _migrate_reimbursements_queued_status(db: aiosqlite.Connection) -> Non
                 ON reimbursements(status);
             CREATE INDEX IF NOT EXISTS idx_reimb_month
                 ON reimbursements(month_key);
+            COMMIT;
         """)
         logger.info("reimbursements 表已扩展 CHECK 接受 'queued'")
     except Exception as e:
