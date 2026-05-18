@@ -38,6 +38,7 @@ from bot.keyboards.admin_kb import (
     dashboard_audit_back_kb,
     admin_dashboard_kb,
     admin_review_tasks_kb,
+    admin_operations_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
@@ -1140,6 +1141,27 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
         "\n".join(lines),
         reply_markup=dashboard_audit_back_kb(),
     )
+    await callback.answer()
+
+
+# ============ 活动运营二级菜单（admin:operations） ============
+
+
+@router.callback_query(F.data == "admin:operations")
+@super_admin_required
+async def cb_admin_operations(callback: types.CallbackQuery):
+    """二级「🎲 活动运营」入口：聚合抽奖管理 + 积分管理
+
+    两个子入口 (admin:lottery / admin:points) 均为超管功能，因此本聚合页也
+    采用 @super_admin_required。callback 含义全部保持不变。
+    """
+    text = (
+        "🎲 活动运营\n\n"
+        "请选择运营功能：\n\n"
+        "🎲 抽奖管理\n"
+        "💰 积分管理"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_operations_kb())
     await callback.answer()
 
 

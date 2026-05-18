@@ -46,10 +46,9 @@ def main_menu_kb(
         ],
     ]
     if is_super:
-        # 积分管理 + 抽奖管理 合并为一行（原四审核入口已迁入 admin:review_tasks）
+        # 积分管理 / 抽奖管理 已收纳进二级页 admin:operations；这里仅保留入口
         rows.append([
-            InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points"),
-            InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery"),
+            InlineKeyboardButton(text="🎲 活动运营", callback_data="admin:operations"),
         ])
     rows.extend([
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="admin:hot_manage")],
@@ -65,6 +64,27 @@ def main_menu_kb(
         [InlineKeyboardButton(text="📊 数据看板", callback_data="admin:dashboard")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_operations_kb() -> InlineKeyboardMarkup:
+    """二级「🎲 活动运营」面板：聚合活动运营类入口 + 返回后台
+
+    入口分别对应：
+        - admin:lottery   抽奖管理（仅超管，handler 在 admin_lottery.py）
+        - admin:points    积分管理（仅超管，handler 在 admin_points.py）
+
+    报销池设置 / 报销功能开关在系统设置子菜单中（system:reimburse_pool /
+    system:reimburse_toggle），不属于"主菜单一级入口"，不在此聚合。
+    推广来源 / 渠道统计已于 Phase 4 下线（router 未注册），不重新启用。
+
+    callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
+    聚合视图组合。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery")],
+        [InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points")],
+        [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
+    ])
 
 
 def admin_review_tasks_kb(
