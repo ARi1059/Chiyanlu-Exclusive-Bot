@@ -122,30 +122,47 @@ fi
 # ============================================================
 section "二、Python 检查"
 
-if command -v python3 >/dev/null 2>&1; then
-    py_version="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "unknown")"
-    ok "python3 可用（版本 ${py_version}）"
+VENV_PY=".venv/bin/python"
 
-    if python3 -c "import sys; sys.exit(0 if sys.version_info >= (${PYTHON_MIN_MAJOR}, ${PYTHON_MIN_MINOR}) else 1)" 2>/dev/null; then
-        ok "Python 版本 >= ${PYTHON_MIN_MAJOR}.${PYTHON_MIN_MINOR}"
-    else
-        err "Python 版本过低（要求 >= ${PYTHON_MIN_MAJOR}.${PYTHON_MIN_MINOR}，当前 ${py_version}）"
-    fi
+# 系统 python3 的可用性与版本（仅作信息，不参与版本判定 —— 生产服务实际跑 venv）
+if command -v python3 >/dev/null 2>&1; then
+    sys_py_version="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "unknown")"
+    ok "系统 python3 可用（版本 ${sys_py_version}）"
 else
-    err "未找到 python3"
+    warn "未找到系统 python3（部署机需要它用于 venv 初始化；服务运行时只用 .venv）"
 fi
 
-VENV_PY=".venv/bin/python"
+# 运行时 Python 版本判定 —— 优先用 .venv/bin/python（生产服务实际执行的二进制）。
+# 系统 python3 在 Debian 11/12 默认可能仍是 3.9，但只要 .venv 是 3.11+ 就不阻塞业务。
 if [[ -x "${VENV_PY}" ]]; then
     ok "${VENV_PY} 存在且可执行"
+    runtime_py="${VENV_PY}"
+    runtime_label=".venv 内 python"
+elif command -v python3 >/dev/null 2>&1; then
+    warn "${VENV_PY} 不存在（虚拟环境未创建？），版本检查降级到系统 python3"
+    runtime_py="python3"
+    runtime_label="系统 python3"
+else
+    err "${VENV_PY} 与系统 python3 都不存在，无法运行版本检查"
+    runtime_py=""
+fi
 
+if [[ -n "${runtime_py}" ]]; then
+    runtime_version="$("${runtime_py}" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "unknown")"
+    if "${runtime_py}" -c "import sys; sys.exit(0 if sys.version_info >= (${PYTHON_MIN_MAJOR}, ${PYTHON_MIN_MINOR}) else 1)" 2>/dev/null; then
+        ok "运行时 Python 版本 >= ${PYTHON_MIN_MAJOR}.${PYTHON_MIN_MINOR}（${runtime_label}：${runtime_version}）"
+    else
+        err "运行时 Python 版本过低（${runtime_label}：${runtime_version}，要求 >= ${PYTHON_MIN_MAJOR}.${PYTHON_MIN_MINOR}）"
+    fi
+fi
+
+# .venv 能否 compileall bot —— 只在 .venv 存在时检查
+if [[ -x "${VENV_PY}" ]]; then
     if "${VENV_PY}" -m compileall -q bot >/dev/null 2>&1; then
         ok ".venv 编译 bot/ 通过（compileall -q bot）"
     else
         err ".venv 编译 bot/ 失败，存在语法错误（请运行 ${VENV_PY} -m compileall bot 查看详情）"
     fi
-else
-    err "${VENV_PY} 不存在或不可执行（虚拟环境未创建？）"
 fi
 
 

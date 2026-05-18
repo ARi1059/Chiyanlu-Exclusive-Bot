@@ -78,6 +78,22 @@ def test_wal_warn_does_not_become_err():
     assert "err " not in wal_block
 
 
+def test_python_version_check_prefers_venv():
+    """运行时 Python 版本检查必须优先使用 .venv/bin/python。
+
+    回归保护：2026-05-18 修复了"healthcheck 用系统 python3 判定版本，
+    但生产实际跑 .venv 内 Python"的口径偏差。系统 python3 即使 3.9 也不
+    应该让 healthcheck 整体退出码 1。
+    """
+    src = _read()
+    # 必须出现 .venv/bin/python 作为运行时判定的优先选择
+    assert "${VENV_PY}" in src or ".venv/bin/python" in src
+    # 必须含降级表述（venv 不存在时才用系统 python3）
+    assert "降级" in src or "fall" in src.lower() or "fallback" in src.lower()
+    # 必须显式说明"运行时 Python"概念（而不是只检系统 python3）
+    assert "运行时 Python" in src or "runtime_py" in src
+
+
 # ============ 严格只读 ============
 
 
