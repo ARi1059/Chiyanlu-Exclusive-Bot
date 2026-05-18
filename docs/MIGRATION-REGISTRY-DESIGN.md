@@ -6,7 +6,7 @@
 > | --- | --- | --- |
 > | P1 设计文档 | ✅ 已完成 | 本文档（commit `1f7f273`） |
 > | **P2 baseline** | **✅ 已完成** | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 已落地 [bot/database.py](../bot/database.py)；`init_db()` 已接入；现有 9 个 `_migrate_*` **照旧执行、顺序未改**；本表当前**仅记录历史 baseline，不参与执行决策**。详见 [第八节阶段 A](#阶段-abaseline承认现状) 的实际实现。 |
-> | P3 新迁移走注册器 | ⬜ 未启动 | 当前**没有**任何新迁移通过 `MIGRATIONS` 列表注册；新增 schema 变更仍按"加一个 `_migrate_*` 函数 + 加 baseline 行"的模式 |
+> | P3 新迁移走注册器（框架） | ✅ 已完成 | [bot/database.py](../bot/database.py) 落地 `Migration` dataclass + `MIGRATIONS = []` + `run_registered_migrations()`；`init_db()` 在 baseline 之后追加调用。**当前 `MIGRATIONS` 列表为空** —— 旧 9 个 `_migrate_*` 仍按原顺序无条件执行；run_registered_migrations 当前为 no-op。**未来**新增迁移须以 `Migration(...)` 追加到 `MIGRATIONS` 列表，hard 失败会阻断启动 |
 > | P4 healthcheck 接入 | ✅ 已完成（与 P2 同期） | [scripts/healthcheck.sh](../scripts/healthcheck.sh) 已能识别 `success=0` 行，按 kind 分级输出（hard → ERR，soft / 未知 → WARN，表不存在 → WARN 兼容口径） |
 > | P5 update.sh 接入 | ⬜ 未启动 | `update.sh` 仍只看 systemd / journalctl，不读 `schema_migrations` |
 > | P6 pytest 覆盖 | ✅ 已完成（与 P2 同期） | [tests/test_schema_migrations_baseline.py](../tests/test_schema_migrations_baseline.py) 13 用例 |
@@ -430,7 +430,7 @@ Alembic 是优秀的工具，但**对本项目成本大于收益**：
 | --- | --- | --- | --- | --- |
 | **P1** | 仅新增本设计文档 | ✅ 已完成 | 无 | 无 |
 | **P2** | 引入 `schema_migrations` 表 + baseline 写入（[阶段 A](#阶段-abaseline承认现状)） | ✅ 已完成 | 低 | 启动时多一次 INSERT |
-| **P3** | 新迁移开始走 `MIGRATIONS` 注册器（[阶段 B](#阶段-b新迁移走注册器)） | ⬜ 未启动 | 中 | 仅影响**新增**迁移代码风格 |
+| **P3** | 新迁移开始走 `MIGRATIONS` 注册器（[阶段 B](#阶段-b新迁移走注册器)） | ✅ 框架已完成 | 中 | 仅影响**新增**迁移代码风格；`MIGRATIONS=[]`，无任何实际迁移变更 |
 | **P4** | `scripts/healthcheck.sh` 增加迁移状态检查（[阶段 C](#阶段-chealthchecksh-接入)） | ✅ 已完成 | 低 | 只读 |
 | **P5** | `update.sh` 检测 hard failed migration 并提示 rollback（[阶段 D](#阶段-d-updatesh-接入)） | ⬜ 未启动 | 中 | 部署流程多一步判断 |
 | **P6** | 补 pytest 覆盖迁移注册器逻辑（applied 集合、kind 路由、checksum 比对、幂等性） | 🟡 部分完成 | 低 | 仅测试代码 |

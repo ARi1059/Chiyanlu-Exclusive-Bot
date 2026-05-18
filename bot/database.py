@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
+import time
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
 
 import aiosqlite
 import os
@@ -451,6 +453,11 @@ async def init_db():
         # （INSERT OR IGNORE，幂等；失败只 warning，不阻断启动）
         await baseline_schema_migrations(db)
 
+        # P3 注册器执行：从 MIGRATIONS 列表读取新增迁移并真正执行。
+        # 本阶段 MIGRATIONS = []（空），生产路径下此调用是 no-op；不影响旧迁移。
+        # hard migration 失败会 raise，让 init_db 整体失败 → systemd 退出 → 触发回滚。
+        await run_registered_migrations(db)
+
         await db.commit()
     finally:
         await db.close()
@@ -548,6 +555,166 @@ async def baseline_schema_migrations(db: aiosqlite.Connection) -> None:
                                version, e)
     except Exception as e:
         logger.warning("baseline_schema_migrations 失败: %s", e)
+
+
+# ============ schema_migrations P3：新迁移注册器 ============
+#
+# 与 P2 baseline 的区别：
+#   - baseline_schema_migrations 把 9 个**历史** _migrate_* 以 success=1 record-only
+#     方式写入 schema_migrations（事后承认，不真正执行）
+#   - 本节的 run_registered_migrations 从下方 MIGRATIONS 列表读取**新增**迁移
+#     并真正执行 + 记录结果
+#
+# **本阶段（P3 framework）MIGRATIONS 列表为空**：
+#   - 现有 9 个 _migrate_* 函数仍按 init_db 中的原顺序无条件执行（未被迁入注册器）
+#   - run_registered_migrations 在生产 main 下当前是 no-op
+#   - 任何**未来**的新迁移须以 Migration 实例追加到 MIGRATIONS 列表，**不要**再加
+#     新的 _migrate_* 顶级 async 函数 + init_db 手工调用
+#
+# 详见 docs/MIGRATION-REGISTRY-DESIGN.md §五 / §六。
+
+
+@dataclass(frozen=True)
+class Migration:
+    """单条注册迁移的元数据 + 执行函数。
+
+    字段语义与 schema_migrations 表的列直接对应；不可变 (frozen) 防止运行时被改写。
+    """
+    version: str
+    name: str
+    kind: str  # "soft" | "hard"
+    func: Callable[[aiosqlite.Connection], Awaitable[None]]
+
+
+# 未来新增迁移在此追加。当前为空 —— 历史 9 条迁移由 _migrate_* + baseline 处理。
+MIGRATIONS: list[Migration] = []
+
+
+# error 字段截断上限（避免 SQLite 单行存超长 traceback）
+_MIGRATION_ERROR_MAX_LEN: int = 500
+
+
+async def run_registered_migrations(db: aiosqlite.Connection) -> None:
+    """执行 MIGRATIONS 中尚未成功的注册迁移。
+
+    行为：
+      1. 确保 schema_migrations 表存在（防御性：未先跑 baseline 时也能用）
+      2. 静态校验 MIGRATIONS：version 唯一、kind ∈ {soft, hard} —— 不合规直接
+         raise ValueError，让启动失败便于开发者立即发现
+      3. 按 version 字典序排序（确保新装库与旧装库执行顺序一致）
+      4. 跳过 schema_migrations 中 success=1 的 version
+      5. 对未成功的逐一执行：
+         - 成功：UPSERT 一条 success=1 记录，error=NULL，写入 duration_ms
+         - 失败 + kind='soft'：UPSERT success=0 + 截断 error，warning，不阻断
+         - 失败 + kind='hard'：UPSERT success=0 + 截断 error，**raise** 让
+           init_db 失败，便于 update.sh rollback
+
+    本函数对**旧迁移行为零影响** —— 它只读 / 写 schema_migrations 一张表，
+    不触碰任何业务表。
+    """
+    await ensure_schema_migrations_table(db)
+
+    # 静态校验
+    versions_seen: set[str] = set()
+    for m in MIGRATIONS:
+        if m.version in versions_seen:
+            raise ValueError(f"MIGRATIONS 中存在重复 version: {m.version!r}")
+        versions_seen.add(m.version)
+        if m.kind not in ("soft", "hard"):
+            raise ValueError(
+                f"MIGRATIONS[{m.version!r}].kind = {m.kind!r}, 必须是 'soft' 或 'hard'"
+            )
+
+    if not MIGRATIONS:
+        return  # 当前阶段：空列表 → no-op
+
+    # 读已成功的 version 集合
+    cursor = await db.execute(
+        "SELECT version FROM schema_migrations WHERE success = 1"
+    )
+    rows = await cursor.fetchall()
+    applied: set[str] = {row[0] for row in rows}
+
+    # 按 version 字典序排序后逐一执行
+    for migration in sorted(MIGRATIONS, key=lambda m: m.version):
+        if migration.version in applied:
+            continue
+
+        start_t = time.monotonic()
+        try:
+            await migration.func(db)
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start_t) * 1000)
+            error_msg = repr(exc)
+            if len(error_msg) > _MIGRATION_ERROR_MAX_LEN:
+                error_msg = error_msg[: _MIGRATION_ERROR_MAX_LEN]
+
+            # 写失败记录（best-effort，单独 try）
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO schema_migrations
+                        (version, name, kind, applied_at, success, error, duration_ms, checksum)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP, 0, ?, ?, NULL)
+                    ON CONFLICT(version) DO UPDATE SET
+                        name = excluded.name,
+                        kind = excluded.kind,
+                        applied_at = CURRENT_TIMESTAMP,
+                        success = 0,
+                        error = excluded.error,
+                        duration_ms = excluded.duration_ms
+                    """,
+                    (migration.version, migration.name, migration.kind,
+                     error_msg, duration_ms),
+                )
+                await db.commit()
+            except Exception as inner:
+                logger.warning(
+                    "写入 schema_migrations 失败记录时再次失败 (version=%s): %s",
+                    migration.version, inner,
+                )
+
+            if migration.kind == "hard":
+                logger.error(
+                    "hard migration %s 失败，启动应被阻断: %s",
+                    migration.version, error_msg,
+                )
+                raise
+            else:
+                logger.warning(
+                    "soft migration %s 失败（不阻断启动）: %s",
+                    migration.version, error_msg,
+                )
+                continue
+
+        # 成功路径
+        duration_ms = int((time.monotonic() - start_t) * 1000)
+        try:
+            await db.execute(
+                """
+                INSERT INTO schema_migrations
+                    (version, name, kind, applied_at, success, error, duration_ms, checksum)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, 1, NULL, ?, NULL)
+                ON CONFLICT(version) DO UPDATE SET
+                    name = excluded.name,
+                    kind = excluded.kind,
+                    applied_at = CURRENT_TIMESTAMP,
+                    success = 1,
+                    error = NULL,
+                    duration_ms = excluded.duration_ms
+                """,
+                (migration.version, migration.name, migration.kind, duration_ms),
+            )
+            await db.commit()
+            logger.info(
+                "migration %s 执行成功 (%dms, kind=%s)",
+                migration.version, duration_ms, migration.kind,
+            )
+        except Exception as inner:
+            logger.warning(
+                "写入 schema_migrations 成功记录失败 (version=%s): %s",
+                migration.version, inner,
+            )
 
 
 async def _migrate_teacher_ranking_columns(db: aiosqlite.Connection) -> None:

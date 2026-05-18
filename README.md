@@ -437,6 +437,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |
 | 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
 | 迁移注册器 P2 baseline | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 落地 [bot/database.py](bot/database.py)；接入 `init_db()`；9 个 `_migrate_*` **顺序未改、行为未改**；[scripts/healthcheck.sh](scripts/healthcheck.sh) 新增 `success=0` 行的 hard/soft 分级检查；13 个 pytest 用例 | (本次) |
+| 迁移注册器 P3 runner framework | `Migration` dataclass + `MIGRATIONS = []` + `run_registered_migrations()` 落地；`init_db()` 在 baseline 之后追加调用。**当前 MIGRATIONS 为空**，旧 9 个 `_migrate_*` 仍按原顺序无条件执行；未来新增迁移须以 `Migration(...)` 追加到列表，hard 失败会 raise 让 init_db 失败便于 rollback；15 个 pytest 用例 | (本次) |
 
 ### 🟡 后续建议补充
 
