@@ -432,6 +432,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | 健康检查脚本 | [`scripts/healthcheck.sh`](scripts/healthcheck.sh) 只读体检：基础文件 / Python / SQLite WAL & integrity_check / 核心表 / **DB 体积（默认 > 512 MB → WARN，可用 `HEALTHCHECK_DB_WARN_MB` 调整）** / schema_migrations / systemd / Git；存在 ERR 时退出码 1 | `6680e83` |
 | 数据库备份脚本 | [`scripts/backup.sh`](scripts/backup.sh) 独立 WAL-safe 备份 + `integrity_check`，产物 `*.manual.bak`；不影响 `update.sh` 的 `*.bak` | `6680e83` |
 | Pruning dry-run | [`scripts/prune.sh`](scripts/prune.sh) `--dry-run` 只读统计 `user_events` / `user_teacher_views`；任何 `--confirm/--delete/--vacuum/--execute` 立即 exit 1，权益类表永不进入白名单 | (本次) |
+| `bot/main.py` 拆分 | 拆为 4 个文件，行为零变更：[`bot/app_factory.py`](bot/app_factory.py)（Bot/Dispatcher/Scheduler 构造）+ [`bot/routers.py`](bot/routers.py)（33 个 router 注册，顺序完全等价于拆分前 L109-213）+ [`bot/lifecycle.py`](bot/lifecycle.py)（startup/shutdown 钩子）+ [`bot/main.py`](bot/main.py)（41 行薄入口）；20 个静态测试保证顺序与契约 | (本次) |
 | pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |
 | 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
 | 迁移注册器 P2 baseline | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 落地 [bot/database.py](bot/database.py)；接入 `init_db()`；9 个 `_migrate_*` **顺序未改、行为未改**；[scripts/healthcheck.sh](scripts/healthcheck.sh) 新增 `success=0` 行的 hard/soft 分级检查；13 个 pytest 用例 | (本次) |
@@ -444,7 +445,6 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | 迁移注册器 P5 | [`update.sh`](update.sh) 检测 hard failed migration 时阻断并提示 rollback（[设计 §八阶段 D](docs/MIGRATION-REGISTRY-DESIGN.md#阶段-d-updatesh-接入)） | P2 |
 | CI | 把 `pytest` + `compileall` + `bash -n scripts/*.sh` 接入 GitHub Actions（push / PR 触发） | P2 |
 | 清理 | scheduler 加 `prune_old_records`（user_events / audit_logs / point_transactions > 180 天） | P2 |
-| 结构 | `bot/main.py` 拆分（30 个 router 注册 + scheduler + logging 一身多职） | P2 |
 | 异地备份 | `scripts/backup.sh` 完成本机快照后，rclone / rsync 推送到对象存储 / 第二台 VPS（[DEPLOYMENT §14.4.1](docs/DEPLOYMENT.md#1441-异地备份建议)） | P2 |
 | 死代码 | 线性 `ReviewSubmitStates` 旧 FSM、`promo_links.py` / `source_stats.py`（router 已下线） | P3 |
 

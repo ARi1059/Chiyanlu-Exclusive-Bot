@@ -86,7 +86,7 @@ Healthcheck summary:
 | **迁移注册器实施** | 按 [MIGRATION-REGISTRY-DESIGN §12](MIGRATION-REGISTRY-DESIGN.md#十二实施计划) 落地 P2-P6：`schema_migrations` 表、baseline 写入、新迁移注册器、healthcheck 接入、update.sh 接入、注册器 pytest | 3-5 天工作量 |
 | **CI** | GitHub Actions 接入 `pytest` + `compileall` + `bash -n scripts/*.sh`，触发条件 push to main / PR | 半天 |
 | **历史数据 pruning** | scheduler 加 `prune_old_records`：`user_events` / `audit_logs` / `point_transactions` > 180 天定时清理；需先确认保留期符合运营/合规要求 | 1-2 天 |
-| **`bot/main.py` 拆分** | 当前 `main.py` 一身多职：30 个 router 注册 + scheduler 启动 + logging 配置；建议拆出 `bot/registry.py`、`bot/scheduler_setup.py`、`bot/logging_setup.py` | 1-2 天 |
+| ~~**`bot/main.py` 拆分**~~ | ✅ **已完成**：拆为 `bot/app_factory.py` + `bot/routers.py` + `bot/lifecycle.py` + 41 行薄 `bot/main.py`；33 个 router 注册顺序逐行等价；20 个静态测试覆盖；业务行为 0 改变 | 已落地 |
 | **异地备份** | `scripts/backup.sh` 完成本机快照后，rclone / rsync 推送到对象存储 / 第二台 VPS；参考 [DEPLOYMENT §14.4.1](DEPLOYMENT.md#1441-异地备份建议) | 半天 |
 
 ### 3.2 P3（低优先级，技术债清理）
