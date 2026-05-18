@@ -429,7 +429,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 |---|---|---|
 | 运营政策文档 | `docs/POLICY-points.md` / `POLICY-reimbursement.md` / `POLICY-lottery.md` 用户面规则 | `8661e22` |
 | 值守手册 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) 14 节：值守原则 / 常用命令 / 服务-更新-数据库-抽奖-报销-积分-评价-权限安全事故处理 / 事故记录模板 / 升级判定 | `6680e83` |
-| 健康检查脚本 | [`scripts/healthcheck.sh`](scripts/healthcheck.sh) 只读体检：基础文件 / Python / SQLite WAL & integrity_check / 核心表 / systemd / Git；存在 ERR 时退出码 1 | `6680e83` |
+| 健康检查脚本 | [`scripts/healthcheck.sh`](scripts/healthcheck.sh) 只读体检：基础文件 / Python / SQLite WAL & integrity_check / 核心表 / **DB 体积（默认 > 512 MB → WARN，可用 `HEALTHCHECK_DB_WARN_MB` 调整）** / schema_migrations / systemd / Git；存在 ERR 时退出码 1 | `6680e83` |
 | 数据库备份脚本 | [`scripts/backup.sh`](scripts/backup.sh) 独立 WAL-safe 备份 + `integrity_check`，产物 `*.manual.bak`；不影响 `update.sh` 的 `*.bak` | `6680e83` |
 | Pruning dry-run | [`scripts/prune.sh`](scripts/prune.sh) `--dry-run` 只读统计 `user_events` / `user_teacher_views`；任何 `--confirm/--delete/--vacuum/--execute` 立即 exit 1，权益类表永不进入白名单 | (本次) |
 | pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |

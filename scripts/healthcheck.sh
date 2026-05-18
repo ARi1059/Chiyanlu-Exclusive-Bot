@@ -180,6 +180,48 @@ info "DATABASE_PATH = ${DB_PATH}"
 if [[ -f "${DB_PATH}" ]] && command -v sqlite3 >/dev/null 2>&1; then
     ok "数据库文件存在：${DB_PATH}"
 
+    # 主库文件大小检查（只读 stat，不修改任何数据）
+    # 默认 WARN 阈值 512 MB；可通过环境变量 HEALTHCHECK_DB_WARN_MB 覆盖
+    db_warn_mb="${HEALTHCHECK_DB_WARN_MB:-512}"
+    db_bytes=""
+    if db_bytes=$(stat -c%s "${DB_PATH}" 2>/dev/null); then
+        :
+    elif db_bytes=$(stat -f%z "${DB_PATH}" 2>/dev/null); then
+        :
+    else
+        db_bytes=""
+    fi
+    if [[ -z "${db_bytes}" ]]; then
+        warn "无法获取 DB 文件大小（stat 失败），跳过体积提醒"
+    else
+        db_mb=$(( db_bytes / 1024 / 1024 ))
+        if [[ "${db_mb}" -ge "${db_warn_mb}" ]]; then
+            warn "DB size: ${db_mb} MB > ${db_warn_mb} MB，建议执行 ./scripts/prune.sh --dry-run --days 180 评估历史日志规模"
+        else
+            ok "DB size: ${db_mb} MB"
+        fi
+    fi
+
+    # -wal 文件大小提醒（仅 WARN，永不 ERR）。WAL 在每次 checkpoint 后会缩小；
+    # 超过 100 MB 通常意味着长时间未 checkpoint 或近期写入量异常。
+    # **绝不**手工删除 -wal / -shm — 详见 docs/RUNBOOK.md §五
+    wal_path="${DB_PATH}-wal"
+    wal_warn_mb=100
+    if [[ -f "${wal_path}" ]]; then
+        wal_bytes=""
+        if wal_bytes=$(stat -c%s "${wal_path}" 2>/dev/null); then
+            :
+        elif wal_bytes=$(stat -f%z "${wal_path}" 2>/dev/null); then
+            :
+        fi
+        if [[ -n "${wal_bytes}" ]]; then
+            wal_mb=$(( wal_bytes / 1024 / 1024 ))
+            if [[ "${wal_mb}" -ge "${wal_warn_mb}" ]]; then
+                warn "WAL file size: ${wal_mb} MB，可能是长时间未 checkpoint 或写入较多；请先确认服务状态，不要手工删除 -wal"
+            fi
+        fi
+    fi
+
     integrity=$(sqlite3 "${DB_PATH}" "PRAGMA integrity_check;" 2>/dev/null | head -1 || true)
     if [[ "${integrity}" == "ok" ]]; then
         ok "PRAGMA integrity_check = ok"

@@ -728,8 +728,13 @@ whoami      # 应该是 root
 cd /opt/Chiyanlu-Exclusive-Bot
 ./scripts/healthcheck.sh
 # 期望：summary 显示 ERR=0；只读检查，覆盖文件 / .env 权限 / Python / .venv /
-#       SQLite WAL & integrity_check / 核心表 / systemd / Git 工作区。
-# 退出码：ERR=0 时返回 0，存在 ERR 时返回 1（适合放进 CI 或部署后脚本断言)
+#       SQLite WAL & integrity_check / 核心表 / 数据库体积 / schema_migrations /
+#       systemd / Git 工作区。
+# 退出码：ERR=0 时返回 0，存在 ERR 时返回 1（适合放进 CI 或部署后脚本断言）
+#
+# DB 体积提醒默认阈值 512 MB；如生产数据量较大可调高：
+#   HEALTHCHECK_DB_WARN_MB=1024 ./scripts/healthcheck.sh
+# WAL 文件 > 100 MB 也会单独 WARN，但不会变成 ERR；绝不要手工删除 -wal/-shm。
 
 # 0.5 单元测试（纯逻辑回归，不连真实 Telegram / 不访问真实数据库）
 cd /opt/Chiyanlu-Exclusive-Bot

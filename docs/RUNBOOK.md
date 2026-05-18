@@ -33,7 +33,9 @@ cd /opt/Chiyanlu-Exclusive-Bot
 
 # === 一键体检（首选）===
 ./scripts/healthcheck.sh                      # 只读检查：文件 / Python / SQLite / systemd / Git
+                                              # 含 DB 体积提醒（默认 > 512 MB → WARN，引导 prune dry-run）
                                               # 退出码 0 = 全 OK 或仅有 WARN；1 = 存在 ERR
+HEALTHCHECK_DB_WARN_MB=1024 ./scripts/healthcheck.sh   # 调大体积提醒阈值
 
 # === 手动数据库备份（重大操作前必跑）===
 ./scripts/backup.sh                           # WAL-safe，sqlite3 .backup + integrity_check
@@ -334,6 +336,10 @@ cd /opt/Chiyanlu-Exclusive-Bot
 
 ### 6.3 历史数据 pruning · dry-run（不删除任何数据）
 
+**触发场景**：`./scripts/healthcheck.sh` 输出
+`[WARN] DB size: XXX MB > 512 MB，建议执行 ./scripts/prune.sh --dry-run --days 180`
+时，按如下顺序处理（**仍然不会真删除任何数据**）：
+
 ```bash
 cd /opt/Chiyanlu-Exclusive-Bot
 
@@ -342,17 +348,20 @@ cd /opt/Chiyanlu-Exclusive-Bot
 
 # 第 2 步：跑只读 dry-run，看过去 180 天可清理的日志行数
 ./scripts/prune.sh --dry-run --days 180
+
+# 第 3 步：如需真正清理，等待 P3 confirm 路径实现；
+#         绝不要手工 DELETE 任何业务表
 ```
 
-输出会列出 `user_events` / `user_teacher_views` 两张表的命中行数、最早 / 最新
-时间戳与 `action`。
+dry-run 输出会列出 `user_events` / `user_teacher_views` 两张表的命中行数、
+最早 / 最新时间戳与 `action`（`safe-to-delete-after-backup` / `nothing-to-prune`）。
 
-> ⚠️ **当前 `scripts/prune.sh` 不支持 `--confirm`，无法真正删除数据**。
-> 任何 `--confirm` / `--delete` / `--vacuum` / `--execute` 参数都会被脚本直接
-> 拒绝（exit 1）。如果未来 P3 启用了删除路径，必须仍按"备份 → dry-run →
-> confirm → integrity_check"四步顺序执行；详见 [PRUNING-DESIGN §六](PRUNING-DESIGN.md#六执行设计)。
-> 永远**不要**对 `point_transactions` / `reimbursements` / `teacher_reviews` /
-> `lottery_entries` 等权益类表手工 `DELETE` —— 见 [PRUNING-DESIGN §十一](PRUNING-DESIGN.md#十一明确不做)。
+> ⚠️ **当前 `scripts/prune.sh` 没有 `--confirm` 能力**。任何 `--confirm` /
+> `--delete` / `--vacuum` / `--execute` 都会被脚本直接拒绝（exit 1）。
+> 即使 dry-run 显示有 100 万行可清理，**不要**手工 `sqlite3 ... "DELETE FROM ..."`
+> 替代脚本；永远不要对 `point_transactions` / `reimbursements` / `teacher_reviews`
+> / `lottery_entries` 等权益类表手工 `DELETE`。
+> 详见 [PRUNING-DESIGN §六](PRUNING-DESIGN.md#六执行设计) 与 [§十一](PRUNING-DESIGN.md#十一明确不做)。
 
 #### 6.2.x 降级方案：scripts/backup.sh 也跑不起来时
 
@@ -369,7 +378,7 @@ sqlite3 "$BACKUP" "PRAGMA integrity_check;"
 ls -lh "$BACKUP"
 ```
 
-### 6.3 恢复（优先用 update.sh rollback）
+### 6.4 恢复（优先用 update.sh rollback）
 
 ```bash
 ./update.sh rollback
@@ -377,7 +386,7 @@ ls -lh "$BACKUP"
 
 它会恢复代码 + 数据库备份。99% 的情况用这条就够。
 
-### 6.4 手动恢复（最后手段）
+### 6.5 手动恢复（最后手段）
 
 ⚠️ 操作前**必须**：
 - 已经手动备份当前 `data/` 目录（用 6.2 的方式）
