@@ -121,7 +121,10 @@ def format_recent_reviews_block(
     sep = "─" * 20
     parts: list[str] = ["最近评价：", sep]
     for i, rev in enumerate(reviews):
-        sig = anonymize_signer(signer_names.get(rev["user_id"]))
+        if int(rev.get("anonymous") or 0) == 1:
+            sig = "匿*"
+        else:
+            sig = anonymize_signer(signer_names.get(rev["user_id"]))
         rating_meta = _RATING_META.get(
             rev.get("rating"),
             {"emoji": "❓", "label": rev.get("rating", "?")},

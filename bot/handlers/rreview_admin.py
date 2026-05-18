@@ -157,12 +157,13 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
     teacher_name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
     current_pts = await get_user_total_points(review["user_id"])
 
+    anon_tag = " · 🕵 匿名提交" if int(review.get("anonymous") or 0) == 1 else ""
     text = (
         f"💰 审核通过加分（评价 #{review_id}）\n"
         "━━━━━━━━━━━━━━━\n"
         f"老师：{teacher_name}\n"
         f"评价者：{_anonymize_user_id(review['user_id'])} "
-        f"(uid: {_anonymize_user_id(review['user_id'])})\n"
+        f"(uid: {_anonymize_user_id(review['user_id'])}){anon_tag}\n"
         f"当前用户总积分：{current_pts}\n"
         "━━━━━━━━━━━━━━━\n\n"
         "请根据审核材料给该用户加分（默认 +1 P；包夜 +5；包天 +8）："
@@ -684,10 +685,11 @@ def _render_review_text(review: dict, teacher: Optional[dict], idx: int, total: 
     )
     rating_str = f"{rating_meta['emoji']} {rating_meta['label']}"
     summary = review.get("summary") or "（未填写）"
+    anon_tag = " · 🕵 匿名提交" if int(review.get("anonymous") or 0) == 1 else ""
     lines = [
         f"[报告审核 {idx + 1}/{total}]",
         f"老师：{teacher_name}",
-        f"评价者：{_anonymize_user_id(review['user_id'])} (uid: {_anonymize_user_id(review['user_id'])})",
+        f"评价者：{_anonymize_user_id(review['user_id'])} (uid: {_anonymize_user_id(review['user_id'])}){anon_tag}",
         f"提交：{review.get('created_at', '?')}",
         "",
         "📸 审核材料：已在上方 2 张图",

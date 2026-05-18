@@ -160,11 +160,12 @@ async def notify_super_admins_new_review(bot: Bot, review_id: int) -> None:
     teacher = await get_teacher(review["teacher_id"])
     teacher_name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
     summary = review.get("summary") or "（未填写）"
+    anon_tag = " · 🕵 匿名提交" if int(review.get("anonymous") or 0) == 1 else ""
     text = (
         "🆕 有新报告待审核\n\n"
         f"老师：{teacher_name}\n"
         f"评价者：{_anonymize_user_id(review['user_id'])} "
-        f"(uid: {_anonymize_user_id(review['user_id'])})\n"
+        f"(uid: {_anonymize_user_id(review['user_id'])}){anon_tag}\n"
         f"评级：{_rating_str(review.get('rating'))} · "
         f"🎯 {review.get('overall_score', '?')}/10\n"
         f"📝 过程：{summary}"

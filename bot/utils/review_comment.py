@@ -100,13 +100,16 @@ def render_review_comment(
     short_name = _trim_name_for_button(name)
     teacher_id = teacher.get("user_id")
 
-    # 半匿名留名
-    uid = review.get("user_id") or 0
-    sid = str(uid)
-    if len(sid) <= 4:
-        anon = "****"
+    # 留名：默认半匿名 ****<last4>；anonymous=1 完全匿名
+    if int(review.get("anonymous") or 0) == 1:
+        anon = "匿*"
     else:
-        anon = "*" * (len(sid) - 4) + sid[-4:]
+        uid = review.get("user_id") or 0
+        sid = str(uid)
+        if len(sid) <= 4:
+            anon = "****"
+        else:
+            anon = "*" * (len(sid) - 4) + sid[-4:]
 
     summary = review.get("summary")
     lines = [
