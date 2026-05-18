@@ -1,5 +1,11 @@
 """推广链接生成器（Phase 4 §四）
 
+⚠️ DEAD CODE since 2026-05-18 Phase 4：本模块已下线。
+   - 当前**未在 bot/routers.py 注册**（routers.py L76 注释明确说明）
+   - 管理员后台对应的入口按钮已从 admin_kb 中移除
+   - 文件与其内部 router 仍保留作为历史参考，**不应**新增任何入口调用本模块
+   - 删除前请先参考 docs/DEAD-CODE-AUDIT-2026-05-18.md §五
+
 Callbacks:
     admin:promo_links           推广链接主菜单
     admin:promo:channel         频道来源

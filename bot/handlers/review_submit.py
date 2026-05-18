@@ -58,6 +58,17 @@ from bot.keyboards.user_kb import (
     review_confirm_kb,
     user_reviews_home_kb,
 )
+# ⚠️ Deprecated since 2026-05-18 Phase 2：ReviewSubmitStates 是旧线性评价 FSM。
+#
+#    当前外部入口 ``review:start:*`` (本文件 cb_review_start) 在校验通过后直接调用
+#    ``bot.handlers.review_card.render_card(...)``，进入新的卡片式 ``CardReviewStates``
+#    流程；ReviewSubmitStates **已无外部入口**，全项目 ``set_state(ReviewSubmitStates.*)``
+#    调用都封闭在本文件的 ``_enter_*`` 私有函数中，外部 0 引用。
+#
+#    本 import 与对应的 10+ 个 handler / 私有函数暂时保留作为历史 fallback 与对照，
+#    禁止新增任何路径继续使用 ReviewSubmitStates。
+#
+#    删除前必须参考 docs/DEAD-CODE-AUDIT-2026-05-18.md §四并补静态测试。
 from bot.states.teacher_states import (
     ReviewSubmitStates,
     UserReviewsHomeStates,

@@ -381,6 +381,16 @@ async def cb_admin_today_status(callback: types.CallbackQuery, state: FSMContext
 
 
 # ============ noop —— 频道键盘分组标签占位 ============
+#
+# ⚠️ noop 双 handler 分工（详见 docs/DEAD-CODE-AUDIT-2026-05-18.md §六）：
+#    - 本 handler 的 filter 是 ``F.data.startswith("noop")``（**无冒号**），
+#      用作裸 ``noop`` / ``noop_xxx`` 字符串的兜底
+#    - bot/handlers/noop_handlers.py 处理带冒号的 ``noop:*``（如 ``noop:rating`` /
+#      ``noop:page``），且在 routers.py 中**更早**注册 —— ``noop:*`` 永远先被它接住
+#    - 两者前缀语义不同，**不是重复 bug**，请勿合并
+#    - 如未来想统一 noop 命名空间（全部带冒号），必须先处理生产已发送消息按钮的
+#      callback_data 兼容性（旧按钮 callback_data 是裸 noop / noop_xxx，迁移当天
+#      旧按钮会失效）
 
 
 @router.callback_query(F.data.startswith("noop"))

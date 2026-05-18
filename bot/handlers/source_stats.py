@@ -1,5 +1,11 @@
 """渠道统计看板 + 用户来源查询（Phase 4 §五 + §七）
 
+⚠️ DEAD CODE since 2026-05-18 Phase 4：本模块已下线。
+   - 当前**未在 bot/routers.py 注册**（routers.py L76 注释明确说明）
+   - 管理员后台对应的入口按钮已从 admin_kb 中移除
+   - 文件与其内部 router 仍保留作为历史参考，**不应**新增任何入口调用本模块
+   - 删除前请先参考 docs/DEAD-CODE-AUDIT-2026-05-18.md §五
+
 Callbacks:
     admin:source_stats                       渠道统计主页（TOP 20 混合）
     admin:source_stats:channel               频道来源 TOP 10
