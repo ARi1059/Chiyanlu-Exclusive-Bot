@@ -38,6 +38,7 @@ from bot.keyboards.admin_kb import (
     dashboard_audit_back_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
+    admin_lottery_status_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -1217,6 +1218,48 @@ async def cb_admin_reimbursement_pool_refresh(callback: types.CallbackQuery):
         await callback.message.edit_text(
             render_reimbursement_pool(stats),
             reply_markup=admin_reimbursement_pool_kb(),
+        )
+    except Exception:
+        # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
+        pass
+    await callback.answer("已刷新")
+
+
+# ============ 抽奖状态（admin:lottery_status） ============
+
+
+@router.callback_query(F.data == "admin:lottery_status")
+@admin_required
+async def cb_admin_lottery_status(callback: types.CallbackQuery):
+    """抽奖状态：状态总览 / 待办提醒 / 最近活动
+
+    只读聚合，不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑。
+    """
+    from bot.services.lottery_status import (
+        get_lottery_status_stats,
+        render_lottery_status,
+    )
+    stats = await get_lottery_status_stats()
+    await callback.message.edit_text(
+        render_lottery_status(stats),
+        reply_markup=admin_lottery_status_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:lottery_status:refresh")
+@admin_required
+async def cb_admin_lottery_status_refresh(callback: types.CallbackQuery):
+    """抽奖状态刷新按钮（重新拉取数据并重绘）。"""
+    from bot.services.lottery_status import (
+        get_lottery_status_stats,
+        render_lottery_status,
+    )
+    stats = await get_lottery_status_stats()
+    try:
+        await callback.message.edit_text(
+            render_lottery_status(stats),
+            reply_markup=admin_lottery_status_kb(),
         )
     except Exception:
         # 文本未变时 Telegram 会抛 message is not modified，吞掉即可

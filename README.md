@@ -154,6 +154,13 @@
 - 月度池为 0 时显示"不限"，超额时显示负值与超额量；不修改报销审核流程、不修改金额计算规则
 - 实现位于 [`bot/services/reimbursement_pool.py`](bot/services/reimbursement_pool.py)，callback 命名空间 `admin:reimbursement_pool` / `admin:reimbursement_pool:refresh`
 
+### 17. 管理员抽奖状态总览（admin:lottery_status）
+
+- 后台主菜单按钮「🎲 抽奖状态」入口（超管 / 管理员可见）
+- 只读聚合：6 个状态计数（draft / scheduled / active / drawn / no_entries / cancelled）+ 待发布 / 待开奖（active 且 draw_at > now）/ active 但无人参与 / 积分门票活动 + 最近 5 条抽奖摘要（参与人数 / 中奖人数 / 开奖时间 / 积分门票）
+- 无任何抽奖时显示"暂无抽奖活动"；不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑
+- 实现位于 [`bot/services/lottery_status.py`](bot/services/lottery_status.py)，callback 命名空间 `admin:lottery_status` / `admin:lottery_status:refresh`
+
 ---
 
 ## 技术栈

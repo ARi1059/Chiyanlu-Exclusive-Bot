@@ -74,6 +74,7 @@ def main_menu_kb(
         ],
         [InlineKeyboardButton(text="📊 运营总览", callback_data="admin:overview")],
         [InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool")],
+        [InlineKeyboardButton(text="🎲 抽奖状态", callback_data="admin:lottery_status")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -93,6 +94,16 @@ def admin_reimbursement_pool_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:reimbursement_pool:refresh"),
+            InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main"),
+        ],
+    ])
+
+
+def admin_lottery_status_kb() -> InlineKeyboardMarkup:
+    """抽奖状态面板：刷新 / 返回主菜单"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:lottery_status:refresh"),
             InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main"),
         ],
     ])
