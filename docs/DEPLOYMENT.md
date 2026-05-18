@@ -714,10 +714,17 @@ cd /opt/Chiyanlu-Exclusive-Bot
 ./update.sh status
 # 期望：显示 active (running) 和最近 20 行日志
 
-# 9. 备份目录验证（首次 update 后会有备份）
-./update.sh restart       # 触发一次 restart 流程
+# 9. 备份目录验证
+# 注意：./update.sh restart 只重启服务，不会创建备份。
+# 数据库备份只会在完整更新流程 ./update.sh 中、且检测到远程有新提交时执行（§13.3 第 4 步）。
+# 如果当前没有远程新提交，./update.sh 会提前退出，也不会生成新备份。
+# 因此首次部署刚完成时，backups/ 通常为空属于正常现象，需在真实更新后再次验证。
 ls -lh /opt/Chiyanlu-Exclusive-Bot/backups/
-# 期望：能看到 bot.db.YYYYMMDD-HHMMSS.bak 文件
+# 期望：在「有远程新提交」的真实 ./update.sh 完整流程跑完后，
+#       可看到 bot.db.YYYYMMDD-HHMMSS.bak 文件
+# 目前项目尚未提供独立的 backup 子命令；
+# 如需主动测试备份链路，可参考 §14.4 crontab 备份脚本，
+# 或后续在 scripts/ 下补一个 backup.sh / update.sh backup 子命令
 ```
 
 ---

@@ -340,7 +340,11 @@ journalctl -u chiyanlu-bot -f
 ### 部署注意
 
 - **`.env` 必须 `chmod 600 .env` 且仅 service 用户可读**
-- **不能用 root 运行**：Bot token 泄露后影响面更大；建议建专用 `chiyanlu` 用户
+- **运行用户**：
+  - 测试 / 个人小规模部署可以用 root 快速跑通
+  - **生产环境不建议长期用 root 运行**，长期运营建议创建独立 `chiyanlu` 用户
+  - 原因：降低 Bot token 泄露、依赖漏洞或误操作造成的影响面
+  - 详细做法见 [`docs/DEPLOYMENT.md` §9.2](docs/DEPLOYMENT.md#92-推荐生产创建独立用户运行)
 - **`data/` 目录权限**：service 用户可读写；备份目录同
 - **不需要 Docker**：项目设计为单进程 polling，systemd 已足够；Docker 化会让 `update.sh` 的备份/回滚/healthcheck 失效
 
