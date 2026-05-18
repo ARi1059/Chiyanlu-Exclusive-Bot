@@ -149,6 +149,37 @@ class WriteReviewLookupStates(StatesGroup):
     waiting_teacher_name = State()
 
 
+class CardReviewStates(StatesGroup):
+    """卡片驱动评价 FSM（2026-05-18 Phase 2）
+
+    与线性 ReviewSubmitStates 不同：用户在「评价卡片」状态下可任意点击 8 个字段
+    按钮进入对应 editing_X 状态填写，填完返回卡片视图。无强制顺序。
+
+    state.data 累加：
+        teacher_id /
+        booking_screenshot_file_id / gesture_photo_file_id /
+        rating /
+        score_humanphoto / score_appearance / score_body /
+        score_service / score_attitude / score_environment /
+        summary /
+        anonymous (0/1) /
+        request_reimbursement (0/1/2) — 提交时通过 reimbursement step 设置
+        _card_msg_id — 卡片消息 id，用于编辑刷新
+        _evidence_files — 临时累积 evidence 媒体组
+    """
+    card               = State()  # 卡片视图（idle）
+    editing_evidence   = State()
+    editing_rating     = State()
+    editing_humanphoto = State()
+    editing_appearance = State()
+    editing_body       = State()
+    editing_service    = State()
+    editing_attitude   = State()
+    editing_environment = State()
+    editing_summary    = State()
+    waiting_reimbursement_choice = State()  # 报销询问步（可选）
+
+
 class ReviewSubmitStates(StatesGroup):
     """用户提交评价 FSM（v2 2026-05-18：10 步精简版 + 1 条件步）
 

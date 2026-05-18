@@ -101,41 +101,19 @@ async def start_review_flow(
     edit_msg: Optional[types.Message] = None,
     pre_rating: Optional[str] = None,
 ) -> tuple[str, Optional[dict]]:
-    """[📝 写评价] 入口的核心逻辑（callback / deep link 共用）
+    """[📝 写评价] 入口（2026-05-18 起重定向到卡片驱动 FSM）
 
     返回 ("ok"|"not_found"|"inactive"|"rate_limited"|"need_subscribe", extra)
-        - ok：state 已设置 waiting_booking_screenshot；extra={"teacher": dict}
+        - ok：state 已设置 CardReviewStates.card；extra={"teacher": dict}
+              调用方需自己调用 render_card(target_msg, state, via_edit=...)
         - rate_limited：extra={"reason": str}
         - need_subscribe：extra={"missing": list[dict]}
         - not_found / inactive：extra=None
-
-    pre_rating：用户在个人评价主页预先选定的评级（positive/neutral/negative）。
-        若提供：在 state.data 写入 rating，Step 2 评级会被自动跳过。
-
-    调用方负责按返回值渲染对应文案 / 键盘。
-    edit_msg 为可选目标消息：若提供，文案直接 edit_text 替换；
-    否则调用方需自己 send_message。
     """
-    teacher = await get_teacher(teacher_id)
-    if not teacher:
-        return "not_found", None
-    if not teacher.get("is_active"):
-        return "inactive", None
-
-    limit_msg = await _check_rate_limit(user_id, teacher_id)
-    if limit_msg:
-        return "rate_limited", {"reason": limit_msg}
-
-    ok, missing = await check_user_subscribed(bot, user_id)
-    if not ok:
-        return "need_subscribe", {"missing": missing}
-
-    await state.set_state(ReviewSubmitStates.waiting_evidence_media)
-    init_data: dict = {"teacher_id": teacher_id}
-    if pre_rating and pre_rating in {r["key"] for r in REVIEW_RATINGS}:
-        init_data["rating"] = pre_rating
-    await state.set_data(init_data)
-    return "ok", {"teacher": teacher}
+    from bot.handlers.review_card import start_card_review
+    return await start_card_review(
+        bot, user_id, teacher_id, state, pre_rating=pre_rating,
+    )
 
 
 # ============ 主菜单 [📝 写评价]：个人评价主页（2026-05-18） ============
@@ -441,26 +419,9 @@ async def on_write_review_teacher_name(message: types.Message, state: FSMContext
             disable_web_page_preview=True,
         )
         return
-    # status == "ok" — start_review_flow 已设好 waiting_evidence_media
-    pr_hint = ""
-    if pre_rating:
-        pr_meta = next(
-            (r for r in REVIEW_RATINGS if r["key"] == pre_rating), None,
-        )
-        if pr_meta:
-            pr_hint = (
-                f"\n（已预选评级：{pr_meta['emoji']}{pr_meta['label']}，Step 2 自动跳过）"
-            )
-    await message.answer(
-        f"📝 为「{teacher['display_name']}」写评价{pr_hint}\n\n"
-        "[Step 1/10] 上传 2 张证据照片（必填）\n\n"
-        "请把以下 2 张图片**一起作为媒体组**发送（或先后发送）：\n"
-        "1️⃣ 约课记录截图\n"
-        "2️⃣ 现场手势照片（如比心 / 大拇指 / 比 3 指）\n\n"
-        "前 2 张照片会被收为证据（仅审核可见，不公开）。\n"
-        "任意时刻发 /cancel 中止。",
-        reply_markup=review_cancel_kb(),
-    )
+    # status == "ok" — start_review_flow 已设好 CardReviewStates.card；渲染卡片
+    from bot.handlers.review_card import render_card
+    await render_card(message, state, via_edit=False)
 
 
 @router.message(F.text == "/cancel", WriteReviewLookupStates())
@@ -514,18 +475,9 @@ async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # status == "ok"
-    teacher = extra["teacher"]
-    await callback.message.edit_text(
-        f"📝 为「{teacher['display_name']}」写评价\n\n"
-        "[Step 1/10] 上传 2 张证据照片（必填）\n\n"
-        "请把以下 2 张图片**一起作为媒体组**发送（或先后发送）：\n"
-        "1️⃣ 约课记录截图\n"
-        "2️⃣ 现场手势照片（如比心 / 大拇指 / 比 3 指）\n\n"
-        "前 2 张照片会被收为证据（仅审核可见，不公开）。\n"
-        "任意时刻发 /cancel 中止。",
-        reply_markup=review_cancel_kb(),
-    )
+    # status == "ok" — 卡片渲染
+    from bot.handlers.review_card import render_card
+    await render_card(callback.message, state, via_edit=True)
     await callback.answer()
 
 

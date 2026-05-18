@@ -518,6 +518,104 @@ def user_reviews_home_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+# ============ 卡片驱动评价 FSM 键盘（2026-05-18 Phase 2） ============
+
+
+_CARD_FIELDS: list[dict] = [
+    {"key": "evidence",    "label": "🖼 出击证明",
+     "data_keys": ["booking_screenshot_file_id", "gesture_photo_file_id"]},
+    {"key": "rating",      "label": "⭐ 评级",       "data_keys": ["rating"]},
+    {"key": "humanphoto",  "label": "🎨 人照",       "data_keys": ["score_humanphoto"]},
+    {"key": "appearance",  "label": "💅 颜值",       "data_keys": ["score_appearance"]},
+    {"key": "body",        "label": "💃 身材",       "data_keys": ["score_body"]},
+    {"key": "service",     "label": "🛎 服务",       "data_keys": ["score_service"]},
+    {"key": "attitude",    "label": "😊 态度",       "data_keys": ["score_attitude"]},
+    {"key": "environment", "label": "🏠 环境",       "data_keys": ["score_environment"]},
+    {"key": "summary",     "label": "📝 过程描述",   "data_keys": ["summary"]},
+]
+
+
+def _card_field_filled(data: dict, field: dict) -> bool:
+    """字段是否已填齐"""
+    for k in field["data_keys"]:
+        v = data.get(k)
+        if v is None or (isinstance(v, str) and not v):
+            return False
+    return True
+
+
+def review_card_kb(state_data: dict) -> InlineKeyboardMarkup:
+    """评价卡片键盘（card_view 状态）
+
+    布局：
+        Row 1: [🖼 出击证明✓ / ⭐ 评级✓]
+        Row 2: [🎨 人照 / 💅 颜值]
+        Row 3: [💃 身材 / 🛎 服务]
+        Row 4: [😊 态度 / 🏠 环境]
+        Row 5: [📝 过程描述]
+        Row 6: [😟 匿名提交] [😎 默认提交]
+        Row 7: [❌ 取消]
+
+    callback：card:edit:<field_key> / card:submit:<anon|default> / card:cancel
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    # 2 列布局：evidence+rating / 6 维 / summary 独占
+    pairs: list[list[dict]] = [
+        [_CARD_FIELDS[0], _CARD_FIELDS[1]],   # evidence + rating
+        [_CARD_FIELDS[2], _CARD_FIELDS[3]],   # humanphoto + appearance
+        [_CARD_FIELDS[4], _CARD_FIELDS[5]],   # body + service
+        [_CARD_FIELDS[6], _CARD_FIELDS[7]],   # attitude + environment
+        [_CARD_FIELDS[8]],                    # summary
+    ]
+    for pair in pairs:
+        row: list[InlineKeyboardButton] = []
+        for f in pair:
+            mark = "✓ " if _card_field_filled(state_data, f) else ""
+            row.append(InlineKeyboardButton(
+                text=f"{mark}{f['label']}",
+                callback_data=f"card:edit:{f['key']}",
+            ))
+        rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(text="😟 匿名提交", callback_data="card:submit:anon"),
+        InlineKeyboardButton(text="😎 默认提交", callback_data="card:submit:default"),
+    ])
+    rows.append([InlineKeyboardButton(text="❌ 取消", callback_data="card:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def review_card_rating_kb() -> InlineKeyboardMarkup:
+    """评级编辑子键盘"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👍 好评", callback_data="card:rating:positive"),
+            InlineKeyboardButton(text="😐 中评", callback_data="card:rating:neutral"),
+            InlineKeyboardButton(text="👎 差评", callback_data="card:rating:negative"),
+        ],
+        [InlineKeyboardButton(text="🔙 返回卡片", callback_data="card:back")],
+    ])
+
+
+def review_card_edit_cancel_kb() -> InlineKeyboardMarkup:
+    """编辑子状态的返回键盘"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回卡片（保留已填字段）", callback_data="card:back")],
+    ])
+
+
+def review_card_reimburse_kb(amount: int) -> InlineKeyboardMarkup:
+    """卡片提交流程内的报销意愿询问"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"💰 是，申请 {amount} 元",
+            callback_data="card:reimburse:yes",
+        )],
+        [InlineKeyboardButton(text="否，不申请", callback_data="card:reimburse:no")],
+        [InlineKeyboardButton(text="❌ 取消提交", callback_data="card:cancel")],
+    ])
+
+
 # ============ 评价 FSM 键盘（Phase 9.3） ============
 
 def review_cancel_kb() -> InlineKeyboardMarkup:

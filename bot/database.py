@@ -254,6 +254,7 @@ async def init_db():
                 discussion_chat_id          INTEGER,
                 discussion_msg_id           INTEGER,
                 request_reimbursement       INTEGER NOT NULL DEFAULT 0,
+                anonymous                   INTEGER NOT NULL DEFAULT 0,
                 created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
                 reviewed_at                 TEXT,
                 published_at                TEXT,
@@ -419,6 +420,7 @@ async def init_db():
         await _migrate_lotteries_entry_cost(db)
         # 报销子系统：teacher_reviews 表新增 request_reimbursement
         await _migrate_reviews_request_reimbursement(db)
+        await _migrate_reviews_anonymous(db)
         # 报销子系统：reimbursements.status CHECK 加 'queued'（功能关闭时静默录入）
         await _migrate_reimbursements_queued_status(db)
 
@@ -548,6 +550,24 @@ async def _migrate_reviews_request_reimbursement(db: aiosqlite.Connection) -> No
         )
     except Exception as e:
         logger.warning("request_reimbursement 字段迁移失败（不阻断启动）: %s", e)
+
+
+async def _migrate_reviews_anonymous(db: aiosqlite.Connection) -> None:
+    """teacher_reviews 表添加 anonymous（匿名提交，默认 0=不匿名）
+
+    PRAGMA 检测后再 ADD，幂等可重入。老评价默认 0=不匿名。
+    """
+    try:
+        cur = await db.execute("PRAGMA table_info(teacher_reviews)")
+        rows = await cur.fetchall()
+        existing = {row["name"] for row in rows}
+        if "anonymous" in existing:
+            return
+        await db.execute(
+            "ALTER TABLE teacher_reviews ADD COLUMN anonymous INTEGER NOT NULL DEFAULT 0"
+        )
+    except Exception as e:
+        logger.warning("anonymous 字段迁移失败（不阻断启动）: %s", e)
 
 
 async def _migrate_reimbursements_queued_status(db: aiosqlite.Connection) -> None:
@@ -4379,8 +4399,9 @@ async def create_teacher_review(data: dict) -> Optional[int]:
                     rating,
                     score_humanphoto, score_appearance, score_body,
                     score_service, score_attitude, score_environment,
-                    overall_score, summary, status, request_reimbursement
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                    overall_score, summary, status,
+                    request_reimbursement, anonymous
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     int(data["teacher_id"]), int(data["user_id"]),
                     data["booking_screenshot_file_id"],
@@ -4395,6 +4416,7 @@ async def create_teacher_review(data: dict) -> Optional[int]:
                     float(data["overall_score"]),
                     data.get("summary"),
                     int(data.get("request_reimbursement") or 0),
+                    int(data.get("anonymous") or 0),
                 ),
             )
         except Exception as e:
