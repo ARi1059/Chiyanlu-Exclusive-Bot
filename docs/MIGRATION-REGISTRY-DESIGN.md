@@ -8,7 +8,7 @@
 > | **P2 baseline** | **✅ 已完成** | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 已落地 [bot/database.py](../bot/database.py)；`init_db()` 已接入；现有 9 个 `_migrate_*` **照旧执行、顺序未改**；本表当前**仅记录历史 baseline，不参与执行决策**。详见 [第八节阶段 A](#阶段-abaseline承认现状) 的实际实现。 |
 > | P3 新迁移走注册器（框架） | ✅ 已完成 | [bot/database.py](../bot/database.py) 落地 `Migration` dataclass + `MIGRATIONS = []` + `run_registered_migrations()`；`init_db()` 在 baseline 之后追加调用。**当前 `MIGRATIONS` 列表为空** —— 旧 9 个 `_migrate_*` 仍按原顺序无条件执行；run_registered_migrations 当前为 no-op。**未来**新增迁移须以 `Migration(...)` 追加到 `MIGRATIONS` 列表，hard 失败会阻断启动 |
 > | P4 healthcheck 接入 | ✅ 已完成（与 P2 同期） | [scripts/healthcheck.sh](../scripts/healthcheck.sh) 已能识别 `success=0` 行，按 kind 分级输出（hard → ERR，soft / 未知 → WARN，表不存在 → WARN 兼容口径） |
-> | P5 update.sh 接入 | ⬜ 未启动 | `update.sh` 仍只看 systemd / journalctl，不读 `schema_migrations` |
+> | P5 update.sh 接入 | ✅ 已完成 | [update.sh](../update.sh) 新增 `_check_schema_migrations_status()`（只读 SELECT/PRAGMA），完整 update 流程的服务 restart + journalctl 日志扫描通过后调用；hard failed → ERR + 提示 `./update.sh rollback` + exit 1；soft failed → WARN 不阻断；表不存在 → WARN 兼容旧库。**绝不自动执行 rollback** —— 只提示运维介入 |
 > | P6 pytest 覆盖 | ✅ 已完成（与 P2 同期） | [tests/test_schema_migrations_baseline.py](../tests/test_schema_migrations_baseline.py) 13 用例 |
 >
 > **重要：当前的 P2 实现仍处于"baseline 录入"阶段，不是完整的迁移注册器。**
@@ -334,15 +334,23 @@ WHERE success = 0;
 
 ### 阶段 D：update.sh 接入
 
-[update.sh](../update.sh) 在启动健康检查后多跑一句：
+> **✅ 此阶段已实现**（2026-05-18 commit *next*）。实际位置：
+> [update.sh](../update.sh) 顶部新增 `_check_schema_migrations_status()` 函数；
+> 完整 update 流程在 systemd 服务进入 active + `_scan_post_start_logs` 通过之后调用。
+
+[update.sh](../update.sh) 在启动健康检查后多跑一组查询：
 
 ```bash
-if sqlite3 "$DB_PATH" "SELECT 1 FROM schema_migrations WHERE success=0 AND kind='hard' LIMIT 1" \
-       | grep -q 1; then
-    err "存在未成功的 hard migration，请人工排查，或执行 ./update.sh rollback"
-    exit 1
-fi
+sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations';"
+sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM schema_migrations WHERE success=0 AND kind='hard';"
+sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM schema_migrations WHERE success=0 AND kind='soft';"
 ```
+
+行为：
+- 表不存在 → WARN，不阻断（兼容旧库 / 未启动新版本）
+- hard failed > 0 → **ERR + 内置 `./update.sh rollback` 建议 + exit 1**
+- soft failed > 0 → WARN，不阻断
+- 全 0 → OK
 
 发现 hard failed migration 时**不要**自动 rollback，而是**提示**运维人工决定。
 自动回滚一个表重建中失败的库可能比"暂停服务等人来看"更危险。
@@ -432,7 +440,7 @@ Alembic 是优秀的工具，但**对本项目成本大于收益**：
 | **P2** | 引入 `schema_migrations` 表 + baseline 写入（[阶段 A](#阶段-abaseline承认现状)） | ✅ 已完成 | 低 | 启动时多一次 INSERT |
 | **P3** | 新迁移开始走 `MIGRATIONS` 注册器（[阶段 B](#阶段-b新迁移走注册器)） | ✅ 框架已完成 | 中 | 仅影响**新增**迁移代码风格；`MIGRATIONS=[]`，无任何实际迁移变更 |
 | **P4** | `scripts/healthcheck.sh` 增加迁移状态检查（[阶段 C](#阶段-chealthchecksh-接入)） | ✅ 已完成 | 低 | 只读 |
-| **P5** | `update.sh` 检测 hard failed migration 并提示 rollback（[阶段 D](#阶段-d-updatesh-接入)） | ⬜ 未启动 | 中 | 部署流程多一步判断 |
+| **P5** | `update.sh` 检测 hard failed migration 并提示 rollback（[阶段 D](#阶段-d-updatesh-接入)） | ✅ 已完成 | 中 | 部署流程多一步判断；只读 SELECT，不自动 rollback |
 | **P6** | 补 pytest 覆盖迁移注册器逻辑（applied 集合、kind 路由、checksum 比对、幂等性） | 🟡 部分完成 | 低 | 仅测试代码 |
 
 P1 即为本文档。P2-P6 必须在确认 P1 设计被 review、达成共识后再依次推进。

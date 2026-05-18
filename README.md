@@ -438,6 +438,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
 | 迁移注册器 P2 baseline | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 落地 [bot/database.py](bot/database.py)；接入 `init_db()`；9 个 `_migrate_*` **顺序未改、行为未改**；[scripts/healthcheck.sh](scripts/healthcheck.sh) 新增 `success=0` 行的 hard/soft 分级检查；13 个 pytest 用例 | (本次) |
 | 迁移注册器 P3 runner framework | `Migration` dataclass + `MIGRATIONS = []` + `run_registered_migrations()` 落地；`init_db()` 在 baseline 之后追加调用。**当前 MIGRATIONS 为空**，旧 9 个 `_migrate_*` 仍按原顺序无条件执行；未来新增迁移须以 `Migration(...)` 追加到列表，hard 失败会 raise 让 init_db 失败便于 rollback；15 个 pytest 用例 | (本次) |
+| 迁移注册器 P5 update.sh 接入 | [update.sh](update.sh) 新增 `_check_schema_migrations_status()`（只读 SELECT/PRAGMA，复用 `$DB_PATH`，不读 .env 二次解析）。完整 update 流程在服务 restart + 日志扫描通过后调用：hard failed → ERR + **提示** `./update.sh rollback` + exit 1（不自动 rollback）；soft failed → WARN 不阻断；表不存在 → WARN 兼容旧库；12 个静态 pytest 用例锁定 SQL 只读契约与函数行为 | (本次) |
 
 ### 🟡 后续建议补充
 

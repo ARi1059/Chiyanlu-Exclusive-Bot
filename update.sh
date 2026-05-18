@@ -108,6 +108,65 @@ _check_service_unit() {
     fi
 }
 
+# 检查 schema_migrations 表中是否有 hard failed migration。
+# 只读：仅 PRAGMA / SELECT，无任何 DELETE / UPDATE / INSERT。
+# 复用顶部 $DB_PATH 变量（不重复解析 .env，不输出 BOT_TOKEN）。
+#
+# 返回：
+#   0 — 表不存在（旧库 → WARN 不阻断），或表存在且无 hard failed
+#   1 — 有 hard failed migration（caller 应 exit 1，提示 rollback）
+#
+# 输出策略：
+#   - 仅打印数量，不打印 error 字段内容（避免日志冗长 / 潜在敏感）
+#   - hard failed → [ERR] + 内置 rollback 建议
+#   - soft failed → [WARN] 不阻断
+#   - 全 0 → [ OK ]
+_check_schema_migrations_status() {
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        err "未找到 sqlite3 命令，无法检查 schema_migrations"
+        return 1
+    fi
+    if [[ ! -f "$DB_PATH" ]]; then
+        err "数据库文件不存在：$DB_PATH"
+        return 1
+    fi
+
+    local table_exists
+    table_exists=$(sqlite3 "$DB_PATH" \
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations';" \
+        2>/dev/null || true)
+    if [[ "$table_exists" != "schema_migrations" ]]; then
+        warn "schema_migrations 表不存在（旧库或尚未初始化新版本），跳过迁移失败检查"
+        return 0
+    fi
+
+    local hard_failed soft_failed
+    hard_failed=$(sqlite3 "$DB_PATH" \
+        "SELECT COUNT(*) FROM schema_migrations WHERE success = 0 AND kind = 'hard';" \
+        2>/dev/null || echo "0")
+    soft_failed=$(sqlite3 "$DB_PATH" \
+        "SELECT COUNT(*) FROM schema_migrations WHERE success = 0 AND kind = 'soft';" \
+        2>/dev/null || echo "0")
+
+    if [[ "$hard_failed" -gt 0 ]]; then
+        err "schema_migrations 存在 hard failed migration: $hard_failed"
+        err "建议操作："
+        err "  1) journalctl -u $SERVICE_NAME -n 200 --no-pager  # 详查日志"
+        err "  2) ./update.sh rollback                            # 紧急回滚"
+        return 1
+    fi
+
+    if [[ "$soft_failed" -gt 0 ]]; then
+        warn "schema_migrations 存在 soft failed migration: $soft_failed"
+    fi
+
+    if [[ "$hard_failed" -eq 0 && "$soft_failed" -eq 0 ]]; then
+        ok "schema_migrations 无失败迁移"
+    fi
+
+    return 0
+}
+
 cmd_start() {
     _check_service_unit
     if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -456,6 +515,14 @@ if _has_service_unit; then
             err "建议操作："
             err "  1) journalctl -u $SERVICE_NAME -n 200 --no-pager  # 详查日志"
             err "  2) ./update.sh rollback                            # 紧急回滚"
+            exit 1
+        fi
+
+        # 额外只读检查：查询 schema_migrations 表中是否有 hard failed migration
+        # （比扫日志关键字更精确；soft failed 只 WARN 不阻断；不自动 rollback）
+        echo
+        info "检查 schema_migrations 是否有失败迁移（只读 SELECT，不修改数据库）..."
+        if ! _check_schema_migrations_status; then
             exit 1
         fi
     else
