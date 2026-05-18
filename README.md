@@ -180,6 +180,17 @@
 - 新增 `user:favorites:refresh` 刷新；不修改 add_favorite / remove_favorite / toggle_favorite / 详情页 / 签到 / 通知逻辑
 - 实现位于 [`bot/services/user_favorites.py`](bot/services/user_favorites.py)；时间格式化复用 [`bot/services/recent_views.py`](bot/services/recent_views.py) 中的 `format_viewed_at_relative`
 
+### 20. 用户「📜 搜索历史」（user:search_history）增强
+
+- 入口复用主菜单既有「📜 搜索历史」按钮（callback `user:search_history`），不新增入口
+- 展示每条搜索：编号 / 关键词 / 结果数（payload 缺失显示 N/A）/ 搜索时间（今天 HH:mm / 昨天 HH:mm / YYYY-MM-DD HH:mm）
+- 关键词点选：保留既有 FSM-state-indexed `user:search_history:pick:<idx>` 回放机制，绕开 callback_data 长度限制
+- 新增 `user:search_history:refresh` 刷新；刷新后同步更新 FSM queries 索引以保持 pick 一致
+- 空状态引导：`[🔎 条件筛选] [🔥 热门推荐] [🔙 返回主菜单]`
+- 数据源 `user_events` 中 `event_type='search'`（私聊搜索写入），**本阶段不纳入 `group_search`**；如需纳入需要产品确认口径
+- 不写 user_events、不做清空、不修改搜索算法 / 群关键词 / 条件筛选
+- 实现位于 [`bot/services/search_history.py`](bot/services/search_history.py)
+
 ---
 
 ## 技术栈

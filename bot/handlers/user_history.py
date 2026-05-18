@@ -27,13 +27,16 @@ from bot.database import (
     get_teacher,
     get_teacher_daily_status,
     get_user,
-    get_user_search_history,
     is_checked_in,
     list_recent_teacher_views,
     list_user_favorites,
     set_user_notify_enabled,
 )
-from bot.keyboards.user_kb import user_main_menu_kb
+from bot.keyboards.user_kb import (
+    search_history_empty_kb,
+    search_history_rich_kb,
+    user_main_menu_kb,
+)
 from bot.states.user_states import SearchHistoryStates
 
 logger = logging.getLogger(__name__)
@@ -81,63 +84,85 @@ def _back_to_main_kb() -> InlineKeyboardMarkup:
     ])
 
 
-# ============ 搜索历史（Phase 7.3 §二） ============
+# ============ 搜索历史（Phase 7.3 §二，用户留存增强：富数据展示 + 刷新） ============
 
 
-def _search_history_kb(queries: list[str]) -> InlineKeyboardMarkup:
-    """每行 1 个历史词按钮（用索引避开长 callback_data）"""
-    rows: list[list[InlineKeyboardButton]] = []
-    for i, q in enumerate(queries):
-        rows.append([InlineKeyboardButton(
-            text=q,
-            callback_data=f"user:search_history:pick:{i}",
-        )])
-    rows.append([
-        InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search"),
-        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+async def _render_search_history(
+    user_id: int,
+    state: FSMContext,
+) -> tuple[str, InlineKeyboardMarkup, list[str]]:
+    """生成搜索历史的文本 + keyboard + 用于 FSM 索引的 query 列表。
 
+    被 user:search_history 与 user:search_history:refresh 共用。
+    """
+    from bot.services.search_history import (
+        get_user_search_history_detailed,
+        render_search_history,
+    )
+    try:
+        items = await get_user_search_history_detailed(user_id, limit=10)
+    except Exception as e:
+        logger.warning(
+            "get_user_search_history_detailed 失败 user=%s: %s", user_id, e,
+        )
+        items = []
 
-def _search_history_empty_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
-    ])
+    now_local = datetime.now(_tz)
+    text = render_search_history(items, generated_at=now_local, now_local=now_local)
+    if not items:
+        return text, search_history_empty_kb(), []
+    queries = [it.query for it in items]
+    return text, search_history_rich_kb(queries), queries
 
 
 @router.callback_query(F.data == "user:search_history")
 async def cb_search_history(callback: types.CallbackQuery, state: FSMContext):
-    """打开搜索历史页：从 user_events 读最近 10 条，写入 FSM 后展示按钮"""
+    """打开搜索历史页：读 user_events → 富数据渲染 → FSM 暂存原始 queries"""
     if callback.message and callback.message.chat.type != "private":
         await callback.answer("仅在私聊中可用", show_alert=True)
         return
 
     user_id = callback.from_user.id
-    try:
-        queries = await get_user_search_history(user_id, limit=10)
-    except Exception as e:
-        logger.warning("get_user_search_history 失败 user=%s: %s", user_id, e)
-        queries = []
+    text, kb, queries = await _render_search_history(user_id, state)
 
     if not queries:
-        text = "📜 最近搜索\n\n暂时没有搜索记录。可以点下方按钮开始搜索。"
-        await _edit_or_send(callback, text, _search_history_empty_kb())
+        await state.clear()
+        await _edit_or_send(callback, text, kb)
         await callback.answer()
         await _safe_log_event(user_id, "user_search_history_open", {"count": 0})
         return
 
+    # FSM 索引点选机制保持不变（cb_search_history_pick 仍可工作）
     await state.set_state(SearchHistoryStates.waiting_pick)
     await state.update_data(queries=queries)
 
-    text = (
-        "📜 最近搜索\n\n"
-        f"你最近搜索过（共 {len(queries)} 条）：\n\n"
-        "点击下方任意一条即可回放搜索。"
-    )
-    await _edit_or_send(callback, text, _search_history_kb(queries))
+    await _edit_or_send(callback, text, kb)
     await callback.answer()
     await _safe_log_event(user_id, "user_search_history_open", {"count": len(queries)})
+
+
+@router.callback_query(F.data == "user:search_history:refresh")
+async def cb_search_history_refresh(callback: types.CallbackQuery, state: FSMContext):
+    """刷新搜索历史（重新拉取 + 重绘 + 刷新 FSM queries 索引）。"""
+    if callback.message and callback.message.chat.type != "private":
+        await callback.answer("仅在私聊中可用", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    text, kb, queries = await _render_search_history(user_id, state)
+
+    # 刷新后必须同步更新 FSM 中的 queries 索引，否则 pick:<idx> 会取到旧序列
+    if queries:
+        await state.set_state(SearchHistoryStates.waiting_pick)
+        await state.update_data(queries=queries)
+    else:
+        await state.clear()
+
+    try:
+        await _edit_or_send(callback, text, kb)
+    except Exception:
+        pass
+    await callback.answer("已刷新")
 
 
 @router.callback_query(F.data.startswith("user:search_history:pick:"))

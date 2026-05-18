@@ -434,6 +434,41 @@ def favorites_empty_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def search_history_rich_kb(queries: list[str]) -> InlineKeyboardMarkup:
+    """搜索历史增强版 keyboard。
+
+    保留现有 FSM-state-indexed 点选机制（避开 callback_data 长度限制）：
+    每个历史词渲染为 [关键词] 按钮，callback_data 为 user:search_history:pick:<idx>，
+    handler (user_history.cb_search_history_pick) 不变。
+
+    末尾两行：
+        [🔄 刷新]
+        [🔙 返回主菜单]
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, q in enumerate(queries):
+        # Telegram inline button 文案上限 64 字节，超长截断
+        label = q if len(q) <= 30 else q[:29] + "…"
+        rows.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"user:search_history:pick:{i}",
+        )])
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="user:search_history:refresh"),
+        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def search_history_empty_kb() -> InlineKeyboardMarkup:
+    """搜索历史为空时的引导 keyboard"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 条件筛选", callback_data="user:filter")],
+        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
 # ============ 搜索失败推荐 / 搜索结果（Phase 2） ============
 
 
