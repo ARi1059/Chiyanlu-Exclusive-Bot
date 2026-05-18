@@ -31,11 +31,18 @@ def main_menu_kb(
     review_tasks_label = (
         f"✅ 审核处理 ({review_total})" if review_total > 0 else "✅ 审核处理"
     )
+    # Row 1：老师管理 + (仅超管) 管理员设置；非超管 Row 1 只有 老师管理 单按钮
+    row1: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="admin:teachers"),
+    ]
+    if is_super:
+        # menu:admin（@super_admin_required）已收纳进二级页 admin:admin_settings；
+        # 同时把 dashboard:audit 也收入该页（审计日志）
+        row1.append(
+            InlineKeyboardButton(text="🛡 管理员设置", callback_data="admin:admin_settings"),
+        )
     rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="admin:teachers"),
-            InlineKeyboardButton(text="👥 管理员管理", callback_data="menu:admin"),
-        ],
+        row1,
         [
             InlineKeyboardButton(text="📊 数据看板", callback_data="dashboard:enter"),
             InlineKeyboardButton(text=review_tasks_label, callback_data="admin:review_tasks"),
@@ -56,6 +63,27 @@ def main_menu_kb(
         ],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_admin_settings_kb() -> InlineKeyboardMarkup:
+    """二级「🛡 管理员设置」面板：超管专用，聚合管理员权限相关入口 + 返回后台
+
+    入口：
+        - menu:admin       👥 管理员管理（既有子菜单，含 添加 / 移除 / 列表）
+                           @super_admin_required
+        - dashboard:audit  📜 审计日志（既有，admin_audit_logs 最近 20 条）
+                           @admin_required（super 当然也是 admin，能正常访问）
+
+    本 keyboard 仅在 cb_admin_admin_settings（@super_admin_required）中被渲染，
+    所以普通管理员既看不到入口，也不会通过 callback 路径进入。
+
+    callback 含义全部保持不变；handler 仍由原模块处理。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 管理员管理", callback_data="menu:admin")],
+        [InlineKeyboardButton(text="📜 审计日志",  callback_data="dashboard:audit")],
+        [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
+    ])
 
 
 def admin_teachers_kb() -> InlineKeyboardMarkup:

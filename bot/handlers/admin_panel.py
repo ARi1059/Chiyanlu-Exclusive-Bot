@@ -41,6 +41,7 @@ from bot.keyboards.admin_kb import (
     admin_operations_kb,
     admin_settings_kb,
     admin_teachers_kb,
+    admin_admin_settings_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
@@ -1143,6 +1144,27 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
         "\n".join(lines),
         reply_markup=dashboard_audit_back_kb(),
     )
+    await callback.answer()
+
+
+# ============ 管理员设置二级菜单（admin:admin_settings） ============
+
+
+@router.callback_query(F.data == "admin:admin_settings")
+@super_admin_required
+async def cb_admin_admin_settings(callback: types.CallbackQuery):
+    """二级「🛡 管理员设置」入口：超管专用，聚合管理员权限相关入口
+
+    @super_admin_required：仅超管可访问；普通管理员既不在主菜单看到入口，
+    也无法通过 callback 进入。callback 含义全部保持不变。
+    """
+    text = (
+        "🛡 管理员设置\n\n"
+        "管理员权限与审计：\n\n"
+        "👥 管理员管理\n"
+        "📜 审计日志"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_admin_settings_kb())
     await callback.answer()
 
 
