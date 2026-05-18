@@ -364,6 +364,76 @@ def recent_views_empty_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def favorites_rich_kb(items: list, mode: str = "all") -> InlineKeyboardMarkup:
+    """我的收藏增强版 keyboard。
+
+    每位老师两行：
+        [📋 #N 艺名]
+        [👀 查看详情] [❌ 取消收藏]
+    末尾：
+        [只看今日可约 / 查看全部] ← 根据 mode 切换 label
+        [🔄 刷新] [🔙 返回主菜单]
+
+    callback：
+        - teacher:view:<id>         复用既有详情页
+        - user:favorites:rm:<id>    新增；handler 复用既有 remove_favorite + 重绘
+        - user:favorites            mode='today' 时切回 [查看全部]
+        - user:favorites:today      mode='all' 时切到 [只看今日可约]
+        - user:favorites:refresh    刷新
+        - user:main                 返回主菜单
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, it in enumerate(items, start=1):
+        teacher_id = getattr(it, "teacher_id", None) or it.get("teacher_id")
+        display_name = (
+            getattr(it, "display_name", None)
+            or it.get("display_name")
+            or "老师"
+        )
+        label = f"📋 #{i} {display_name}"
+        if len(label) > 40:
+            label = label[:39] + "…"
+        rows.append([InlineKeyboardButton(
+            text=label, callback_data=f"teacher:view:{teacher_id}",
+        )])
+        rows.append([
+            InlineKeyboardButton(
+                text="👀 查看详情",
+                callback_data=f"teacher:view:{teacher_id}",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消收藏",
+                callback_data=f"user:favorites:rm:{teacher_id}",
+            ),
+        ])
+
+    # 模式切换 + 刷新 + 返回
+    if mode == "today":
+        mode_btn = InlineKeyboardButton(
+            text="📋 查看全部", callback_data="user:favorites",
+        )
+    else:
+        mode_btn = InlineKeyboardButton(
+            text="📅 只看今日可约", callback_data="user:favorites:today",
+        )
+    rows.append([mode_btn])
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="user:favorites:refresh"),
+        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def favorites_empty_kb() -> InlineKeyboardMarkup:
+    """收藏列表为空时的引导 keyboard"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
+        [InlineKeyboardButton(text="🔎 条件搜索", callback_data="user:filter")],
+        [InlineKeyboardButton(text="👀 最近看过", callback_data="user:recent")],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
 # ============ 搜索失败推荐 / 搜索结果（Phase 2） ============
 
 

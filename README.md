@@ -170,6 +170,16 @@
 - 新增 `user:recent:refresh` 刷新；不修改 record_teacher_view / 收藏 / 签到流程
 - 实现位于 [`bot/services/recent_views.py`](bot/services/recent_views.py)
 
+### 19. 用户「⭐ 我的收藏」（user:favorites）增强
+
+- 入口复用主菜单既有「⭐ 我的收藏」按钮（callback `user:favorites`），不新增入口
+- 顶部三个计数：今日可约 / 今日未签到 / 总收藏；每条展示艺名 / 状态 / 收藏时间相对格式
+- 视图切换：`[📅 只看今日可约] / [📋 查看全部]`；分别对应 `user:favorites:today` 与 `user:favorites`
+- 每条带 `[👀 查看详情]`（复用 `teacher:view:<id>`）+ `[❌ 取消收藏]`（`user:favorites:rm:<id>`，handler 复用 `remove_favorite` DB 函数；与既有 `fav:rm_from_list` 隔离，避免新老视图相互覆盖）
+- 空记录时引导：`[🔥 热门推荐] [🔎 条件搜索] [👀 最近看过] [🔙 返回主菜单]`
+- 新增 `user:favorites:refresh` 刷新；不修改 add_favorite / remove_favorite / toggle_favorite / 详情页 / 签到 / 通知逻辑
+- 实现位于 [`bot/services/user_favorites.py`](bot/services/user_favorites.py)；时间格式化复用 [`bot/services/recent_views.py`](bot/services/recent_views.py) 中的 `format_viewed_at_relative`
+
 ---
 
 ## 技术栈

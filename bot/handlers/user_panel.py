@@ -2,7 +2,7 @@
 
 主菜单 5 个按钮:
     📚 user:today      → 今日所有开课老师（点击老师进入 teacher:view 详情页）
-    ⭐ user:favorites  → 我的收藏（老师按钮 → 详情页；❌ → 移除收藏）
+    ⭐ user:favorites  → 我的收藏（增强版：含今日可约/未签计数 + today/all 切换）
     💝 user:fav_today  → 收藏 ∩ 已签到（老师按钮 → 详情页）
     🕘 user:recent     → 最近看过（Phase 2 新增；handler 在 teacher_detail.py）
     🔍 user:search     → 进入搜索 FSM（user_search.py 接管）
@@ -21,15 +21,16 @@ from bot.database import (
     add_user_tag,
     get_checked_in_teachers,
     get_sorted_teachers,
-    list_user_favorites,
     list_user_favorites_signed_in,
     mark_user_onboarding_seen,
+    remove_favorite,
 )
 from bot.keyboards.user_kb import (
     user_main_menu_kb,
     back_to_user_main_kb,
     search_cancel_kb,
-    my_favorites_kb,
+    favorites_empty_kb,
+    favorites_rich_kb,
     teacher_detail_list_kb,
 )
 from bot.states.user_states import SearchStates
@@ -200,33 +201,81 @@ async def cb_today(callback: types.CallbackQuery):
         pass
 
 
-# ============ ⭐ 我的收藏 ============
+# ============ ⭐ 我的收藏（增强版） ============
+
+
+async def _render_favorites(user_id: int, mode: str = "all"):
+    """生成我的收藏的文本 + keyboard。
+
+    抽出便于复用给 user:favorites / :today / :refresh / :rm:<id>。
+    """
+    from bot.services.user_favorites import (
+        get_user_favorites,
+        render_user_favorites,
+    )
+    stats = await get_user_favorites(user_id, mode=mode, limit=10)
+    text = render_user_favorites(stats)
+    # 空收藏：用引导 keyboard；有收藏（即使 today 模式 0 条）用 rich keyboard
+    if (stats.total_count or 0) == 0:
+        return text, favorites_empty_kb()
+    return text, favorites_rich_kb(stats.items, mode=stats.mode)
+
 
 @router.callback_query(F.data == "user:favorites")
 async def cb_favorites(callback: types.CallbackQuery):
-    """展示当前用户的收藏列表（v2 §2.1）
+    """我的收藏主入口（mode=all，含今日可约/未签计数 + 切换按钮）。"""
+    text, kb = await _render_favorites(callback.from_user.id, mode="all")
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
 
-    keyboard 形态：每行 [老师名 · 地区 · 价格] [❌]，点击 ❌ 触发 fav:rm_from_list
-    （由 favorite.py 处理 + 刷新列表）。
+
+@router.callback_query(F.data == "user:favorites:today")
+async def cb_favorites_today(callback: types.CallbackQuery):
+    """切换到「只看今日可约」视图。"""
+    text, kb = await _render_favorites(callback.from_user.id, mode="today")
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "user:favorites:refresh")
+async def cb_favorites_refresh(callback: types.CallbackQuery):
+    """刷新当前收藏视图（保持当前 mode 不可知，复用 mode=all）。"""
+    text, kb = await _render_favorites(callback.from_user.id, mode="all")
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer("已刷新")
+
+
+@router.callback_query(F.data.startswith("user:favorites:rm:"))
+async def cb_favorites_rm(callback: types.CallbackQuery):
+    """从增强版列表中取消收藏单条；复用 remove_favorite，重绘当前视图。
+
+    与既有 fav:rm_from_list:<id>（favorite.py）行为隔离：同一 DB 操作，
+    不同重绘逻辑——避免老/新两个视图彼此覆盖。
     """
-    favorites = await list_user_favorites(callback.from_user.id, active_only=True)
-    if not favorites:
-        await callback.message.edit_text(
-            "⭐ 我的收藏\n\n你还没有收藏任何老师。\n试试 🔍 搜索老师 找一个。",
-            reply_markup=back_to_user_main_kb(),
-        )
-        await callback.answer()
+    try:
+        teacher_id = int(callback.data.rsplit(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ 无效操作", show_alert=True)
         return
 
-    text = (
-        f"⭐ 我的收藏（{len(favorites)} 位）\n\n"
-        "点击老师查看详情，点击 ❌ 取消收藏。"
-    )
-    await callback.message.edit_text(
-        text,
-        reply_markup=my_favorites_kb(favorites),
-    )
-    await callback.answer()
+    user_id = callback.from_user.id
+    try:
+        await remove_favorite(user_id, teacher_id)
+    except Exception:
+        # 取消收藏失败不阻塞 UI 重绘
+        pass
+    await callback.answer("已取消收藏")
+    text, kb = await _render_favorites(user_id, mode="all")
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass
 
 
 # ============ 💝 收藏开课（收藏 ∩ 今日签到） ============
