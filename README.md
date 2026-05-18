@@ -413,6 +413,8 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 
 ### ✅ 已完成（截至 2026-05-18）
 
+#### 代码层稳定化
+
 | 项 | 说明 | commit |
 |---|---|---|
 | `.gitignore` 敏感文件保护 | `.env` / `data/` / `backups/` / `*.db` / `.venv/` / IDE 全覆盖 + 已纳入版本控制 | `7b1be01` |
@@ -421,16 +423,26 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | `update.sh` WAL-safe 备份 | 备份用 `sqlite3 .backup` + `PRAGMA integrity_check`；rollback 还原前清 `-wal`/`-shm` 残留 | `9cc0f8b` |
 | 报销迁移半完成态自愈 | `_migrate_reimbursements_queued_status` 重写 5 个状态分支：正常已迁移 / 半完成态自愈 / 残留空 _new 清理 / 非空 _new 保护 / 标准重建（含 BEGIN IMMEDIATE 事务保护） | `99aec2b` |
 
+#### 运营 / 运维基建
+
+| 项 | 说明 | commit |
+|---|---|---|
+| 运营政策文档 | `docs/POLICY-points.md` / `POLICY-reimbursement.md` / `POLICY-lottery.md` 用户面规则 | `8661e22` |
+| 值守手册 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) 14 节：值守原则 / 常用命令 / 服务-更新-数据库-抽奖-报销-积分-评价-权限安全事故处理 / 事故记录模板 / 升级判定 | `6680e83` |
+| 健康检查脚本 | [`scripts/healthcheck.sh`](scripts/healthcheck.sh) 只读体检：基础文件 / Python / SQLite WAL & integrity_check / 核心表 / systemd / Git；存在 ERR 时退出码 1 | `6680e83` |
+| 数据库备份脚本 | [`scripts/backup.sh`](scripts/backup.sh) 独立 WAL-safe 备份 + `integrity_check`，产物 `*.manual.bak`；不影响 `update.sh` 的 `*.bak` | `6680e83` |
+| pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |
+| 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
+
 ### 🟡 后续建议补充
 
 | 类别 | 任务 | 优先级 |
 |---|---|---|
-| 运营文档 | `docs/RUNBOOK.md` 值守手册 / `POLICY-points.md` / `POLICY-reimbursement.md` / `POLICY-lottery.md` 用户面规则 | P1 |
-| 运维脚本 | `scripts/backup.sh` + `scripts/healthcheck.sh` | P2 |
-| 可观测性 | `schema_version` 表 + 编号迁移注册器 | P2 |
+| 迁移注册器实施 | 按 [`MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) §12 P2-P6 落地 `schema_migrations` 表 / baseline / healthcheck 接入 / update.sh 接入 / 注册器 pytest | P2 |
+| CI | 把 `pytest` + `compileall` + `bash -n scripts/*.sh` 接入 GitHub Actions（push / PR 触发） | P2 |
 | 清理 | scheduler 加 `prune_old_records`（user_events / audit_logs / point_transactions > 180 天） | P2 |
-| 测试 | 基础 pytest / CI（目前零自动化测试） | P2 |
 | 结构 | `bot/main.py` 拆分（30 个 router 注册 + scheduler + logging 一身多职） | P2 |
+| 异地备份 | `scripts/backup.sh` 完成本机快照后，rclone / rsync 推送到对象存储 / 第二台 VPS（[DEPLOYMENT §14.4.1](docs/DEPLOYMENT.md#1441-异地备份建议)） | P2 |
 | 死代码 | 线性 `ReviewSubmitStates` 旧 FSM、`promo_links.py` / `source_stats.py`（router 已下线） | P3 |
 
 ### ❌ 明确不做
