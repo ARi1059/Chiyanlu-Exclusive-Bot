@@ -58,6 +58,7 @@ from bot.utils.reimburse_notify import (
     format_payout_done_text,
     format_payout_waiting_token_text,
     mask_token,
+    safe_notify_user_reimburse_activated,
     safe_notify_user_reimburse_reject,
     safe_send_user_payout,
 )
@@ -810,6 +811,13 @@ async def cb_reimburse_activate(callback: types.CallbackQuery, state: FSMContext
             "user_id": reimb["user_id"],
             "amount": reimb["amount"],
         },
+    )
+    # UX-4.4：激活后通知用户"已进入审核队列"（POLICY §9.6 标注的缺失通知）
+    await safe_notify_user_reimburse_activated(
+        callback.bot,
+        user_id=int(reimb["user_id"]),
+        reimb_id=int(rid),
+        amount=int(reimb["amount"]),
     )
     await callback.answer(f"✅ 已激活 #{rid}（status → pending）", show_alert=True)
     # 刷新名单

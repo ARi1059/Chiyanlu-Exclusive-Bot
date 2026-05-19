@@ -240,6 +240,64 @@ async def safe_notify_user_reimburse_reject(
         return False
 
 
+def format_user_reimburse_activated_text(
+    *,
+    reimb_id: int,
+    amount: int,
+) -> str:
+    """给用户的"queued 激活进入审核队列"通知文案（UX-4.4）。"""
+    return (
+        f"📋 你的报销申请 #{reimb_id} 已激活进入审核队列\n\n"
+        f"金额：{amount} 元\n"
+        "管理员将在审核完成后通过本 bot 通知你。\n\n"
+        f"{POWERED_BY_FOOTER}"
+    )
+
+
+def build_user_reimburse_activated_kb() -> InlineKeyboardMarkup:
+    """构造"queued 激活"通知 CTA keyboard（UX-4.4）。
+
+    布局：
+        - [📋 我的报销]   callback=user:reimburse  含当前状态
+        - [🏠 返回主菜单] callback=user:main       兜底
+
+    与 build_user_reimburse_approved_kb 同布局；语义不同——这里是
+    "进入审核队列"中间状态通知，不是"已通过"终态。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 我的报销", callback_data="user:reimburse")],
+        [InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main")],
+    ])
+
+
+async def safe_notify_user_reimburse_activated(
+    bot: Bot,
+    *,
+    user_id: int,
+    reimb_id: int,
+    amount: int,
+) -> bool:
+    """给用户发送"queued 激活进入审核队列"通知（含 CTA 按钮），失败容错（UX-4.4）。
+
+    返回值：True 表示发送成功，False 表示失败。
+    异常被捕获并 logger.warning 后吞；queued 激活主流程不应因通知失败而 break。
+
+    注意：本函数刻意**不**写 mark_reimbursement_notified —— POLICY-reimbursement
+    §12.7 标注该字段语义为"已通过/驳回 终态通知"，激活只是中间状态切换。
+    """
+    text = format_user_reimburse_activated_text(reimb_id=reimb_id, amount=amount)
+    try:
+        kb = build_user_reimburse_activated_kb()
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=kb)
+        return True
+    except Exception as e:
+        logger.warning(
+            "safe_notify_user_reimburse_activated 失败 user=%s reimb=%s: %s",
+            user_id, reimb_id, e,
+        )
+        return False
+
+
 def build_user_reimburse_approved_kb() -> InlineKeyboardMarkup:
     """构造"报销通过 / 口令已发放"通知 CTA keyboard（UX-4.2）。
 
