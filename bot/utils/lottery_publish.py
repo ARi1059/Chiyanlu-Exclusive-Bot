@@ -18,6 +18,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot.config import config
 from bot.database import (
     count_lottery_entries,
     get_config,
@@ -33,6 +34,22 @@ logger = logging.getLogger(__name__)
 CAPTION_MAX_LEN: int = 1024
 # 计数 edit 60s debounce（spec §4.2 说"60s 后台或事件 + 限频"）
 COUNT_EDIT_DEBOUNCE_SECONDS: float = 60.0
+
+# UX-5.5：常见时区的中文显示标签（未命中时回落到 IANA 名）。
+# 仅用于 caption 渲染让用户明确开奖时间所在时区。
+_TIMEZONE_DISPLAY: dict[str, str] = {
+    "Asia/Shanghai":  "北京时间",
+    "Asia/Hong_Kong": "香港时间",
+    "Asia/Taipei":    "台北时间",
+    "Asia/Tokyo":     "东京时间",
+    "Asia/Seoul":     "首尔时间",
+    "UTC":            "UTC",
+}
+
+
+def _timezone_label() -> str:
+    """返回当前 bot 时区的中文标签（UX-5.5）。未映射的时区回落到 IANA 字符串。"""
+    return _TIMEZONE_DISPLAY.get(config.timezone, config.timezone)
 
 
 class LotteryPublishError(Exception):
@@ -148,7 +165,8 @@ def render_lottery_caption(
         lines.append(p or "(未填写)")
         lines.append("")
         lines.append(f"🏆 中奖人数：{prize_count}")
-        lines.append(f"⏰ 开奖时间：{draw_at}")
+        # UX-5.5：开奖时间显式标注时区，避免用户误读为本地时间
+        lines.append(f"⏰ 开奖时间：{draw_at}（{_timezone_label()}）")
         if cost_points > 0:
             lines.append(f"💰 参与消耗：{cost_points} 积分")
         lines.append("")
