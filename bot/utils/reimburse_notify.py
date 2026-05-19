@@ -240,6 +240,30 @@ async def safe_notify_user_reimburse_reject(
         return False
 
 
+def format_reimburse_ineligibility_hint(
+    *,
+    amount: int,
+    points: int,
+    min_pts: int,
+) -> str:
+    """返回"为什么没看到报销选项"的温和提示文案（UX-5.4）。
+
+    两种不满足资格的原因，独立文案：
+        - amount <= 0：老师价位档不在报销范围
+        - points < min_pts：积分不够门槛
+
+    调用方应**仅在 feature_enabled=True 时**调用本函数；
+    feature OFF 时应保持静默（避免暗示用户可申请）。
+    """
+    if amount <= 0:
+        return "💡 老师价位档不在报销范围（仅 8P/9P/10P 可申请）"
+    diff = max(0, min_pts - points)
+    return (
+        f"💡 当前积分 {points}（报销门槛 {min_pts}），距离还差 {diff} 分。\n"
+        "可通过提交评价等方式获得积分。"
+    )
+
+
 def format_user_reimburse_activated_text(
     *,
     reimb_id: int,

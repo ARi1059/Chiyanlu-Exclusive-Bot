@@ -839,6 +839,21 @@ async def _enter_reimbursement_step(
 
     # min_pts == 0 → 不启用门槛（任意积分都视为达标）
     if amount <= 0 or (min_pts > 0 and points < min_pts):
+        # UX-5.4：feature_enabled 时显式告知用户为什么没看到报销选项；
+        # feature OFF 时保持静默（避免暗示用户可申请）。
+        if feature_enabled:
+            try:
+                from bot.utils.reimburse_notify import (
+                    format_reimburse_ineligibility_hint,
+                )
+                hint = format_reimburse_ineligibility_hint(
+                    amount=amount, points=points, min_pts=min_pts,
+                )
+                await msg.answer(hint)
+            except Exception as e:
+                logger.warning(
+                    "[UX-5.4] reimburse ineligibility hint send failed: %s", e,
+                )
         # 不满足资格：直接进确认页（request_reimbursement=0 不创建任何记录）
         await state.update_data(request_reimbursement=0, _reimburse_amount=0)
         await _enter_confirm(msg, state, via_edit=via_edit)
