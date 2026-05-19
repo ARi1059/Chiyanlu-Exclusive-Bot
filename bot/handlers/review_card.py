@@ -520,18 +520,17 @@ async def _enter_reimburse_or_submit(
     teacher = await get_teacher(teacher_id)
     amount = compute_reimbursement_amount(teacher.get("price") if teacher else None)
 
-    min_pts_raw = await get_config("reimbursement_min_points")
-    try:
-        min_pts = int(min_pts_raw) if min_pts_raw else 5
-    except (TypeError, ValueError):
-        min_pts = 5
+    # 2026-05：统一使用 get_reimbursement_min_points helper
+    from bot.database import get_reimbursement_min_points
+    min_pts = await get_reimbursement_min_points()
 
     user_id = msg.chat.id if msg.chat else 0
     points = await get_user_total_points(int(user_id))
 
     feature_enabled = (await get_config("reimbursement_feature_enabled")) == "1"
 
-    if amount <= 0 or points < min_pts:
+    # min_pts == 0 → 不启用门槛（任意积分都视为达标）
+    if amount <= 0 or (min_pts > 0 and points < min_pts):
         await state.update_data(request_reimbursement=0, _reimburse_amount=0)
         await _finalize_submit(msg, state, via_edit=via_edit)
         return

@@ -30,6 +30,7 @@ from bot.handlers.review_submit import router as review_submit_router
 from bot.handlers.rreview_admin import router as rreview_admin_router
 from bot.handlers.subreq_admin import router as subreq_admin_router
 from bot.handlers.reimburse_subreq_admin import router as reimburse_subreq_admin_router
+from bot.handlers.reimburse_settings_admin import router as reimburse_settings_admin_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
 from bot.handlers.review_list import router as review_list_router
@@ -117,6 +118,10 @@ def register_routers(dp: Dispatcher) -> None:
     # reimburse_subreq_admin_router：报销专用必关 system:reimburse_subreq:* +
     # ReimburseSubReqAddStates FSM；命名空间与 admin:subreq:* 独立，互不影响
     dp.include_router(reimburse_subreq_admin_router)
+    # reimburse_settings_admin_router：报销门槛 + 月度池重置基线配置
+    # callback 命名空间 system:reimburse_min_points:* + system:reimburse_pool_reset:*
+    # 与 system:reimburse_pool / system:reimburse_toggle 独立，互不影响
+    dp.include_router(reimburse_settings_admin_router)
     # teacher_profile_router (Phase 9.1)：tprofile:* callback + 完整档案录入 FSM
     # 必须在 teacher_flow_router 之前注册，避免 teacher_flow 通用 message handler
     # 拦截 TeacherProfileAddStates 的输入。callback 命名空间独立 (tprofile:*)。

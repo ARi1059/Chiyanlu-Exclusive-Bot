@@ -951,6 +951,10 @@ def system_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔘 报销功能开关", callback_data="system:reimburse_toggle"),
         ],
         [
+            InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points"),
+            InlineKeyboardButton(text="🔄 重置本月报销池", callback_data="system:reimburse_pool_reset"),
+        ],
+        [
             InlineKeyboardButton(text="💰 报销必关设置", callback_data="system:reimburse_subreq"),
         ],
         [
@@ -1874,6 +1878,96 @@ def reimburse_payout_done_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="⬅️ 返回审核处理",
             callback_data="admin:review_tasks",
+        )],
+    ])
+
+
+# ============ 报销门槛配置（2026-05 新增） ============
+
+
+def reimburse_min_points_menu_kb() -> InlineKeyboardMarkup:
+    """🎚 报销门槛设置主面板：修改 + 返回系统设置。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✏️ 修改门槛",
+            callback_data="system:reimburse_min_points:edit",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回系统设置",
+            callback_data="menu:system",
+        )],
+    ])
+
+
+def reimburse_min_points_cancel_kb() -> InlineKeyboardMarkup:
+    """报销门槛 FSM 通用取消按钮（回主面板）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data="system:reimburse_min_points",
+        )],
+    ])
+
+
+def reimburse_min_points_confirm_kb() -> InlineKeyboardMarkup:
+    """确认修改报销门槛：确认 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认修改",
+                callback_data="system:reimburse_min_points:confirm",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data="system:reimburse_min_points",
+            ),
+        ],
+    ])
+
+
+# ============ 本月报销池重置（2026-05 新增） ============
+
+
+def reimburse_pool_reset_cancel_kb() -> InlineKeyboardMarkup:
+    """重置 FSM 通用取消按钮（回报销池设置）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data="system:reimburse_pool_reset",
+        )],
+    ])
+
+
+def reimburse_pool_reset_confirm_kb() -> InlineKeyboardMarkup:
+    """确认重置本月报销池：确认 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认重置",
+                callback_data="system:reimburse_pool_reset:confirm",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data="system:reimburse_pool_reset",
+            ),
+        ],
+    ])
+
+
+def reimburse_pool_reset_done_kb() -> InlineKeyboardMarkup:
+    """重置成功后的快捷动作。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="💰 返回报销池设置",
+            callback_data="system:reimburse_pool",
+        )],
+        [InlineKeyboardButton(
+            text="📊 查看报销池状态",
+            callback_data="admin:reimbursement_pool",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回系统设置",
+            callback_data="menu:system",
         )],
     ])
 

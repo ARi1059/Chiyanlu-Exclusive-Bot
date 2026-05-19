@@ -46,7 +46,13 @@ class ReimbursementPoolStats:
     monthly_pool: Optional[int] = None
     month_key: Optional[str] = None
     week_key: Optional[str] = None
+    # approved_amount_this_month 现在表示 effective_used（口径与审批月池一致）
+    # 2026-05：保留字段名供既有测试 / 渲染兼容，但语义已是 effective_used
     approved_amount_this_month: Optional[int] = None
+    # 2026-05 新增：本月原始已批准总额 + 已设置的 reset baseline，用于渲染层
+    # 展示"原始 / 基线 / 有效"三个口径
+    raw_used_this_month: Optional[int] = None
+    reset_baseline_this_month: Optional[int] = None
     remaining_pool: Optional[int] = None
     pending_count: Optional[int] = None
     queued_count: Optional[int] = None
@@ -136,14 +142,21 @@ async def get_reimbursement_pool_stats() -> ReimbursementPoolStats:
     # ---- 走主 db 连接做 SQL 聚合 ----
     db = await get_db()
     try:
-        # 本月已批准金额（用于 remaining_pool 与显示）
+        # 本月已批准金额：2026-05 改为 effective_used 口径（与审批月池校验一致）
+        # raw_used = SUM(approved); effective_used = max(0, raw - reset_baseline)
+        # 这里通过 get_reimbursement_monthly_pool_usage 拉取统一口径，避免漂移
         if stats.month_key is not None:
-            stats.approved_amount_this_month = await _scalar_int(
-                db,
-                "SELECT COALESCE(SUM(amount), 0) FROM reimbursements "
-                "WHERE month_key = ? AND status = 'approved'",
-                (stats.month_key,),
-            )
+            try:
+                from bot.database import get_reimbursement_monthly_pool_usage
+                usage = await get_reimbursement_monthly_pool_usage(stats.month_key)
+                stats.approved_amount_this_month = usage["effective_used"]
+                stats.raw_used_this_month = usage["raw_used"]
+                stats.reset_baseline_this_month = usage["reset_baseline"]
+            except Exception as e:
+                logger.warning(
+                    "get_reimbursement_monthly_pool_usage 失败 month=%s: %s",
+                    stats.month_key, e,
+                )
             stats.approved_count_this_month = await _scalar_int(
                 db,
                 "SELECT COUNT(*) FROM reimbursements "

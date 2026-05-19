@@ -6459,3 +6459,158 @@ async def remove_reimburse_required_chat(chat_id: int) -> bool:
         return False
     await set_reimburse_required_chats(new_chats)
     return True
+
+
+# ============ 报销门槛 + 报销池重置基线（2026-05 新增） ============
+#
+# 设计要点：
+#   - 报销门槛 reimbursement_min_points：复用既有 config key（之前各 handler
+#     就读这个 key，fallback 硬编码 5）；本批新增 get/set helper 统一口径，
+#     并把后台 UI 接上 set
+#   - 月度报销池"重置基线"：新增 config key
+#     reimbursement_monthly_pool_reset_baselines（JSON object，月份 → 基线明细）
+#     不动 reimbursements 表，不改任何历史记录
+#   - get_reimbursement_monthly_pool_usage(month_key) 是唯一 effective_used 口径
+#     —— admin_reimburse.py 审批月池校验 + reimbursement_pool service 状态页
+#     都必须用它
+
+REIMBURSE_MIN_POINTS_KEY = "reimbursement_min_points"
+REIMBURSE_MIN_POINTS_DEFAULT = 5
+REIMBURSE_MIN_POINTS_MAX = 100  # 上限（防止误操作输入过大值）
+
+REIMBURSE_POOL_RESET_BASELINES_KEY = "reimbursement_monthly_pool_reset_baselines"
+
+
+async def get_reimbursement_min_points() -> int:
+    """读取报销最低积分门槛；缺失 / 解析失败 / 越界 → 默认 5。
+
+    0 表示"不启用门槛"，是合法值；上限 REIMBURSE_MIN_POINTS_MAX。
+    """
+    raw = await get_config(REIMBURSE_MIN_POINTS_KEY)
+    if raw is None or raw == "":
+        return REIMBURSE_MIN_POINTS_DEFAULT
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return REIMBURSE_MIN_POINTS_DEFAULT
+    if v < 0 or v > REIMBURSE_MIN_POINTS_MAX:
+        return REIMBURSE_MIN_POINTS_DEFAULT
+    return v
+
+
+async def set_reimbursement_min_points(value: int) -> None:
+    """写入报销最低积分门槛；caller 必须先校验 0 <= value <= REIMBURSE_MIN_POINTS_MAX。"""
+    v = int(value)
+    if v < 0 or v > REIMBURSE_MIN_POINTS_MAX:
+        raise ValueError(
+            f"reimbursement_min_points must be in [0, {REIMBURSE_MIN_POINTS_MAX}], got {v}"
+        )
+    await set_config(REIMBURSE_MIN_POINTS_KEY, str(v))
+
+
+async def get_reimburse_pool_reset_baselines() -> dict:
+    """读取月度报销池重置基线 dict（月份 → {baseline_amount, reset_at, admin_id, reason}）。
+
+    config 缺失 / JSON 解析失败 / 非 dict → 返回 {} （= 无任何月份有 baseline）。
+    单项字段缺失 / 异常时跳过该项（容错）。
+    """
+    raw = await get_config(REIMBURSE_POOL_RESET_BASELINES_KEY)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        logger.warning(
+            "get_reimburse_pool_reset_baselines: JSON 解析失败 raw=%r: %s", raw, e,
+        )
+        return {}
+    if not isinstance(data, dict):
+        logger.warning(
+            "get_reimburse_pool_reset_baselines: 数据不是 dict，类型=%s",
+            type(data).__name__,
+        )
+        return {}
+    out: dict = {}
+    for month_key, entry in data.items():
+        if not isinstance(month_key, str) or not isinstance(entry, dict):
+            continue
+        try:
+            baseline_amount = int(entry.get("baseline_amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        out[month_key] = {
+            "baseline_amount": baseline_amount,
+            "reset_at": str(entry.get("reset_at") or ""),
+            "admin_id": int(entry["admin_id"]) if entry.get("admin_id") else None,
+            "reason": str(entry.get("reason") or ""),
+        }
+    return out
+
+
+async def set_reimburse_pool_reset_baseline(
+    month_key: str,
+    *,
+    baseline_amount: int,
+    admin_id: int,
+    reason: str,
+    reset_at: Optional[str] = None,
+) -> dict:
+    """新增 / 覆盖某月份的 reset baseline。
+
+    返回写入后的该月份明细 dict（含 reset_at 时间戳）。
+    caller 应在调用前已通过二次确认；本函数仅做存储，不做权限校验，
+    caller 负责 log_admin_audit。
+    """
+    import datetime as _dt
+    baselines = await get_reimburse_pool_reset_baselines()
+    entry = {
+        "baseline_amount": int(baseline_amount),
+        "reset_at": reset_at or _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "admin_id": int(admin_id),
+        "reason": str(reason or ""),
+    }
+    baselines[str(month_key)] = entry
+    await set_config(
+        REIMBURSE_POOL_RESET_BASELINES_KEY,
+        json.dumps(baselines, ensure_ascii=False),
+    )
+    return entry
+
+
+async def get_reimbursement_monthly_pool_usage(month_key: str) -> dict:
+    """**唯一** effective_used 口径——审批月池校验 + 状态页都必须用本函数。
+
+    返回 dict 含：
+        raw_used (int)         —— 本月 approved 总额（直接来自 reimbursements）
+        reset_baseline (int)   —— 本月 reset baseline（无重置则 0）
+        effective_used (int)   —— max(0, raw_used - reset_baseline)
+
+    raw_used 查询失败 → 视为 0；baseline 缺失 → 视为 0；都是容错语义。
+    """
+    raw_used: int = 0
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM reimbursements "
+            "WHERE month_key = ? AND status = 'approved'",
+            (str(month_key),),
+        )
+        row = await cursor.fetchone()
+        if row is not None and row[0] is not None:
+            raw_used = int(row[0])
+    except Exception as e:
+        logger.warning(
+            "get_reimbursement_monthly_pool_usage: raw_used 查询失败 month=%s: %s",
+            month_key, e,
+        )
+    finally:
+        await db.close()
+    baselines = await get_reimburse_pool_reset_baselines()
+    entry = baselines.get(str(month_key))
+    reset_baseline = int(entry["baseline_amount"]) if entry else 0
+    effective_used = max(0, raw_used - reset_baseline)
+    return {
+        "raw_used": raw_used,
+        "reset_baseline": reset_baseline,
+        "effective_used": effective_used,
+    }

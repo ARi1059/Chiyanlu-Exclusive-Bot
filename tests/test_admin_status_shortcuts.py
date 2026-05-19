@@ -333,13 +333,14 @@ def test_cb_admin_lottery_status_refresh_passes_stats_and_is_super():
 # ============================================================
 
 
-def test_reimbursement_pool_stats_fields_unchanged():
-    """ReimbursementPoolStats 字段集应未被本批改变（pending_count / queued_count 是
-    既有字段；本批未新增任何字段，没有触发改业务口径风险）。"""
+def test_reimbursement_pool_stats_fields_include_original_set():
+    """ReimbursementPoolStats 必须保留 UX-2 第三项第二批的字段集；
+    后续可以追加新字段（如 2026-05 reset baseline 相关），但不应删除既有字段。
+    """
     from dataclasses import fields
     from bot.services.reimbursement_pool import ReimbursementPoolStats
     field_names = {f.name for f in fields(ReimbursementPoolStats)}
-    expected = {
+    required = {
         "feature_enabled", "monthly_pool", "month_key", "week_key",
         "approved_amount_this_month", "remaining_pool",
         "pending_count", "queued_count",
@@ -347,9 +348,9 @@ def test_reimbursement_pool_stats_fields_unchanged():
         "approved_users_this_week", "approved_amount_this_week",
         "reset_vouchers_used_this_week", "generated_at",
     }
-    assert field_names == expected, (
-        f"ReimbursementPoolStats 字段集应保持不变；"
-        f"多出：{field_names - expected}；少了：{expected - field_names}"
+    missing = required - field_names
+    assert not missing, (
+        f"ReimbursementPoolStats 必须保留以下字段；缺：{missing}"
     )
 
 

@@ -639,7 +639,172 @@ admin_reimburse.cb_reimburse_approve：月池 / 周配额 / reset voucher 校验
 
 ---
 
-## 十五、相关文档
+## 十五、报销积分门槛配置（2026-05 新增）
+
+### 15.1 用途
+
+超管可在后台调整"用户申请报销前所需的最低积分门槛"。
+
+- 0 表示**不启用**积分门槛——任意积分都允许申请报销
+- 默认值 5（与历史硬编码一致；首次部署 / 配置缺失 / 解析失败均回落 5）
+- 上限 `REIMBURSE_MIN_POINTS_MAX = 100`（防止误操作输入过大值）
+
+### 15.2 数据存储
+
+复用既有 `config` 表 key：`reimbursement_min_points`（整数字符串）。
+2026-05 起统一通过 `get_reimbursement_min_points()` 读取，避免散落硬编码。
+
+### 15.3 后台入口
+
+| 路径 | callback | 权限 |
+| --- | --- | --- |
+| `/admin` → ⚙️ 系统配置 → ⚙️ 系统设置 → 🎚 报销门槛设置 | `system:reimburse_min_points` | **仅超管** |
+
+子动作：
+- `system:reimburse_min_points:edit` — 进入 FSM 输入新门槛
+- `system:reimburse_min_points:confirm` — 二次确认后写 config
+
+修改流程：输入整数 → 校验（≥0, ≤100, 整数）→ 确认页 → 写 config + `log_admin_audit(action="reimburse_min_points_set")`。
+
+### 15.4 生效范围
+
+| 触发点 | 行为 |
+| --- | --- |
+| `review_submit._enter_reimbursement_step` | 用户勾选申请报销前判断积分；不够则直接跳过报销分支 |
+| `review_card._enter_reimbursement_step` | 同上 |
+| `rreview_admin._do_approve_inner` | 评价审核通过、创建 reimbursement 前再判一次（防止用户在审核期间扣分了） |
+
+**门槛只影响"申请报销"分支**：用户提交评价本身不受影响（评价仍可提交，只是不能附带报销请求）。
+
+### 15.5 门槛 = 0 的行为
+
+代码用 `min_pts == 0 or effective_pts >= min_pts` 形式判定。0 时跳过积分检查，**任何积分**的用户都允许申请报销。
+
+---
+
+## 十六、本月报销池手动重置（2026-05 新增）
+
+### 16.1 用途
+
+超管可手动重置"本月报销池已使用额度"的计算基线，用于：
+- 月内追加预算
+- 月内重新分配预算
+- 月内做活动消耗后想"清零开始"
+- 不需要等到下个月自动重置
+
+### 16.2 关键设计原则
+
+- **不删除**历史 reimbursements 记录
+- **不修改**任何报销 status（`approved` / `pending` / `queued` / `rejected` / `cancelled` 都保持原样）
+- **不清空**notified_at / decided_at 等任何字段
+- **通过 baseline 间接重置**：当月已使用额度的计算 = `max(0, raw_used - reset_baseline)`
+- **本月范围**：只影响当前 month_key；下个月不受影响
+
+### 16.3 数据存储
+
+新 config key：`reimbursement_monthly_pool_reset_baselines`，值是 JSON object：
+
+```json
+{
+  "2026-05": {
+    "baseline_amount": 1200,
+    "reset_at": "2026-05-19 12:00:00",
+    "admin_id": 123456789,
+    "reason": "本月活动追加预算，重置报销池"
+  }
+}
+```
+
+每个月份独立一项；下月用 `month_key=2026-06` 自动建独立条目，旧月份不受新月份操作影响。
+
+### 16.4 唯一 effective_used 口径
+
+DB 层提供 **`get_reimbursement_monthly_pool_usage(month_key) -> dict`**：
+
+```python
+{
+    "raw_used": <SUM(amount) for approved>,      # 直接 SQL 查询
+    "reset_baseline": <config baseline 或 0>,     # 从 reset baselines dict
+    "effective_used": max(0, raw_used - baseline)  # 唯一审批 / 状态页口径
+}
+```
+
+**审批月池校验** ([admin_reimburse.cb_reimburse_approve](../bot/handlers/admin_reimburse.py)) 与 **报销池状态页** ([reimbursement_pool.get_reimbursement_pool_stats](../bot/services/reimbursement_pool.py)) **必须使用同一个 helper**，避免口径漂移。
+
+### 16.5 后台入口
+
+| 路径 | callback | 权限 |
+| --- | --- | --- |
+| `/admin` → ⚙️ 系统配置 → ⚙️ 系统设置 → 🔄 重置本月报销池 | `system:reimburse_pool_reset` | **仅超管** |
+
+子动作：
+- `system:reimburse_pool_reset` — 入口，展示当前 raw / baseline / effective 用量 + 提示输入原因
+- `system:reimburse_pool_reset:confirm` — 二次确认后写 config + audit
+
+### 16.6 完整流程
+
+1. 超管点 🔄 重置本月报销池
+2. Bot 展示当前 month_key / 月度池 / raw_used / 现有 baseline / effective_used / remaining
+3. Bot 提示输入重置原因（必填，≤200 字符）
+4. 超管输入原因
+5. Bot 展示最终确认页（月份 / baseline 值 / 原因）
+6. 超管点 ✅ 确认重置
+7. 写入 config + `log_admin_audit(action="reimburse_pool_reset")`
+8. 展示完成提示 + 「💰 返回报销池设置 / 📊 查看报销池状态 / ⬅️ 返回系统设置」
+
+### 16.7 audit log 字段
+
+```
+{
+    "admin_id": <超管 id>,
+    "action": "reimburse_pool_reset",
+    "target_type": "config",
+    "target_id": "reimbursement_monthly_pool_reset_baselines",
+    "detail": {
+        "month_key": "2026-05",
+        "baseline_amount": 1200,
+        "prev_effective_used": 1200,
+        "reason": "本月活动追加预算",
+        "reset_at": "2026-05-19 12:00:00"
+    }
+}
+```
+
+### 16.8 重置场景示例
+
+| 时间点 | 操作 | raw_used | baseline | effective_used |
+| --- | --- | --- | --- | --- |
+| 月初 | 无 | 0 | 0 | 0 |
+| 月中（积累了几次审批） | — | 1200 | 0 | 1200 |
+| **超管重置** | reset baseline=1200 | 1200 | 1200 | 0 |
+| 重置后再批准 500 | — | 1700 | 1200 | 500 |
+| 月末 | — | 1700 | 1200 | 500 |
+| 下月初（自动换 month_key） | — | 0 | 0 | 0 |
+
+`reimbursement_monthly_pool` 上限校验在 `cb_reimburse_approve` 中始终用 `effective_used + new_amount > pool` 判断——这意味着：
+- raw_used 已超过 pool，但 effective_used + new_amount ≤ pool → **允许批准**
+- effective_used + new_amount > pool → **拒绝批准**
+
+### 16.9 兼容性保证
+
+- 不修改 `reimbursements` 表 schema / 任何字段
+- 不修改 `compute_reimbursement_amount`
+- 不修改支付宝口令红包发放流程（`reimburse:payout:*` 全部 callback / audit / mask 都未变）
+- 不修改报销专用必关订阅（`reimbursement_required_chats` config）
+- 不修改全局必关订阅（`required_subscriptions` 表）
+- 不修改积分流水 / 抽奖 / 评价加分逻辑
+- `SCHEMA_MIGRATIONS_BASELINE` 仍 9 条；`MIGRATIONS` 仍空
+
+### 16.10 运营注意事项
+
+- **必须填写原因**：审计可追溯，禁止无原因重置
+- **重置只针对当前月份**：如果运营想"重置上个月"基本无意义（下月已经自动切换 month_key）
+- **多次重置**：可叠加——每次重置都把当时的 raw_used 设为新 baseline；常见场景是同一个月内多次"清零"
+- **想取消重置**：可通过 `set_config("reimbursement_monthly_pool_reset_baselines", "{}")` 清空，或手动改 JSON 删除某月份。但建议保留审计记录，让 baseline 留下；下月自然失效
+
+---
+
+## 十七、相关文档
 
 - 积分规则（积分门槛 / 审计）：[`POLICY-points.md`](POLICY-points.md)
 - 抽奖规则：[`POLICY-lottery.md`](POLICY-lottery.md)

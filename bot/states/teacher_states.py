@@ -83,6 +83,33 @@ class ReimbursePayoutStates(StatesGroup):
     confirming    = State()
 
 
+class ReimburseMinPointsStates(StatesGroup):
+    """报销最低积分门槛配置 FSM（2026-05 新增）。
+
+    state.data：
+        old_value (int) —— 修改前的门槛值
+        new_value (int) —— 待确认的新门槛值（0 ≤ v ≤ REIMBURSE_MIN_POINTS_MAX）
+    """
+    waiting_value = State()
+    confirming    = State()
+
+
+class ReimbursePoolResetStates(StatesGroup):
+    """本月报销池重置基线 FSM（2026-05 新增）。
+
+    设计：通过 config baseline 间接重置，不动 reimbursements 表。
+
+    state.data：
+        month_key (str)            —— 重置的月份
+        baseline_amount (int)      —— 当前 raw_used，重置后将作为 baseline
+        monthly_pool (int)         —— 月度池上限（用于展示）
+        prev_effective_used (int)  —— 重置前 effective_used（用于展示）
+        reason (str)               —— 重置原因，必填
+    """
+    waiting_reason = State()
+    confirming     = State()
+
+
 class RReviewRejectStates(StatesGroup):
     """Phase 9.4：超管驳回报告时填写自定义原因 FSM
 

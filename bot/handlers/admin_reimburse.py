@@ -26,6 +26,7 @@ from bot.database import (
     count_queued_reimbursements,
     get_config,
     get_reimbursement,
+    get_reimbursement_monthly_pool_usage,
     get_teacher,
     get_teacher_review,
     get_unused_reimbursement_reset,
@@ -36,7 +37,6 @@ from bot.database import (
     list_queued_reimbursements_paged,
     log_admin_audit,
     reject_reimbursement,
-    sum_approved_reimbursements_in_month,
 )
 from bot.keyboards.admin_kb import (
     admin_review_done_next_kb,
@@ -104,7 +104,9 @@ async def _render_reimbursement_detail(reimb: dict) -> str:
     )
     reset = await get_unused_reimbursement_reset(reimb["user_id"])
     has_reset = reset is not None
-    month_used = await sum_approved_reimbursements_in_month(reimb["month_key"])
+    # 2026-05：使用 effective_used 口径（与 ReimbursementPoolStats 一致）
+    pool_usage = await get_reimbursement_monthly_pool_usage(reimb["month_key"])
+    month_used = pool_usage["effective_used"]
     pool_raw = await get_config("reimbursement_monthly_pool")
     try:
         pool = int(pool_raw or 0)
@@ -236,14 +238,15 @@ async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext)
         await callback.answer(f"已是 {reimb['status']}", show_alert=True)
         return
 
-    # 月池校验（与旧逻辑相同，不通过则 alert 拒绝）
+    # 月池校验（2026-05：使用 effective_used = max(0, raw_used - reset_baseline)）
     pool_raw = await get_config("reimbursement_monthly_pool")
     try:
         pool = int(pool_raw or 0)
     except (TypeError, ValueError):
         pool = 0
     if pool > 0:
-        month_used = await sum_approved_reimbursements_in_month(reimb["month_key"])
+        pool_usage = await get_reimbursement_monthly_pool_usage(reimb["month_key"])
+        month_used = pool_usage["effective_used"]
         if month_used + int(reimb["amount"]) > pool:
             remaining = pool - month_used
             await callback.answer(

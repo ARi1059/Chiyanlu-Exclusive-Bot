@@ -412,13 +412,12 @@ async def _do_approve_inner(
             reimb_amount = compute_reimbursement_amount(
                 teacher_obj.get("price") if teacher_obj else None
             )
-            min_pts_raw = await get_config("reimbursement_min_points")
-            try:
-                min_pts = int(min_pts_raw) if min_pts_raw else 5
-            except (TypeError, ValueError):
-                min_pts = 5
+            # 2026-05：使用统一 get_reimbursement_min_points helper（0 = 不启用门槛）
+            from bot.database import get_reimbursement_min_points
+            min_pts = await get_reimbursement_min_points()
             effective_pts = new_total if new_total is not None else 0
-            if reimb_amount > 0 and effective_pts >= min_pts:
+            # min_pts=0 时任意积分通过；min_pts>0 时 effective_pts ≥ min_pts 才通过
+            if reimb_amount > 0 and (min_pts == 0 or effective_pts >= min_pts):
                 reimb_status = "pending" if req_flag == 1 else "queued"
                 reimb_created_id = await create_reimbursement(
                     user_id=user_id,
