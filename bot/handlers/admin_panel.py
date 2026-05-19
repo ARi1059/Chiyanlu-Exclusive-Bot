@@ -1384,15 +1384,18 @@ async def cb_admin_reimbursement_pool(callback: types.CallbackQuery):
     """报销池状态：月度额度 / 已批准 / 剩余 / pending / queued / 周通过情况
 
     只读聚合，不修改报销审核流程，不修改金额规则。
+    UX-2 第三项第二批：根据 stats 与权限渲染快捷跳转按钮。
     """
     from bot.services.reimbursement_pool import (
         get_reimbursement_pool_stats,
         render_reimbursement_pool,
     )
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
     stats = await get_reimbursement_pool_stats()
     await callback.message.edit_text(
         render_reimbursement_pool(stats),
-        reply_markup=admin_reimbursement_pool_kb(),
+        reply_markup=admin_reimbursement_pool_kb(stats, is_super=is_super),
     )
     await callback.answer()
 
@@ -1405,11 +1408,13 @@ async def cb_admin_reimbursement_pool_refresh(callback: types.CallbackQuery):
         get_reimbursement_pool_stats,
         render_reimbursement_pool,
     )
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
     stats = await get_reimbursement_pool_stats()
     try:
         await callback.message.edit_text(
             render_reimbursement_pool(stats),
-            reply_markup=admin_reimbursement_pool_kb(),
+            reply_markup=admin_reimbursement_pool_kb(stats, is_super=is_super),
         )
     except Exception:
         # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
@@ -1426,15 +1431,18 @@ async def cb_admin_lottery_status(callback: types.CallbackQuery):
     """抽奖状态：状态总览 / 待办提醒 / 最近活动
 
     只读聚合，不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑。
+    UX-2 第三项第二批：根据 stats 与权限渲染快捷跳转按钮。
     """
     from bot.services.lottery_status import (
         get_lottery_status_stats,
         render_lottery_status,
     )
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
     stats = await get_lottery_status_stats()
     await callback.message.edit_text(
         render_lottery_status(stats),
-        reply_markup=admin_lottery_status_kb(),
+        reply_markup=admin_lottery_status_kb(stats, is_super=is_super),
     )
     await callback.answer()
 
@@ -1447,11 +1455,13 @@ async def cb_admin_lottery_status_refresh(callback: types.CallbackQuery):
         get_lottery_status_stats,
         render_lottery_status,
     )
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
     stats = await get_lottery_status_stats()
     try:
         await callback.message.edit_text(
             render_lottery_status(stats),
-            reply_markup=admin_lottery_status_kb(),
+            reply_markup=admin_lottery_status_kb(stats, is_super=is_super),
         )
     except Exception:
         # 文本未变时 Telegram 会抛 message is not modified，吞掉即可

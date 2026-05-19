@@ -7,6 +7,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 if TYPE_CHECKING:
     # 仅类型提示用，避免运行时循环依赖
     from bot.services.admin_overview import AdminOverviewStats
+    from bot.services.lottery_status import LotteryStatusStats
+    from bot.services.reimbursement_pool import ReimbursementPoolStats
 
 
 # ============ 主菜单 ============
@@ -346,24 +348,86 @@ def admin_overview_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_reimbursement_pool_kb() -> InlineKeyboardMarkup:
-    """报销池状态面板：刷新 / 返回二级页 admin:dashboard（📊 运营看板）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:reimbursement_pool:refresh"),
-            InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
-        ],
+def admin_reimbursement_pool_kb(
+    stats: Optional["ReimbursementPoolStats"] = None,
+    *,
+    is_super: bool = False,
+) -> InlineKeyboardMarkup:
+    """报销池状态面板：（条件）快捷跳转 + 刷新 + 返回二级页 admin:dashboard。
+
+    UX-2 第三项第二批：当 stats 传入且 is_super=True 时，按 count > 0 渲染
+    快捷跳转：
+
+        💰 报销审核 (pending_count)  → reimburse:enter        仅超管
+        📋 报销名单 (queued_count)   → reimburse:queued:0     仅超管
+
+    每个快捷按钮带 (N) 角标；count=0 / None 时整体不显示。
+    刷新 / 返回按钮始终保留。
+
+    Args:
+        stats: 报销池统计；None 时不渲染任何快捷跳转（旧无参调用兼容）
+        is_super: 是否超管；非超管不显示任何快捷跳转
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if stats is not None and is_super:
+        pending = stats.pending_count or 0
+        if pending > 0:
+            rows.append([InlineKeyboardButton(
+                text=f"💰 报销审核 ({pending})",
+                callback_data="reimburse:enter",
+            )])
+        queued = stats.queued_count or 0
+        if queued > 0:
+            rows.append([InlineKeyboardButton(
+                text=f"📋 报销名单 ({queued})",
+                callback_data="reimburse:queued:0",
+            )])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="admin:reimbursement_pool:refresh"),
+        InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_lottery_status_kb() -> InlineKeyboardMarkup:
-    """抽奖状态面板：刷新 / 返回二级页 admin:dashboard（📊 运营看板）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:lottery_status:refresh"),
-            InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
-        ],
+def admin_lottery_status_kb(
+    stats: Optional["LotteryStatusStats"] = None,
+    *,
+    is_super: bool = False,
+) -> InlineKeyboardMarkup:
+    """抽奖状态面板：（条件）快捷跳转 + 刷新 + 返回二级页 admin:dashboard。
+
+    UX-2 第三项第二批：当 stats 传入且 is_super=True 时，按 count > 0 渲染
+    快捷跳转：
+
+        🎲 抽奖管理 (active + scheduled)  → admin:lottery   仅超管
+
+    口径：(active_count or 0) + (scheduled_count or 0)，与运营总览快捷
+    跳转保持一致；总数 = 0 / None 时整体不显示。
+    刷新 / 返回按钮始终保留。
+
+    Args:
+        stats: 抽奖状态统计；None 时不渲染任何快捷跳转（旧无参调用兼容）
+        is_super: 是否超管；非超管不显示快捷跳转
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if stats is not None and is_super:
+        active = stats.active_count or 0
+        scheduled = stats.scheduled_count or 0
+        total = active + scheduled
+        if total > 0:
+            rows.append([InlineKeyboardButton(
+                text=f"🎲 抽奖管理 ({total})",
+                callback_data="admin:lottery",
+            )])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="admin:lottery_status:refresh"),
+        InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ============ 报表设置（Phase 6.3） ============
