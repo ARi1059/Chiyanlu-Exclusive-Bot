@@ -547,12 +547,18 @@ def test_lottery_status_no_longer_in_main_menu_kb():
 
 
 def test_lottery_status_refresh_callback_present_in_kb():
-    """详情面板 keyboard 必须含 refresh + 返回主菜单。"""
+    """详情面板 keyboard：刷新 + 返回 admin:dashboard。
+
+    UX-1 第一批返回路径优化（2026-05）：返回按钮从 menu:main 调整为
+    二级页 admin:dashboard（📊 运营看板）。
+    """
     from bot.keyboards.admin_kb import admin_lottery_status_kb
     kb = admin_lottery_status_kb()
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
     assert "admin:lottery_status:refresh" in callbacks
-    assert "menu:main" in callbacks
+    assert "admin:dashboard" in callbacks
+    # UX-1：不再直接回 menu:main，走二级页 admin:dashboard
+    assert "menu:main" not in callbacks
 
 
 def test_lottery_status_callbacks_present_in_handler_source():

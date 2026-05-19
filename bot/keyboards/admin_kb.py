@@ -231,31 +231,31 @@ def admin_dashboard_kb() -> InlineKeyboardMarkup:
 
 
 def admin_overview_kb() -> InlineKeyboardMarkup:
-    """运营总览面板：刷新 / 返回主菜单"""
+    """运营总览面板：刷新 / 返回二级页 admin:dashboard（📊 运营看板）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:overview:refresh"),
-            InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main"),
+            InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
         ],
     ])
 
 
 def admin_reimbursement_pool_kb() -> InlineKeyboardMarkup:
-    """报销池状态面板：刷新 / 返回主菜单"""
+    """报销池状态面板：刷新 / 返回二级页 admin:dashboard（📊 运营看板）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:reimbursement_pool:refresh"),
-            InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main"),
+            InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
         ],
     ])
 
 
 def admin_lottery_status_kb() -> InlineKeyboardMarkup:
-    """抽奖状态面板：刷新 / 返回主菜单"""
+    """抽奖状态面板：刷新 / 返回二级页 admin:dashboard（📊 运营看板）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:lottery_status:refresh"),
-            InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main"),
+            InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
         ],
     ])
 

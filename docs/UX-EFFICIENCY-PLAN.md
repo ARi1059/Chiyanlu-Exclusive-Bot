@@ -631,6 +631,11 @@ Bot 内（**只读展示**）：
 - 不改 callback_data。
 - 分两个 PR：一个改文案，一个改返回路径。
 
+进度（2026-05）：
+
+- 第一批已落地：`📊 运营总览` / `💰 报销池状态` / `🎲 抽奖状态` 的返回按钮已从 `menu:main` 调整为 `admin:dashboard`（文案 `⬅️ 返回运营看板`）。仅修改 `bot/keyboards/admin_kb.py` 与对应测试，未触动 service / handler / 迁移。
+- 待第二批：`admin:operations` 下子页面（抽奖管理 / 积分管理）的返回路径调整。
+
 ### Sprint UX-2：管理员审核提效
 
 **目标**：让管理员审核流水化。

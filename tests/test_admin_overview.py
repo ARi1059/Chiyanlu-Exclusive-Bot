@@ -340,12 +340,18 @@ def test_admin_overview_no_longer_in_main_menu_kb():
 
 
 def test_admin_overview_refresh_callback_present_in_overview_kb():
-    """运营总览页面按钮必须含有 admin:overview:refresh 和返回。"""
+    """运营总览页面按钮：刷新 admin:overview:refresh + 返回 admin:dashboard。
+
+    UX-1 第一批返回路径优化（2026-05）：返回按钮从 menu:main 调整为
+    二级页 admin:dashboard（📊 运营看板），让管理员"看完即可回看板"。
+    """
     from bot.keyboards.admin_kb import admin_overview_kb
     kb = admin_overview_kb()
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
     assert "admin:overview:refresh" in callbacks
-    assert "menu:main" in callbacks
+    assert "admin:dashboard" in callbacks
+    # UX-1：不再直接回 menu:main，走二级页 admin:dashboard
+    assert "menu:main" not in callbacks
 
 
 def test_admin_overview_callbacks_present_in_handler_source():
