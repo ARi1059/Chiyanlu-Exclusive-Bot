@@ -5,6 +5,7 @@
     - 3 层群组冷却（group_total / group+keyword / group+user）
     - base64url 编解码（用于 /start q_<encoded> deep link）
     - 群组搜索结果短状态文案
+    - 分页 HTML 渲染（2026-05：群内必须完整 + 超链接，超长自动分页）
 
 全部纯函数或进程内状态；不依赖数据库。
 """
@@ -15,7 +16,10 @@ import base64
 import logging
 import re
 import time
+from html import escape
 from typing import Optional
+
+from bot.utils.url import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -247,30 +251,85 @@ def sort_group_search_results(
     return sorted(teachers, key=key)
 
 
+def _render_one_teacher_html(idx: int, teacher: dict) -> str:
+    """渲染单老师为 HTML 一行：
+
+        <a href="url">{idx}. {name}｜{region}｜{price}｜{status}</a>
+
+    button_url 无效时退化为纯文本（去掉 <a>，保留同样视觉布局）。
+    所有用户内容必走 html.escape（防 < > & 注入）。
+    """
+    name = teacher.get("display_name") or "?"
+    region = (teacher.get("region") or "?").strip() or "?"
+    price = (teacher.get("price") or "?").strip() or "?"
+    status = group_result_short_status(teacher)
+    inner = (
+        f"{idx}. {escape(name)}｜{escape(region)}｜"
+        f"{escape(price)}｜{escape(status)}"
+    )
+    url = normalize_url(teacher.get("button_url"))
+    if url:
+        return f'<a href="{escape(url, quote=True)}">{inner}</a>'
+    return inner
+
+
+def render_group_search_result_pages(
+    teachers: list[dict],
+    *,
+    total_count: int,
+    per_page: int = 25,
+) -> list[str]:
+    """把搜索命中分页为多段 HTML 文本，每位老师含可点击超链接。
+
+    设计要点（2026-05：群内必须完整 + 不再截断）：
+        - 不再硬截到前 5 位；遍历全部 teachers
+        - 老师名整行做超链接（指向其 button_url），无 url 时降级为纯文本
+        - 单页 per_page 条；total_count > per_page 时分多页
+        - 单条消息 < Telegram 4096 字符上限（per_page=25 × 约 100 字节/行 ≈ 2.5KB，安全）
+        - 每页头部带页码；最后一页结尾不再写"建议私聊"，由 caller 附按钮即可
+
+    Returns:
+        list[str]：至少 1 页；caller 用 ParseMode.HTML + disable_web_page_preview=True
+        逐页 send_message。当列表为空时返回 []（caller 应跳过发送）。
+    """
+    if not teachers:
+        return []
+    per_page = max(1, int(per_page))
+    total_pages = (len(teachers) + per_page - 1) // per_page
+    pages: list[str] = []
+    for page_no in range(total_pages):
+        start = page_no * per_page
+        end = start + per_page
+        chunk = teachers[start:end]
+        if total_pages == 1:
+            header = f"🔎 找到 {total_count} 位相关老师"
+        else:
+            header = (
+                f"🔎 找到 {total_count} 位相关老师"
+                f"（第 {page_no + 1}/{total_pages} 页）"
+            )
+        lines = [header, ""]
+        for offset, t in enumerate(chunk):
+            idx = start + offset + 1
+            lines.append(_render_one_teacher_html(idx, t))
+        pages.append("\n".join(lines))
+    return pages
+
+
 def render_group_search_result_text(
     teachers: list[dict],
     *,
     total_count: int,
     display_limit: int = 5,
 ) -> str:
-    """渲染群组搜索结果文本（命中 ≥2 时）"""
-    shown = teachers[:display_limit]
-    n = len(shown)
+    """兼容旧调用：返回第一页 HTML 文本。
 
-    if total_count <= display_limit:
-        header = f"🔎 找到 {total_count} 位相关老师"
-        footer = "点击下方按钮查看更多。"
-    else:
-        header = f"🔎 找到 {total_count} 位相关老师，先展示前 {n} 位："
-        footer = "结果较多，建议私聊查看更多。"
-
-    lines = [header, ""]
-    for i, t in enumerate(shown, start=1):
-        name = t.get("display_name") or "?"
-        region = (t.get("region") or "?").strip() or "?"
-        price = (t.get("price") or "?").strip() or "?"
-        status = group_result_short_status(t)
-        lines.append(f"{i}. {name}｜{region}｜{price}｜{status}")
-    lines.append("")
-    lines.append(footer)
-    return "\n".join(lines)
+    新代码请直接用 render_group_search_result_pages，可获得完整分页 + 所有老师；
+    保留本函数避免破坏既有测试 / 调用方。
+    """
+    pages = render_group_search_result_pages(
+        teachers, total_count=total_count, per_page=max(1, int(display_limit)),
+    )
+    if not pages:
+        return f"🔎 找到 {total_count} 位相关老师"
+    return pages[0]

@@ -29,12 +29,14 @@ from bot.database import (
     is_checked_in,
     search_teachers_smart_and,
 )
+from aiogram.enums import ParseMode
+
 from bot.utils.group_search import (
     check_group_cooldown,
     encode_query_for_deep_link,
     normalize_group_query,
     record_group_cooldown,
-    render_group_search_result_text,
+    render_group_search_result_pages,
     sort_group_search_results,
     split_query_tokens,
 )
@@ -474,18 +476,30 @@ async def _handle_combo_search(
     if not bot_username:
         return False, matched_count
 
-    text = render_group_search_result_text(
+    # 2026-05：群内必须完整 + 老师名带超链接，超长自动分页
+    pages = render_group_search_result_pages(
         enriched,
         total_count=matched_count,
-        display_limit=5,
+        per_page=25,
     )
     kb = _build_combo_search_kb(bot_username, raw_query, matched_count)
+    total_pages = len(pages)
 
-    try:
-        await message.reply(text, reply_markup=kb, disable_web_page_preview=True)
-    except Exception as e:
-        logger.warning("发送群组搜索列表失败: %s", e)
-        return False, matched_count
+    for idx, page_text in enumerate(pages):
+        # 仅最后一页附底部按钮（避免每页都附按钮造成重复）
+        page_kb = kb if idx == total_pages - 1 else None
+        try:
+            await message.reply(
+                page_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=page_kb,
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.warning(
+                "发送群组搜索列表失败 page=%s/%s: %s", idx + 1, total_pages, e,
+            )
+            return False, matched_count
 
     return True, matched_count
 
