@@ -58,6 +58,7 @@ from bot.utils.reimburse_notify import (
     format_payout_done_text,
     format_payout_waiting_token_text,
     mask_token,
+    safe_notify_user_reimburse_reject,
     safe_send_user_payout,
 )
 
@@ -592,17 +593,14 @@ async def on_reimburse_reject_reason(message: types.Message, state: FSMContext):
         target_id=str(rid),
         detail={"user_id": reimb["user_id"], "reason": text},
     )
-    try:
-        await message.bot.send_message(
-            chat_id=reimb["user_id"],
-            text=(
-                f"❌ 你的报销申请 #{rid} 未通过\n\n"
-                f"金额：{reimb['amount']} 元\n"
-                f"原因：{text}"
-            ),
-        )
-    except Exception as e:
-        logger.info("通知报销驳回失败 uid=%s: %s", reimb["user_id"], e)
+    # UX-4.1：驳回通知附 CTA 按钮（联系客服申诉 / 我的报销）
+    await safe_notify_user_reimburse_reject(
+        message.bot,
+        user_id=int(reimb["user_id"]),
+        reimb_id=int(rid),
+        amount=int(reimb["amount"]),
+        reason=text,
+    )
 
     await state.clear()
     await message.answer(

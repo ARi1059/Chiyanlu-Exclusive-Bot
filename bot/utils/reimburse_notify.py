@@ -5,6 +5,7 @@
     - notify_supers_reimburse_pending：报告审核通过后提醒所有超管去审核报销
     - format_user_payout_message：给用户的口令红包消息文案
     - mask_token：把口令脱敏（仅审计用），不保存完整口令到 audit log
+    - safe_notify_user_reimburse_reject（UX-4.1）：驳回通知 + CTA 按钮
 
 设计：
     - 所有通知都在 try/except 内执行；任何通知失败不应影响主流程，仅 logger.warning
@@ -17,8 +18,9 @@ import logging
 from typing import Optional
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.database import list_super_admins
+from bot.database import get_config, list_super_admins
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +171,73 @@ async def notify_supers_reimburse_pending(
                 "notify_supers_reimburse_pending 发送失败 super=%s reimb=%s: %s",
                 super_id, reimb_id, e,
             )
+
+
+def format_user_reimburse_reject_text(
+    *,
+    reimb_id: int,
+    amount: int,
+    reason: str,
+) -> str:
+    """给用户的"报销驳回"通知文案（UX-4.1）。"""
+    return (
+        f"❌ 你的报销申请 #{reimb_id} 未通过\n\n"
+        f"金额：{amount} 元\n"
+        f"原因：{reason}\n\n"
+        f"{POWERED_BY_FOOTER}"
+    )
+
+
+async def build_user_reimburse_reject_kb() -> InlineKeyboardMarkup:
+    """构造驳回通知 CTA keyboard（UX-4.1）。
+
+    布局：
+        - [📩 联系客服申诉]   url=<contact_url>     仅当 config 中存在客服链接时显示
+        - [📋 我的报销]       callback=user:reimburse   始终显示
+
+    客服链接读取优先级：reimburse_contact_url → lottery_contact_url；
+    两者均空时只显示「我的报销」一个按钮。
+    """
+    contact_url = (await get_config("reimburse_contact_url") or "").strip()
+    if not contact_url:
+        contact_url = (await get_config("lottery_contact_url") or "").strip()
+    rows: list[list[InlineKeyboardButton]] = []
+    if contact_url:
+        rows.append([
+            InlineKeyboardButton(text="📩 联系客服申诉", url=contact_url),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="📋 我的报销", callback_data="user:reimburse"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def safe_notify_user_reimburse_reject(
+    bot: Bot,
+    *,
+    user_id: int,
+    reimb_id: int,
+    amount: int,
+    reason: str,
+) -> bool:
+    """给用户发送报销驳回通知（含 CTA 按钮），失败容错（UX-4.1）。
+
+    返回值：True 表示发送成功，False 表示失败。
+    任何异常都被捕获并 logger.info，不向上抛——驳回审批主流程不应因通知失败而回滚。
+    """
+    text = format_user_reimburse_reject_text(
+        reimb_id=reimb_id, amount=amount, reason=reason,
+    )
+    try:
+        kb = await build_user_reimburse_reject_kb()
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=kb)
+        return True
+    except Exception as e:
+        logger.info(
+            "safe_notify_user_reimburse_reject 失败 user=%s reimb=%s: %s",
+            user_id, reimb_id, e,
+        )
+        return False
 
 
 async def safe_send_user_payout(
