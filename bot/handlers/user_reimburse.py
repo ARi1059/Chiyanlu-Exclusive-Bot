@@ -62,12 +62,20 @@ async def cb_user_reimburse(callback: types.CallbackQuery):
 
     # 最近 5 条
     recent = await list_user_reimbursements_paged(user_id, limit=5, offset=0)
+    # UX-8.2：显示月度池剩余 + 即将耗尽预警（剩余 < 100 元时加 ⚠️）
+    if pool > 0:
+        remaining = max(0, pool - month_total)
+        if remaining < 100:
+            pool_str = f"（池 {pool} 元，剩 {remaining} 元 ⚠️ 即将耗尽）"
+        else:
+            pool_str = f"（池 {pool} 元，剩 {remaining} 元）"
+    else:
+        pool_str = "（池不限）"
     lines = [
         "🧾 我的报销",
         "━━━━━━━━━━━━━━━",
         f"本周已通过：{week_used}/1 笔",
-        f"本月已通过总额：{month_total} 元"
-        + (f"（池 {pool} 元）" if pool > 0 else "（池不限）"),
+        f"本月已通过总额：{month_total} 元" + pool_str,
         f"累计申请：{total} 笔",
         "━━━━━━━━━━━━━━━",
     ]

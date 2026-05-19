@@ -123,8 +123,37 @@ async def _render_reimbursement_detail(reimb: dict) -> str:
         "cancelled": "🚫 已取消",
     }.get(reimb["status"], reimb["status"])
 
+    # UX-8.2：仅 pending 状态时计算决策色块（已审完的不需要提示）
+    badge_line: Optional[str] = None
+    if reimb["status"] == "pending":
+        amount = int(reimb["amount"])
+        over_pool = (
+            pool > 0 and pool_remaining is not None and amount > pool_remaining
+        )
+        week_full = week_used >= 1
+        if over_pool:
+            badge_line = (
+                f"🛑 超月池：本月仅剩 {pool_remaining} 元，"
+                f"本次需 {amount} 元（驳回 / 等月池重置）"
+            )
+        elif week_full and has_reset:
+            badge_line = (
+                "⚠️ 需消耗 voucher：本周已批 1 次，"
+                "通过将消耗预留 voucher"
+            )
+        elif week_full and not has_reset:
+            badge_line = (
+                "🛑 周配额已满：通过前需先点 [🔄 重置该用户本周]"
+            )
+        else:
+            badge_line = "✅ 可批：周配额 + 月池均满足"
+
     lines = [
         f"💰 报销申请 #{reimb['id']}",
+    ]
+    if badge_line:
+        lines.append(badge_line)
+    lines += [
         "━━━━━━━━━━━━━━━",
         f"📌 状态：{status_label}",
         f"🙋 申请者：{user_line}",
