@@ -1047,6 +1047,20 @@ async def on_lottery_edit_value(message: types.Message, state: FSMContext):
             logger.warning("refresh caption 失败 lid=%s: %s", lid, e)
             side_effects.append("⚠️ 频道刷新异常")
 
+    # UX-8.4：entry_cost_points 变更（active 期间）→ 提示运营在频道公告说明
+    # 与 POLICY-lottery §11.6 公平性承诺一致：避免"先参与的用户不知情就被改价"
+    if field == "entry_cost_points" and lottery.get("status") == "active":
+        try:
+            old_v = int(old_value or 0)
+            new_v = int(new_value or 0)
+        except (TypeError, ValueError):
+            old_v, new_v = 0, 0
+        if old_v != new_v:
+            side_effects.append(
+                f"⚠️ 参与积分变更（{old_v} → {new_v}），"
+                "建议在频道发公告说明（已参与用户不受影响，新参与按新值）"
+            )
+
     await state.clear()
     lines = [
         f"✅ {meta['label']} 已更新",

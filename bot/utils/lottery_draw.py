@@ -143,10 +143,19 @@ async def run_lottery_draw(bot: Bot, lottery_id: int) -> dict:
     # 私聊通知中奖者（L.3.2 实现）
     notified = await _try_notify_winners(bot, winners, lottery)
 
+    # UX-8.4：未中奖通知（受 lottery_notify_losers config 控制，默认 off）
+    losers_notified = 0
+    try:
+        losers_notified = await _try_notify_losers(bot, entries, winners, lottery)
+    except Exception as e:
+        logger.warning(
+            "_try_notify_losers 异常 lid=%s: %s", lottery_id, e,
+        )
+
     logger.info(
         "run_lottery_draw lid=%s 完成：winners=%d/total=%d, "
-        "result_msg=%s, notified=%d",
-        lottery_id, len(winners), total, result_msg_id, notified,
+        "result_msg=%s, notified=%d, losers_notified=%d",
+        lottery_id, len(winners), total, result_msg_id, notified, losers_notified,
     )
     return {
         "winners_count": len(winners),
@@ -366,4 +375,67 @@ async def _try_notify_winners(
         ok = await _notify_one_winner(bot, w, lottery, contact_url)
         if ok:
             n += 1
+    return n
+
+
+async def _try_notify_losers(
+    bot: Bot, all_entries: list[dict], winners: list[dict], lottery: dict,
+) -> int:
+    """UX-8.4：对未中奖的参与者发简短通知（默认 off）。
+
+    控制开关：config["lottery_notify_losers"] == "1" 时启用；
+    缺省 / "0" / 任意其它值 → 视为 off（POLICY-lottery §9.4：代码原本
+    不通知未中奖者；本批落地为"运营可在面板开启"）。
+
+    1/s 节流避免 Telegram flood；TelegramForbiddenError 单条失败不阻塞其它；
+    使用 disable_notification=True 减少打扰。
+
+    Returns: 成功发送的未中奖通知数（开关 off 时返回 0）。
+    """
+    from bot.database import get_config
+    raw = await get_config("lottery_notify_losers")
+    enabled = (raw or "").strip() == "1"
+    if not enabled:
+        return 0
+    winner_user_ids = {int(w["user_id"]) for w in winners}
+    losers = [
+        e for e in all_entries
+        if int(e["user_id"]) not in winner_user_ids
+    ]
+    if not losers:
+        return 0
+    name = lottery.get("name", "?")
+    text = (
+        f"😢 抱歉，「{name}」未中奖\n"
+        "感谢你的参与，期待下次活动 🍀"
+    )
+    n = 0
+    import asyncio as _asyncio
+    from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+    for idx, loser in enumerate(losers):
+        try:
+            await bot.send_message(
+                chat_id=int(loser["user_id"]),
+                text=text,
+                disable_notification=True,
+            )
+            n += 1
+        except TelegramForbiddenError as e:
+            logger.info(
+                "notify_loser skip uid=%s lid=%s (Forbidden): %s",
+                loser.get("user_id"), lottery.get("id"), e,
+            )
+        except TelegramBadRequest as e:
+            logger.warning(
+                "notify_loser BadRequest uid=%s lid=%s: %s",
+                loser.get("user_id"), lottery.get("id"), e,
+            )
+        except Exception as e:
+            logger.warning(
+                "notify_loser 失败 uid=%s lid=%s: %s",
+                loser.get("user_id"), lottery.get("id"), e,
+            )
+        # 1/s 节流；最后一条不必再 sleep
+        if idx < len(losers) - 1:
+            await _asyncio.sleep(1.0)
     return n
