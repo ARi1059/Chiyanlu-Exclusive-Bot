@@ -27,6 +27,7 @@ from bot.database import (
 )
 from bot.keyboards.user_kb import (
     user_main_menu_kb,
+    user_find_kb,
     back_to_user_main_kb,
     search_cancel_kb,
     favorites_empty_kb,
@@ -74,6 +75,33 @@ async def cb_user_main(callback: types.CallbackQuery, state: FSMContext):
             "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？",
             reply_markup=user_main_menu_kb(),
         )
+    await callback.answer()
+
+
+# ============ 🔎 找老师 二级页（UX-3 第一批） ============
+
+
+@router.callback_query(F.data == "user:find")
+async def cb_user_find(callback: types.CallbackQuery, state: FSMContext):
+    """🔎 找老师 二级页：聚合 4 个找老师入口
+
+    本 handler 仅渲染聚合页；4 个入口的 callback（user:hot / user:today /
+    user:filter / user:search_history）含义未变，仍由各自原 handler 处理。
+    """
+    await state.clear()
+    text = (
+        "🔎 找老师\n\n"
+        "请选择找老师方式：\n\n"
+        "🔥 热门推荐：查看当前热门老师\n"
+        "📚 今天能约谁：查看今日可约老师\n"
+        "🔎 按条件找：按地区 / 价格 / 标签筛选\n"
+        "📜 搜索历史:快速复用最近搜索"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=user_find_kb())
+    except Exception:
+        # 上一条若是图片或不可编辑 → 退化为新发一条
+        await callback.message.answer(text, reply_markup=user_find_kb())
     await callback.answer()
 
 

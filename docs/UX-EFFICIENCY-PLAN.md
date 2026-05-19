@@ -678,6 +678,10 @@ Bot 内（**只读展示**）：
 - 不删除旧入口（双跑期 ≥ 1 个 Sprint）。
 - 不修改老师详情页核心信息。
 
+进度（2026-05）：
+
+- 第一批已落地：新增「🔎 找老师」分组入口，聚合 4 个找老师 callback（`user:hot` / `user:today` / `user:filter` / `user:search_history`）。`user_main_menu_kb` 新增独占首行 `[🔎 找老师 → user:find]`，原 13 个一级按钮位置完全保留；新增 `user_find_kb()` 二级页含 4 个收纳按钮 + 返回主菜单；新增 `cb_user_find` handler；**刻意不收纳**留存类（`user:favorites` / `user:recent`）、直接搜索（`user:search`）与其它一级 callback。旧入口进入双跑观察期。契约由 `tests/test_user_find_menu.py`（20 个 test）集中锁定。零修改 service / 搜索算法 / 收藏 / 老师详情 / 群关键词 / start_router / schema。
+
 ### Sprint UX-4：老师签到提效
 
 **目标**：让老师每日签到极快达成。

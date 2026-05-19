@@ -13,6 +13,7 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
     """普通用户私聊主菜单
 
     布局：
+        [🔎 找老师]                       ← UX-3 第一批新增独占首行（聚合 4 个找老师入口）
         [📚 今天能约谁] [🎯 帮我推荐]
         [🔎 按条件找]   [🔥 热门推荐]
         [⭐ 我的收藏]   [🕘 最近看过]
@@ -21,9 +22,17 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         [💰 我的积分]   [🧾 我的报销]
         [📝 写评价]                       ← 2026-05-18 新增独占一行
 
+    UX-3 第一批（2026-05）：新增「🔎 找老师」聚合入口（user:find），点击进入
+    二级页（user_find_kb）含 热门 / 今日 / 按条件找 / 搜索历史 四个入口；
+    旧 4 个 callback（user:hot / user:today / user:filter / user:search_history）
+    在主菜单原位完全保留，进入双跑观察期。
+
     callback 复用既有命名空间。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔎 找老师", callback_data="user:find"),
+        ],
         [
             InlineKeyboardButton(text="📚 今天能约谁", callback_data="user:today"),
             InlineKeyboardButton(text="🎯 帮我推荐", callback_data="user:recommend"),
@@ -50,6 +59,42 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📝 写评价", callback_data="user:write_review"),
+        ],
+    ])
+
+
+def user_find_kb() -> InlineKeyboardMarkup:
+    """UX-3 第一批：「🔎 找老师」二级页 keyboard。
+
+    聚合 4 个找老师入口（仅复用既有 callback，不引入新 callback）：
+
+        🔥 热门推荐   → user:hot              当前热门老师
+        📚 今天能约谁 → user:today            今日可约老师
+        🔎 按条件找   → user:filter           地区 / 价格 / 标签筛选
+        📜 搜索历史   → user:search_history   快速复用最近搜索
+
+    返回按钮：⬅️ 返回主菜单 → user:main
+
+    刻意不收纳的入口（保留在主菜单一级位置）：
+        - ⭐ 我的收藏 / 🕘 最近看过       留存类，不应藏入二级
+        - 🔍 直接搜索                       最直觉入口，不应藏入二级
+        - 🎯 帮我推荐 / 💝 收藏开课         与找老师互补，本批不动
+        - 🔔 我的提醒                       个人通知类，与找老师无关
+
+    本 keyboard 仅做聚合视图，不引入新业务逻辑；4 个收纳 callback 仍由
+    各自原 handler 处理（user:hot / user:today / user:filter / user:search_history）。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot"),
+            InlineKeyboardButton(text="📚 今天能约谁", callback_data="user:today"),
+        ],
+        [
+            InlineKeyboardButton(text="🔎 按条件找", callback_data="user:filter"),
+            InlineKeyboardButton(text="📜 搜索历史", callback_data="user:search_history"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ 返回主菜单", callback_data="user:main"),
         ],
     ])
 
