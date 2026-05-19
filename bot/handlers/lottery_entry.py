@@ -32,6 +32,7 @@ from bot.database import (
     get_user_total_points,
     log_admin_audit,
 )
+from bot.utils.lottery_publish import build_lottery_channel_url
 from bot.utils.lottery_subscribe_check import (
     check_user_subscribed_to_chats,
     render_lottery_subscribe_links_kb,
@@ -152,6 +153,30 @@ async def try_enter_lottery(
     return "ok", {"entry_id": entry_id, "lottery_id": lid, "cost_deducted": cost}
 
 
+def _build_lottery_entry_ok_kb(lottery: dict) -> types.InlineKeyboardMarkup:
+    """UX-4.5：抽奖参与成功 CTA keyboard。
+
+    布局（按 config + 字段动态决定）：
+        - [🎁 抽奖详情]    url=t.me/c/<x>/<msg_id>   仅当 channel_chat_id+msg_id 存在
+        - [🏠 返回主菜单]  callback=user:main         兜底
+
+    "我的抽奖" 按钮等 UX-6.1（抽奖中心）落地后再加入；本批不放避免死按钮。
+    """
+    rows: list[list[types.InlineKeyboardButton]] = []
+    url = build_lottery_channel_url(
+        lottery.get("channel_chat_id"),
+        lottery.get("channel_msg_id"),
+    )
+    if url:
+        rows.append([
+            types.InlineKeyboardButton(text="🎁 抽奖详情", url=url),
+        ])
+    rows.append([
+        types.InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main"),
+    ])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def _render_entry_result(
     bot: Bot,
     user_id: int,
@@ -172,7 +197,9 @@ async def _render_entry_result(
             f"开奖时间：{lottery.get('draw_at')}\n"
             "请耐心等待，中奖会私聊通知。"
         )
-        await bot.send_message(chat_id=chat_id, text=text)
+        # UX-4.5：参与成功补 CTA keyboard（抽奖详情 URL + 主菜单）
+        kb = _build_lottery_entry_ok_kb(lottery)
+        await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb)
         return
     if status == "not_active":
         s = extra.get("status", "?")

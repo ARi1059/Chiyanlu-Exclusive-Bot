@@ -47,6 +47,33 @@ class LotteryPublishError(Exception):
         self.reason = reason
 
 
+def build_lottery_channel_url(
+    channel_chat_id: Optional[int],
+    channel_msg_id: Optional[int],
+) -> Optional[str]:
+    """构造抽奖帖的频道消息 URL（UX-4.5）。
+
+    Telegram 私有频道（supergroup-style chat_id，以 -100 开头）使用
+    `https://t.me/c/<trimmed>/<msg_id>` 格式，对已加入频道的用户可见。
+
+    返回值：
+        - 构造好的 URL（chat_id 是 -100 开头且 msg_id 非空）
+        - None（参数不全 / chat_id 不符合 -100 格式 / 公开频道暂未支持）
+
+    注意：不查 username（避免发 API 请求）；公开频道的 t.me/<username>/<id>
+    形式留待未来如需要再支持。
+    """
+    if not channel_chat_id or not channel_msg_id:
+        return None
+    s = str(channel_chat_id)
+    if not s.startswith("-100"):
+        return None
+    trimmed = s[4:]
+    if not trimmed:
+        return None
+    return f"https://t.me/c/{trimmed}/{int(channel_msg_id)}"
+
+
 async def _resolve_publish_channel() -> Optional[int]:
     """取 publish_channel_id 第一个 chat_id（与每日 14:00 publish 共用）"""
     raw = await get_config("publish_channel_id")
