@@ -50,8 +50,11 @@ router = Router(name="admin_review")
 # 渲染辅助
 # ========================================================
 
-def _format_request_detail(req: dict, idx: int, total: int) -> str:
-    """构造单条待审核请求的展示文本"""
+def _format_request_detail(
+    req: dict, idx: int, total: int,
+    *, viewers_hint: str | None = None,
+) -> str:
+    """构造单条待审核请求的展示文本（UX-7.4：可选附"近期查看者"提示行）。"""
     field_name = req["field_name"]
     label = FIELD_LABELS.get(field_name, field_name)
     teacher_name = req.get("teacher_display_name") or f"ID {req['teacher_id']}"
@@ -74,8 +77,13 @@ def _format_request_detail(req: dict, idx: int, total: int) -> str:
             "  · 驳回 → 回滚到原值"
         )
 
+    # UX-7.4：在顶部加"近期查看者"提示（如果有）
+    header = f"📝 待审核 [{idx}/{total}]\n"
+    if viewers_hint:
+        header += f"{viewers_hint}\n"
+
     return (
-        f"📝 待审核 [{idx}/{total}]\n"
+        f"{header}"
         f"━━━━━━━━━━━━━━━\n"
         f"老师: {teacher_name} (ID: {req['teacher_id']})\n"
         f"字段: {label}\n"
@@ -94,6 +102,7 @@ async def _show_request_at_index(
     """在管理员后台编辑当前消息，展示 pending[index]
 
     pending 已按 created_at DESC 排序（最新在前）。
+    UX-7.4：渲染前查近期查看者 + 写入 review_view audit（真实 admin_id）。
     """
     if not pending or index < 0 or index >= len(pending):
         await callback.message.edit_text(
@@ -103,7 +112,38 @@ async def _show_request_at_index(
         return
 
     req = pending[index]
-    text = _format_request_detail(req, index + 1, len(pending))
+    admin_id = callback.from_user.id
+
+    # UX-7.4：查近 5 分钟内其他管理员对该请求的 view 记录（排除自己）
+    viewers_hint: str | None = None
+    try:
+        from bot.database import list_recent_target_viewers
+        from bot.utils.review_viewers_hint import format_recent_viewers_hint
+        viewers = await list_recent_target_viewers(
+            target_type="edit_request",
+            target_id=req["id"],
+            action="review_view",
+            exclude_admin_id=admin_id,
+        )
+        viewers_hint = format_recent_viewers_hint(viewers)
+    except Exception as e:
+        logger.warning("[UX-7.4] viewer hint 查询失败 req=%s: %s", req["id"], e)
+
+    # UX-7.4：写入查看 audit（用真实 admin_id，便于其它管理员的并发提示）
+    try:
+        await log_admin_audit(
+            admin_id=admin_id,
+            action="review_view",
+            target_type="edit_request",
+            target_id=req["id"],
+            detail={"idx": index, "total": len(pending)},
+        )
+    except Exception:
+        pass
+
+    text = _format_request_detail(
+        req, index + 1, len(pending), viewers_hint=viewers_hint,
+    )
     kb = review_action_kb(
         req["id"],
         has_prev=index > 0,

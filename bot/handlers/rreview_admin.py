@@ -241,7 +241,11 @@ async def cmd_cancel_custom_delta(message: types.Message, state: FSMContext):
         await message.answer("✅ 当前没有待审核的报告。", reply_markup=rreview_empty_kb())
         return
     await _cleanup_messages(message.bot, message.chat.id, state)
-    await _send_review_at_index(message.bot, message.chat.id, state, pending, idx)
+    # UX-7.4：传入真实 admin_id，避免 audit log 写入 placeholder 0
+    await _send_review_at_index(
+        message.bot, message.chat.id, state, pending, idx,
+        viewer_admin_id=message.from_user.id if message.from_user else None,
+    )
 
 
 @router.message(RReviewApprovePointsStates.waiting_custom_delta, F.text)
@@ -561,7 +565,11 @@ async def _do_approve_inner(
         # 清理掉。这里我们只 send 不 store 也可——下次翻页时拿不到旧 msg_ids，listener 自动跳过
         # 简单做法：拿不到 state 就传 callback.state；自定义 FSM 调到这里 state 实际仍可用
         return
-    await _send_review_at_index(bot, chat_id, state, pending, 0)
+    # UX-7.4：reviewer_id 是 _do_approve_inner 的形参，含真实 admin_id
+    await _send_review_at_index(
+        bot, chat_id, state, pending, 0,
+        viewer_admin_id=reviewer_id,
+    )
 
 
 async def _alert(callback: Optional[types.CallbackQuery], text: str):
@@ -597,7 +605,11 @@ async def _show_review_at_index(
         await callback.bot.delete_message(chat_id=chat_id, message_id=callback.message.message_id)
     except Exception:
         pass
-    await _send_review_at_index(callback.bot, chat_id, state, pending, idx)
+    # UX-7.4：传入真实 admin_id 修复 audit placeholder + 启用 viewer hint
+    await _send_review_at_index(
+        callback.bot, chat_id, state, pending, idx,
+        viewer_admin_id=callback.from_user.id if callback.from_user else None,
+    )
     await callback.answer()
 
 
@@ -607,8 +619,18 @@ async def _send_review_at_index(
     state: FSMContext,
     pending: list[dict],
     idx: int,
+    *,
+    viewer_admin_id: Optional[int] = None,
 ):
-    """发送媒体组 + 文字消息 + 操作按钮，并把 msg_ids 暂存 state 供下次清理"""
+    """发送媒体组 + 文字消息 + 操作按钮，并把 msg_ids 暂存 state 供下次清理。
+
+    UX-7.4 增量：
+      - 新参数 viewer_admin_id：当前正在审核的管理员 id；
+        缺省 None 时回退到旧行为（audit log 写 admin_id=0，不查 viewer hint），
+        但所有 caller 都应传入真实值（避免 placeholder 引入死数据）。
+      - 渲染前查近期其它管理员的 view 记录，附"近期查看者"提示行到 _render_review_text。
+      - audit log 用真实 admin_id 写入 rreview_view 事件（既有 placeholder 修复）。
+    """
     if idx < 0 or idx >= len(pending):
         try:
             await bot.send_message(
@@ -647,8 +669,23 @@ async def _send_review_at_index(
         )
         return
 
+    # UX-7.4：查近 5 分钟内其他管理员对该 review 的 view 记录
+    viewers_hint: Optional[str] = None
+    try:
+        from bot.database import list_recent_target_viewers
+        from bot.utils.review_viewers_hint import format_recent_viewers_hint
+        viewers = await list_recent_target_viewers(
+            target_type="teacher_review",
+            target_id=review["id"],
+            action="rreview_view",
+            exclude_admin_id=viewer_admin_id,
+        )
+        viewers_hint = format_recent_viewers_hint(viewers)
+    except Exception as e:
+        logger.warning("[UX-7.4] viewer hint 查询失败 review=%s: %s", review["id"], e)
+
     # 文字 + 操作按钮
-    text = _render_review_text(review, teacher, idx, total)
+    text = _render_review_text(review, teacher, idx, total, viewers_hint=viewers_hint)
     text_msg_id: Optional[int] = None
     try:
         msg = await bot.send_message(
@@ -672,10 +709,10 @@ async def _send_review_at_index(
         rreview_current_idx=idx,
     )
 
-    # 记录"查看"行为（首次进入此条）
+    # UX-7.4 修复：记录"查看"行为（用真实 admin_id 替换原 placeholder 0）
     try:
         await log_admin_audit(
-            admin_id=0,  # placeholder：本辅助没有 admin_id；具体由 cb_rreview_enter 已记录
+            admin_id=int(viewer_admin_id) if viewer_admin_id else 0,
             action="rreview_view",
             target_type="teacher_review",
             target_id=str(review["id"]),
@@ -714,8 +751,11 @@ def _anonymize_user_id(uid: int) -> str:
     return "*" * (len(s) - 4) + s[-4:]
 
 
-def _render_review_text(review: dict, teacher: Optional[dict], idx: int, total: int) -> str:
-    """按 spec §4.2 渲染审核详情文字"""
+def _render_review_text(
+    review: dict, teacher: Optional[dict], idx: int, total: int,
+    *, viewers_hint: Optional[str] = None,
+) -> str:
+    """按 spec §4.2 渲染审核详情文字（UX-7.4：可选附"近期查看者"提示行）。"""
     teacher_name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
     rating_meta = {r["key"]: r for r in REVIEW_RATINGS}.get(
         review.get("rating"), {"emoji": "❓", "label": review.get("rating", "?")},
@@ -723,8 +763,11 @@ def _render_review_text(review: dict, teacher: Optional[dict], idx: int, total: 
     rating_str = f"{rating_meta['emoji']} {rating_meta['label']}"
     summary = review.get("summary") or "（未填写）"
     anon_tag = " · 🕵 匿名提交" if int(review.get("anonymous") or 0) == 1 else ""
-    lines = [
-        f"[报告审核 {idx + 1}/{total}]",
+    lines: list[str] = [f"[报告审核 {idx + 1}/{total}]"]
+    # UX-7.4：第一行紧跟近期查看者提示（避免被其它字段挤下去）
+    if viewers_hint:
+        lines.append(viewers_hint)
+    lines.extend([
         f"老师：{teacher_name}",
         f"评价者：{_anonymize_user_id(review['user_id'])} (uid: {_anonymize_user_id(review['user_id'])}){anon_tag}",
         f"提交：{review.get('created_at', '?')}",
@@ -740,7 +783,7 @@ def _render_review_text(review: dict, teacher: Optional[dict], idx: int, total: 
         f"环境 {review.get('score_environment', '?')}",
         f"📝 过程：{summary}",
         "────────────────────",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -918,7 +961,11 @@ async def cmd_cancel_custom_reason(message: types.Message, state: FSMContext):
         await message.answer("✅ 当前没有待审核的报告。", reply_markup=rreview_empty_kb())
         return
     await _cleanup_messages(message.bot, message.chat.id, state)
-    await _send_review_at_index(message.bot, message.chat.id, state, pending, idx)
+    # UX-7.4：传入真实 admin_id，避免 audit log 写入 placeholder 0
+    await _send_review_at_index(
+        message.bot, message.chat.id, state, pending, idx,
+        viewer_admin_id=message.from_user.id if message.from_user else None,
+    )
 
 
 @router.message(RReviewRejectStates.waiting_custom_reason, F.text)
@@ -1044,4 +1091,8 @@ async def _do_reject(
         await bot.send_message(chat_id=chat_id, text=ack_text)
     except Exception:
         pass
-    await _send_review_at_index(bot, chat_id, state, pending, 0)
+    # UX-7.4：reviewer_id 是 _do_reject 的形参，含真实 admin_id
+    await _send_review_at_index(
+        bot, chat_id, state, pending, 0,
+        viewer_admin_id=reviewer_id,
+    )

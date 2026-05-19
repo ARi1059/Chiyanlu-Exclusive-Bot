@@ -2193,6 +2193,55 @@ async def log_admin_audit(
         pass
 
 
+async def list_recent_target_viewers(
+    target_type: str,
+    target_id,
+    *,
+    action: str,
+    since_seconds: int = 300,
+    exclude_admin_id: Optional[int] = None,
+    limit: int = 5,
+) -> list[dict]:
+    """查近 N 秒内有谁查看（action='*_view'）某条 target（UX-7.4）。
+
+    用于"详情页顶部提示：@adminX 几分钟前查看过此条"——避免多管理员并发审核同一条。
+
+    Args:
+        target_type: admin_audit_logs.target_type 字段（如 "edit_request" /
+            "teacher_review" / "reimbursement"）
+        target_id:   admin_audit_logs.target_id（内部转 str 对比）
+        action:      仅 *_view 类 action 计入查看（如 "rreview_view" / "review_view"）
+        since_seconds: 时间窗口（秒）；默认 5 分钟
+        exclude_admin_id: 排除"自己"（避免显示"我刚才看过自己"）
+        limit: 最多返回 N 条；按 created_at DESC，每个 admin 只取最新一条
+
+    Returns:
+        list[dict] 每条含 admin_id / created_at；为空表示近期无其他人查看。
+    """
+    target_id_str = str(target_id)
+    db = await get_db()
+    try:
+        # 子查询：先按 admin_id 取每个的最新一条；外层按时间排序限制 limit
+        sql = (
+            "SELECT admin_id, MAX(created_at) AS created_at "
+            "FROM admin_audit_logs "
+            "WHERE action = ? AND target_type = ? AND target_id = ? "
+            "AND admin_id != 0 "
+            "AND created_at >= datetime('now', ?) "
+        )
+        args: list = [action, target_type, target_id_str, f"-{int(since_seconds)} seconds"]
+        if exclude_admin_id is not None:
+            sql += "AND admin_id != ? "
+            args.append(int(exclude_admin_id))
+        sql += "GROUP BY admin_id ORDER BY created_at DESC LIMIT ?"
+        args.append(int(limit))
+        cur = await db.execute(sql, args)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
 async def get_dashboard_metrics(today_str: str, since_str: str) -> dict:
     """聚合管理员看板所需统计
 
