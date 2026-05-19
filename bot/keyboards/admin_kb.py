@@ -951,6 +951,9 @@ def system_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔘 报销功能开关", callback_data="system:reimburse_toggle"),
         ],
         [
+            InlineKeyboardButton(text="💰 报销必关设置", callback_data="system:reimburse_subreq"),
+        ],
+        [
             InlineKeyboardButton(text="🏷 档案品牌名",   callback_data="system:brand_name"),
             InlineKeyboardButton(text="📡 档案品牌频道", callback_data="system:brand_channels"),
         ],
@@ -1739,3 +1742,117 @@ def reimburse_queued_item_kb(reimb_id: int) -> InlineKeyboardMarkup:
                                  callback_data="reimburse:queued:0"),
         ],
     ])
+
+
+# ============ 报销专用必关频道 / 群组（与全局 subreq 分离） ============
+
+
+def reimburse_subreq_menu_kb(chats: list[dict]) -> InlineKeyboardMarkup:
+    """报销专用必关设置主面板。
+
+    布局：
+        每项一行：[🗑 删除：{display_name}] → system:reimburse_subreq:delete:<idx>
+        [➕ 添加频道 / 群组] → system:reimburse_subreq:add
+        [🔄 刷新] → system:reimburse_subreq
+        [⬅️ 返回系统设置] → menu:system
+
+    chats 为空时只显示 add / 刷新 / 返回三个按钮。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, c in enumerate(chats):
+        name = c.get("display_name") or str(c.get("chat_id"))
+        text = f"🗑 删除：{name}"
+        if len(text) > 60:
+            text = text[:57] + "…"
+        rows.append([InlineKeyboardButton(
+            text=text,
+            callback_data=f"system:reimburse_subreq:delete:{idx}",
+        )])
+    rows.append([InlineKeyboardButton(
+        text="➕ 添加频道 / 群组",
+        callback_data="system:reimburse_subreq:add",
+    )])
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="system:reimburse_subreq"),
+        InlineKeyboardButton(text="⬅️ 返回系统设置", callback_data="menu:system"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reimburse_subreq_remove_confirm_kb(idx: int) -> InlineKeyboardMarkup:
+    """删除二次确认。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⚠️ 确认删除",
+                callback_data=f"system:reimburse_subreq:confirm_delete:{idx}",
+            ),
+            InlineKeyboardButton(
+                text="🔙 取消",
+                callback_data="system:reimburse_subreq",
+            ),
+        ],
+    ])
+
+
+def reimburse_subreq_cancel_kb() -> InlineKeyboardMarkup:
+    """添加 FSM 通用取消按钮。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data="system:reimburse_subreq",
+        )],
+    ])
+
+
+def reimburse_subreq_add_confirm_kb() -> InlineKeyboardMarkup:
+    """添加确认页：确认添加 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认添加",
+                callback_data="system:reimburse_subreq:add_confirm",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data="system:reimburse_subreq",
+            ),
+        ],
+    ])
+
+
+def reimburse_subreq_user_gate_kb(
+    missing: list[dict],
+    *,
+    context: str = "submit",
+) -> InlineKeyboardMarkup:
+    """用户报销准入拦截页 keyboard。
+
+    Args:
+        missing: 用户尚未加入的必关项列表
+        context: "submit" 或 "card"——表示触发自评价提交 FSM 还是评价卡片 FSM；
+                 重新检查时通过此值回到正确的入口
+
+    布局：
+        若 missing 项有 invite_link，每项一行 [📢 加入：{display_name}] URL
+        [✅ 我已加入，重新检查] → reimburse:subreq:recheck:<context>
+        [⬅️ 返回] → reimburse:subreq:back:<context>
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for it in missing:
+        link = (it.get("invite_link") or "").strip()
+        if link.startswith("http://") or link.startswith("https://"):
+            name = it.get("display_name") or "未命名频道"
+            label = f"📢 加入：{name}"
+            if len(label) > 60:
+                label = label[:57] + "…"
+            rows.append([InlineKeyboardButton(text=label, url=link)])
+    rows.append([InlineKeyboardButton(
+        text="✅ 我已加入，重新检查",
+        callback_data=f"reimburse:subreq:recheck:{context}",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="⬅️ 返回",
+        callback_data=f"reimburse:subreq:back:{context}",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

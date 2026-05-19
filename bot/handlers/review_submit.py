@@ -868,11 +868,48 @@ async def _enter_reimbursement_step(
     await _show(msg, text, review_reimbursement_choice_kb(amount), via_edit=via_edit)
 
 
+async def _render_reimburse_subreq_gate(
+    callback: types.CallbackQuery,
+    missing: list[dict],
+    *,
+    context: str,
+) -> None:
+    """渲染报销准入拦截页（用户未加入必关频道 / 群组）。"""
+    from bot.keyboards.admin_kb import reimburse_subreq_user_gate_kb
+    lines = ["💰 报销资格校验", "", "申请报销前，请先加入以下频道 / 群组："]
+    for i, it in enumerate(missing, start=1):
+        name = it.get("display_name") or str(it.get("chat_id"))
+        lines.append(f"{i}. {name}")
+    lines.append("")
+    lines.append("完成后点击下方按钮重新检查。")
+    text = "\n".join(lines)
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=reimburse_subreq_user_gate_kb(missing, context=context),
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            reply_markup=reimburse_subreq_user_gate_kb(missing, context=context),
+        )
+
+
 @router.callback_query(
     F.data == "review:reimburse_yes",
     ReviewSubmitStates.waiting_reimbursement_choice,
 )
 async def cb_review_reimburse_yes(callback: types.CallbackQuery, state: FSMContext):
+    # 报销准入校验：仅当用户勾选「✅ 申请报销」时触发
+    # 配置为空 → 直接放行；用户未加入任意 enabled 项 → 渲染拦截页
+    from bot.utils.reimburse_subreq import check_user_subscribed_for_reimburse
+    ok, missing = await check_user_subscribed_for_reimburse(
+        callback.bot, callback.from_user.id,
+    )
+    if not ok:
+        await _render_reimburse_subreq_gate(callback, missing, context="submit")
+        await callback.answer()
+        return
     await state.update_data(request_reimbursement=1)
     await _enter_confirm(callback.message, state, via_edit=True)
     await callback.answer("已勾选申请报销")
@@ -886,6 +923,45 @@ async def cb_review_reimburse_no(callback: types.CallbackQuery, state: FSMContex
     await state.update_data(request_reimbursement=0)
     await _enter_confirm(callback.message, state, via_edit=True)
     await callback.answer("已选择不申请")
+
+
+# ============ 报销准入拦截页 callbacks ============
+# 用户在拦截页点「✅ 我已加入，重新检查」/「⬅️ 返回」
+# 重新检查通过 → 继续走 cb_review_reimburse_yes 主体逻辑
+# 返回 → 视为"不申请报销"（cb_review_reimburse_no 等效），继续到确认页
+
+@router.callback_query(
+    F.data == "reimburse:subreq:recheck:submit",
+    ReviewSubmitStates.waiting_reimbursement_choice,
+)
+async def cb_reimburse_subreq_recheck_submit(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """评价 FSM 路径：用户加入必关后点重新检查。"""
+    from bot.utils.reimburse_subreq import check_user_subscribed_for_reimburse
+    ok, missing = await check_user_subscribed_for_reimburse(
+        callback.bot, callback.from_user.id,
+    )
+    if not ok:
+        await _render_reimburse_subreq_gate(callback, missing, context="submit")
+        await callback.answer("仍有未加入的频道 / 群组", show_alert=True)
+        return
+    await state.update_data(request_reimbursement=1)
+    await _enter_confirm(callback.message, state, via_edit=True)
+    await callback.answer("✅ 已通过校验，已勾选申请报销")
+
+
+@router.callback_query(
+    F.data == "reimburse:subreq:back:submit",
+    ReviewSubmitStates.waiting_reimbursement_choice,
+)
+async def cb_reimburse_subreq_back_submit(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """评价 FSM 路径：用户从拦截页返回 → 视为不申请报销。"""
+    await state.update_data(request_reimbursement=0)
+    await _enter_confirm(callback.message, state, via_edit=True)
+    await callback.answer("已选择不申请报销")
 
 
 # ============ 确认页 ============

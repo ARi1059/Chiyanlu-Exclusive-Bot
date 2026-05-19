@@ -6349,3 +6349,113 @@ async def consume_reimbursement_reset(reset_id: int, reimb_id: int) -> bool:
         return db.total_changes > 0
     finally:
         await db.close()
+
+
+# ============ 报销专用必关频道 / 群组（与全局 subreq 分离） ============
+#
+# 数据存储：复用既有 config 表，key = "reimbursement_required_chats"
+# 值格式：JSON array of dict，字段 chat_id / chat_type / display_name / invite_link / enabled
+# 设计要点：
+#   - 与全局 required_subscriptions 表完全独立，互不影响
+#   - 解析失败 / key 不存在 → 返回空列表（=报销流程不拦截）
+#   - 写操作必须由 caller 配套 log_admin_audit（在 handler 层调用）
+#   - 不新增表 / 不新增 schema migration（spec 优先 config）
+
+REIMBURSE_REQUIRED_CHATS_KEY = "reimbursement_required_chats"
+
+
+async def get_reimburse_required_chats() -> list[dict]:
+    """读取报销专用必关频道 / 群组配置。
+
+    返回 list[dict]，每条含：chat_id(int) / chat_type / display_name /
+    invite_link / enabled(bool)。
+
+    config 缺失、JSON 解析失败、字段类型异常时一律返回空列表（=不拦截报销）。
+    """
+    raw = await get_config(REIMBURSE_REQUIRED_CHATS_KEY)
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        logger.warning(
+            "get_reimburse_required_chats: JSON 解析失败 raw=%r: %s", raw, e,
+        )
+        return []
+    if not isinstance(data, list):
+        logger.warning(
+            "get_reimburse_required_chats: 数据不是 list，类型=%s", type(data).__name__,
+        )
+        return []
+    result: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            chat_id = int(item.get("chat_id"))
+        except (TypeError, ValueError):
+            continue
+        result.append({
+            "chat_id": chat_id,
+            "chat_type": str(item.get("chat_type") or ""),
+            "display_name": str(item.get("display_name") or ""),
+            "invite_link": str(item.get("invite_link") or ""),
+            "enabled": bool(item.get("enabled", True)),
+        })
+    return result
+
+
+async def set_reimburse_required_chats(chats: list[dict]) -> None:
+    """覆盖写入报销专用必关频道 / 群组配置（caller 应在调用前做去重 / 校验）。"""
+    serializable = [
+        {
+            "chat_id": int(c["chat_id"]),
+            "chat_type": str(c.get("chat_type") or ""),
+            "display_name": str(c.get("display_name") or ""),
+            "invite_link": str(c.get("invite_link") or ""),
+            "enabled": bool(c.get("enabled", True)),
+        }
+        for c in chats
+    ]
+    await set_config(
+        REIMBURSE_REQUIRED_CHATS_KEY,
+        json.dumps(serializable, ensure_ascii=False),
+    )
+
+
+async def add_reimburse_required_chat(
+    chat_id: int,
+    chat_type: str,
+    display_name: str,
+    invite_link: str,
+) -> bool:
+    """新增一项报销必关配置；如 chat_id 已存在则返回 False（不覆盖）。
+
+    成功写入返回 True。caller 负责调用 log_admin_audit 记录动作。
+    """
+    chats = await get_reimburse_required_chats()
+    if any(c["chat_id"] == int(chat_id) for c in chats):
+        return False
+    chats.append({
+        "chat_id": int(chat_id),
+        "chat_type": str(chat_type or ""),
+        "display_name": str(display_name or ""),
+        "invite_link": str(invite_link or ""),
+        "enabled": True,
+    })
+    await set_reimburse_required_chats(chats)
+    return True
+
+
+async def remove_reimburse_required_chat(chat_id: int) -> bool:
+    """删除指定 chat_id 的报销必关项。
+
+    返回 True 表示有条目被删除；False 表示原列表中没有匹配项。
+    caller 负责调用 log_admin_audit 记录动作。
+    """
+    chats = await get_reimburse_required_chats()
+    new_chats = [c for c in chats if c["chat_id"] != int(chat_id)]
+    if len(new_chats) == len(chats):
+        return False
+    await set_reimburse_required_chats(new_chats)
+    return True

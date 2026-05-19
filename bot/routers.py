@@ -29,6 +29,7 @@ from bot.handlers.review_card import router as review_card_router
 from bot.handlers.review_submit import router as review_submit_router
 from bot.handlers.rreview_admin import router as rreview_admin_router
 from bot.handlers.subreq_admin import router as subreq_admin_router
+from bot.handlers.reimburse_subreq_admin import router as reimburse_subreq_admin_router
 from bot.handlers.start_router import router as start_router
 from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
 from bot.handlers.review_list import router as review_list_router
@@ -113,6 +114,9 @@ def register_routers(dp: Dispatcher) -> None:
     # 必须在 admin_panel 之后（系统设置子菜单已含 admin:subreq 入口），
     # SubReqAddStates FSM 保证文字消息仅在状态中被截获
     dp.include_router(subreq_admin_router)
+    # reimburse_subreq_admin_router：报销专用必关 system:reimburse_subreq:* +
+    # ReimburseSubReqAddStates FSM；命名空间与 admin:subreq:* 独立，互不影响
+    dp.include_router(reimburse_subreq_admin_router)
     # teacher_profile_router (Phase 9.1)：tprofile:* callback + 完整档案录入 FSM
     # 必须在 teacher_flow_router 之前注册，避免 teacher_flow 通用 message handler
     # 拦截 TeacherProfileAddStates 的输入。callback 命名空间独立 (tprofile:*)。

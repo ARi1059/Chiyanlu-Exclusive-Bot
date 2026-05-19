@@ -562,11 +562,45 @@ async def _enter_reimburse_or_submit(
         await msg.answer(text, reply_markup=review_card_reimburse_kb(amount))
 
 
+async def _render_card_reimburse_subreq_gate(
+    callback: types.CallbackQuery,
+    missing: list[dict],
+) -> None:
+    """卡片 FSM 路径：渲染报销准入拦截页。"""
+    from bot.keyboards.admin_kb import reimburse_subreq_user_gate_kb
+    lines = ["💰 报销资格校验", "", "申请报销前，请先加入以下频道 / 群组："]
+    for i, it in enumerate(missing, start=1):
+        name = it.get("display_name") or str(it.get("chat_id"))
+        lines.append(f"{i}. {name}")
+    lines.append("")
+    lines.append("完成后点击下方按钮重新检查。")
+    text = "\n".join(lines)
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=reimburse_subreq_user_gate_kb(missing, context="card"),
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            reply_markup=reimburse_subreq_user_gate_kb(missing, context="card"),
+        )
+
+
 @router.callback_query(
     F.data == "card:reimburse:yes",
     CardReviewStates.waiting_reimbursement_choice,
 )
 async def cb_card_reimburse_yes(callback: types.CallbackQuery, state: FSMContext):
+    # 报销准入校验：仅在用户勾选「✅ 申请报销」时触发
+    from bot.utils.reimburse_subreq import check_user_subscribed_for_reimburse
+    ok, missing = await check_user_subscribed_for_reimburse(
+        callback.bot, callback.from_user.id,
+    )
+    if not ok:
+        await _render_card_reimburse_subreq_gate(callback, missing)
+        await callback.answer()
+        return
     await state.update_data(request_reimbursement=1)
     await _finalize_submit(callback.message, state, via_edit=True)
     await callback.answer("已勾选申请报销")
@@ -580,6 +614,42 @@ async def cb_card_reimburse_no(callback: types.CallbackQuery, state: FSMContext)
     await state.update_data(request_reimbursement=0)
     await _finalize_submit(callback.message, state, via_edit=True)
     await callback.answer("已选择不申请")
+
+
+# ============ 报销准入拦截页 callbacks（卡片 FSM 路径） ============
+
+@router.callback_query(
+    F.data == "reimburse:subreq:recheck:card",
+    CardReviewStates.waiting_reimbursement_choice,
+)
+async def cb_reimburse_subreq_recheck_card(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """卡片 FSM 路径：重新检查。"""
+    from bot.utils.reimburse_subreq import check_user_subscribed_for_reimburse
+    ok, missing = await check_user_subscribed_for_reimburse(
+        callback.bot, callback.from_user.id,
+    )
+    if not ok:
+        await _render_card_reimburse_subreq_gate(callback, missing)
+        await callback.answer("仍有未加入的频道 / 群组", show_alert=True)
+        return
+    await state.update_data(request_reimbursement=1)
+    await _finalize_submit(callback.message, state, via_edit=True)
+    await callback.answer("✅ 已通过校验，已勾选申请报销")
+
+
+@router.callback_query(
+    F.data == "reimburse:subreq:back:card",
+    CardReviewStates.waiting_reimbursement_choice,
+)
+async def cb_reimburse_subreq_back_card(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """卡片 FSM 路径：从拦截页返回 → 视为不申请。"""
+    await state.update_data(request_reimbursement=0)
+    await _finalize_submit(callback.message, state, via_edit=True)
+    await callback.answer("已选择不申请报销")
 
 
 async def _finalize_submit(

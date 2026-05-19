@@ -49,6 +49,20 @@ class SubReqAddStates(StatesGroup):
     waiting_invite_link  = State()
 
 
+class ReimburseSubReqAddStates(StatesGroup):
+    """报销专用必关频道 / 群组添加 FSM（与全局 SubReqAddStates 隔离）。
+
+    state.data 累加：
+        waiting_chat_id      → chat_id (int) + chat_type / display_name 来自 precheck
+        waiting_display_name → display_name (str)，允许覆盖 precheck 默认值
+        waiting_invite_link  → invite_link (str)，需以 http(s)://t.me/ 开头
+    最终通过 system:reimburse_subreq:add_confirm 二次确认后写入 config。
+    """
+    waiting_chat_id      = State()
+    waiting_display_name = State()
+    waiting_invite_link  = State()
+
+
 class RReviewRejectStates(StatesGroup):
     """Phase 9.4：超管驳回报告时填写自定义原因 FSM
 
