@@ -304,6 +304,19 @@ async def step_reimburse_payout_token(
     message: types.Message, state: FSMContext,
 ):
     """收到超管输入的口令 → 校验 → 展示确认页。"""
+    # 群组中粘贴的支付口令会被其他成员看到，必须在任何业务校验、日志、
+    # FSM 写入之前拒绝；本守卫块刻意不读取消息正文以免下游路径意外回显口令。
+    if message.chat.type != "private":
+        try:
+            await message.reply(
+                "⚠️ 报销支付口令必须在私聊里发送，请在私聊里重新粘贴口令。",
+            )
+        except Exception as e:
+            logger.warning(
+                "[reimburse] payout token guard reply failed (chat_id=%s): %s",
+                message.chat.id, e,
+            )
+        return
     token = (message.text or "").strip()
     data = await state.get_data()
     rid = data.get("reimbursement_id")

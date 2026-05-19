@@ -509,3 +509,48 @@ def test_reimburse_payout_states_importable():
     # 与 ReimburseRejectStates 隔离
     from bot.states.teacher_states import ReimburseRejectStates
     assert ReimbursePayoutStates is not ReimburseRejectStates
+
+
+# ============================================================
+# UX-10.1 支付口令 chat type 守卫
+# ============================================================
+
+
+def test_payout_token_handler_rejects_non_private_chat():
+    """step_reimburse_payout_token 必须在读取 token 前拒绝非私聊消息。
+
+    超管若在群里粘贴口令，消息已被群成员看到；守卫至少要保证
+    bot 端不再继续处理（避免 confirming page 进一步回显 token）
+    且给出提示，让超管意识到泄露风险。
+    """
+    import bot.handlers.admin_reimburse as mod
+    src = _src(mod)
+    idx = src.find("async def step_reimburse_payout_token(")
+    assert idx > 0
+    end = src.find("\n@router", idx + 1)
+    body = src[idx:end if end > 0 else idx + 3000]
+
+    # 1. 必须有 chat.type 守卫
+    assert 'message.chat.type != "private"' in body, "需 chat.type 守卫"
+
+    # 2. 守卫必须在 token 读取之前（用精确的代码 anchor 避免命中注释）
+    guard_pos = body.find('message.chat.type != "private"')
+    token_read_pos = body.find("token = (message.text")
+    assert 0 < guard_pos < token_read_pos, (
+        "chat.type 守卫必须早于 token 读取，避免下游路径意外回显 token"
+    )
+
+    # 3. 守卫必须在 state 写入 / 校验之前
+    state_write_pos = body.find("state.update_data")
+    set_state_pos = body.find("state.set_state")
+    if state_write_pos > 0:
+        assert guard_pos < state_write_pos
+    if set_state_pos > 0:
+        assert guard_pos < set_state_pos
+
+    # 4. 守卫命中后必须给提示（避免静默 → 超管不知道发错地方）
+    guard_block = body[guard_pos:guard_pos + 800]
+    assert "私聊" in guard_block, "守卫命中后应明确提示需在私聊发送"
+
+    # 5. 守卫必须 return（不能 fallthrough）
+    assert "return" in guard_block
