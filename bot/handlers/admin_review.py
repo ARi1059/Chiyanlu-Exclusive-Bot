@@ -123,6 +123,44 @@ async def _find_index_of_request(
     return 0
 
 
+async def _notify_teacher_approved(
+    bot,
+    teacher_id: int,
+    field_name: str,
+    new_value: str | None,
+):
+    """通过时给老师私聊推送通知（UX-5.2，与 _notify_teacher_rejected 对称）。
+
+    补 UX-FEATURE-ITERATION-2026-05-19 §6 痛点 8「审核通过老师收不到通知」。
+    photo_file_id 字段刻意不展示 file_id 字符串（用户视角是乱码）；
+    其它文字字段展示新值（已生效）。
+
+    失败仅 logger.warning，不影响调用方主流程（audit log / next 推送）。
+    """
+    label = FIELD_LABELS.get(field_name, field_name)
+
+    if field_name == "photo_file_id":
+        # approve_edit_request 已把新 file_id 写入 teachers 表
+        value_line = "新图片已生效。"
+    else:
+        value_repr = new_value if new_value else "（空）"
+        value_line = f"当前生效值：{value_repr}"
+
+    text = (
+        f"✅ 你的资料修改已通过审核\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"字段：{label}\n"
+        f"{value_line}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"感谢配合！"
+    )
+
+    try:
+        await bot.send_message(chat_id=teacher_id, text=text)
+    except Exception as e:
+        logger.warning("通知老师 %s 通过失败: %s", teacher_id, e)
+
+
 async def _notify_teacher_rejected(
     bot,
     teacher_id: int,
@@ -273,6 +311,14 @@ async def cb_review_approve(callback: types.CallbackQuery):
                 "field": approved["field_name"] if approved else None,
             },
         )
+        # UX-5.2：通过审核后通知老师（与既有 _notify_teacher_rejected 对称）
+        if approved:
+            await _notify_teacher_approved(
+                callback.bot,
+                int(approved["teacher_id"]),
+                str(approved["field_name"]),
+                approved.get("new_value"),
+            )
         await callback.answer("✅ 已通过")
 
     # 刷新列表，跳到下一条（保持索引同一位置，因为当前条已离开 pending 队列）
