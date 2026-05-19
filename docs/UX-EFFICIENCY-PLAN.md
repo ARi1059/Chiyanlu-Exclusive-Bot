@@ -655,6 +655,10 @@ Bot 内（**只读展示**）：
 - 不修改 `admin_audit_logs` 写入逻辑。
 - 不暴露超管功能给普通管理员。
 
+进度（2026-05）：
+
+- 第一项已落地：审核处理 badge 优化。`main_menu_kb` 综合 badge（超管=老师资料+评价+报销 pending；普通管理员=老师资料 pending；queued **不计入** 主菜单总数）与 `admin_review_tasks_kb` 各按钮独立 badge（老师资料 / 评价 / 报销 / queued）均已在前序 commit 实现；caller wiring（`_build_main_menu_kb` 与 `cb_admin_review_tasks` 把全部 pending count 传给 keyboard）以及 0 不显示括号、非超管不可见超管入口等所有契约由新增的 `tests/test_admin_review_tasks_badges.py`（14 个 test）集中锁定。本项**未触动**任何审核业务 handler / service / 迁移。
+
 ### Sprint UX-3：用户找老师提效
 
 **目标**：让用户更快进入"找老师"主流程。
