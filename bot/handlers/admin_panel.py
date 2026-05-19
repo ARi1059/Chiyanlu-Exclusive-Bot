@@ -39,6 +39,7 @@ from bot.keyboards.admin_kb import (
     admin_dashboard_kb,
     admin_review_tasks_kb,
     admin_operations_kb,
+    admin_reimburse_config_kb,
     admin_settings_kb,
     admin_teachers_kb,
     admin_admin_settings_kb,
@@ -1226,6 +1227,59 @@ async def cb_admin_settings(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=admin_settings_kb(is_super=is_super),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:reimburse_config")
+@admin_required
+async def cb_admin_reimburse_config(callback: types.CallbackQuery):
+    """二级「💰 报销配置」聚合入口（UX-6.2，仅超管可访问）。
+
+    聚合原来散在 admin:settings 主面板 + menu:system 子面板的 5 个报销配置入口；
+    渲染时附带 4 个关键状态总览（功能开关 / 积分门槛 / 月度池 / queued 名单数）。
+
+    callback handler 全部复用既有 system:reimburse_*，本聚合页仅是导航入口。
+    """
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
+    if not is_super:
+        await callback.answer("⚠️ 仅超管可访问报销配置", show_alert=True)
+        return
+
+    # 关键状态总览（4 项）
+    feature_enabled = (await get_config("reimbursement_feature_enabled")) == "1"
+    try:
+        from bot.database import get_reimbursement_min_points
+        min_pts = await get_reimbursement_min_points()
+    except Exception:
+        min_pts = 0
+    pool_raw = await get_config("reimbursement_monthly_pool") or "0"
+    try:
+        pool = int(pool_raw)
+    except (TypeError, ValueError):
+        pool = 0
+    try:
+        from bot.database import count_queued_reimbursements
+        queued_count = await count_queued_reimbursements()
+    except Exception:
+        queued_count = 0
+
+    lines = [
+        "💰 报销配置",
+        "━━━━━━━━━━━━━━━",
+        f"功能状态：{'✅ 开启' if feature_enabled else '❌ 关闭'}",
+        f"积分门槛：{min_pts} 分" + ("（未启用）" if min_pts == 0 else ""),
+        f"月度池上限：{pool} 元" if pool > 0 else "月度池上限：不限",
+        f"待激活名单：{queued_count} 条",
+        "━━━━━━━━━━━━━━━",
+        "",
+        "请选择要修改的配置项：",
+    ]
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=admin_reimburse_config_kb(),
     )
     await callback.answer()
 

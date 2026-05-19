@@ -146,10 +146,42 @@ def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚙️ 系统设置",        callback_data="menu:system")],
     ]
     if is_super:
-        rows.append([InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool")])
-        rows.append([InlineKeyboardButton(text="🔛 报销功能开关", callback_data="system:reimburse_toggle")])
+        # UX-6.2：旧两按钮一行排列 + 新增聚合入口（旧 callback 双跑期保留兼容）
+        rows.append([
+            InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool"),
+            InlineKeyboardButton(text="🔛 报销功能开关", callback_data="system:reimburse_toggle"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="💰 报销配置（聚合 5 项）", callback_data="admin:reimburse_config"),
+        ])
     rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
+    """二级「💰 报销配置」聚合面板（UX-6.2，仅超管可见）。
+
+    把原来散在 admin:settings 主面板 + menu:system 子面板的 5 个报销配置入口
+    收纳到一个聚合页：
+
+        - 🔛 报销功能开关       system:reimburse_toggle
+        - 💰 报销池设置         system:reimburse_pool
+        - 🔄 重置本月报销池     system:reimburse_pool_reset
+        - 🎚 报销门槛设置       system:reimburse_min_points
+        - 📋 报销必关设置       system:reimburse_subreq
+
+    callback 全部复用既有 system:reimburse_* 命名空间，所有 handler 不动；
+    旧入口（admin:settings 主面板的两个 super-only 按钮 + menu:system 内的 5 项）
+    保留至少一个 Sprint 双跑期不删除（PLAN §1.2）。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔛 报销功能开关", callback_data="system:reimburse_toggle")],
+        [InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool")],
+        [InlineKeyboardButton(text="🔄 重置本月报销池", callback_data="system:reimburse_pool_reset")],
+        [InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points")],
+        [InlineKeyboardButton(text="📋 报销必关设置", callback_data="system:reimburse_subreq")],
+        [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
+    ])
 
 
 def admin_operations_kb() -> InlineKeyboardMarkup:
