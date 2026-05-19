@@ -90,11 +90,19 @@ async def cb_user_reimburse(callback: types.CallbackQuery):
     lines.append("")
     lines.append("💡 提交评价时若满足积分门槛 + 老师价位 > 0，可勾选申请报销。")
 
+    # UX-6.4：附「📩 联系客服申诉」入口（仅当 config 配置了 contact url）
+    from bot.utils.reimburse_notify import get_reimburse_contact_url
+    contact_url = await get_reimburse_contact_url()
+
     text = "\n".join(lines)
     try:
-        await callback.message.edit_text(text, reply_markup=user_reimburse_menu_kb())
+        await callback.message.edit_text(
+            text, reply_markup=user_reimburse_menu_kb(contact_url=contact_url),
+        )
     except Exception:
-        await callback.message.answer(text, reply_markup=user_reimburse_menu_kb())
+        await callback.message.answer(
+            text, reply_markup=user_reimburse_menu_kb(contact_url=contact_url),
+        )
     await callback.answer()
 
 
@@ -143,12 +151,22 @@ async def cb_user_reimburse_list(callback: types.CallbackQuery):
                 lines.append(f"   驳回原因：{r['reject_reason']}")
         text = "\n".join(lines)
 
+    # UX-6.4：附「📩 联系客服申诉」入口（仅当 config 配置了 contact url）
+    from bot.utils.reimburse_notify import get_reimburse_contact_url
+    contact_url = await get_reimburse_contact_url()
+
     try:
         await callback.message.edit_text(
-            text, reply_markup=user_reimburse_pagination_kb(page, total_pages),
+            text,
+            reply_markup=user_reimburse_pagination_kb(
+                page, total_pages, contact_url=contact_url,
+            ),
         )
     except Exception:
         await callback.message.answer(
-            text, reply_markup=user_reimburse_pagination_kb(page, total_pages),
+            text,
+            reply_markup=user_reimburse_pagination_kb(
+                page, total_pages, contact_url=contact_url,
+            ),
         )
     await callback.answer()

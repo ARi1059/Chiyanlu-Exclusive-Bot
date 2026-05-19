@@ -176,18 +176,34 @@ def user_points_menu_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def user_reimburse_menu_kb() -> InlineKeyboardMarkup:
-    """报销页按钮组"""
-    return InlineKeyboardMarkup(inline_keyboard=[
+def user_reimburse_menu_kb(
+    *, contact_url: Optional[str] = None,
+) -> InlineKeyboardMarkup:
+    """报销页按钮组（UX-6.4：可选附「📩 联系客服申诉」URL 按钮）。
+
+    Args:
+        contact_url: 申诉客服 URL（caller 应通过
+            `bot.utils.reimburse_notify.get_reimburse_contact_url()` 预查）；
+            None / 空 → 不显示申诉按钮（避免死链）。
+    """
+    rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📋 报销明细", callback_data="user:reimburse:list")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
-    ])
+    ]
+    if contact_url:
+        rows.append([InlineKeyboardButton(text="📩 联系客服申诉", url=contact_url)])
+    rows.append([InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def user_reimburse_pagination_kb(
     page: int, total_pages: int,
+    *, contact_url: Optional[str] = None,
 ) -> InlineKeyboardMarkup:
-    """报销明细分页"""
+    """报销明细分页（UX-6.4：可选附「📩 联系客服申诉」URL 按钮）。
+
+    Args:
+        contact_url: 同 user_reimburse_menu_kb，None 时不显示申诉按钮。
+    """
     nav: list[InlineKeyboardButton] = []
     if page > 0:
         nav.append(InlineKeyboardButton(
@@ -203,10 +219,11 @@ def user_reimburse_pagination_kb(
             text="➡️ 下一页",
             callback_data=f"user:reimburse:list:{page + 1}",
         ))
-    return InlineKeyboardMarkup(inline_keyboard=[
-        nav,
-        [InlineKeyboardButton(text="🔙 返回报销", callback_data="user:reimburse")],
-    ])
+    rows: list[list[InlineKeyboardButton]] = [nav]
+    if contact_url:
+        rows.append([InlineKeyboardButton(text="📩 联系客服申诉", url=contact_url)])
+    rows.append([InlineKeyboardButton(text="🔙 返回报销", callback_data="user:reimburse")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def onboarding_kb() -> InlineKeyboardMarkup:

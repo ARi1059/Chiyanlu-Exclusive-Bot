@@ -188,6 +188,21 @@ def format_user_reimburse_reject_text(
     )
 
 
+async def get_reimburse_contact_url() -> Optional[str]:
+    """读取报销申诉客服 URL（UX-4.1 + UX-6.4 共用）。
+
+    读取优先级：
+        - config["reimburse_contact_url"]   报销专用客服（未来可独立配置）
+        - config["lottery_contact_url"]     抽奖客服（fallback，运营通常共用一个群）
+
+    两者均空 / 仅空白时返回 None，调用方应按"不显示申诉按钮"处理。
+    """
+    contact_url = (await get_config("reimburse_contact_url") or "").strip()
+    if not contact_url:
+        contact_url = (await get_config("lottery_contact_url") or "").strip()
+    return contact_url or None
+
+
 async def build_user_reimburse_reject_kb() -> InlineKeyboardMarkup:
     """构造驳回通知 CTA keyboard（UX-4.1）。
 
@@ -195,12 +210,9 @@ async def build_user_reimburse_reject_kb() -> InlineKeyboardMarkup:
         - [📩 联系客服申诉]   url=<contact_url>     仅当 config 中存在客服链接时显示
         - [📋 我的报销]       callback=user:reimburse   始终显示
 
-    客服链接读取优先级：reimburse_contact_url → lottery_contact_url；
-    两者均空时只显示「我的报销」一个按钮。
+    客服链接通过 get_reimburse_contact_url() 解析（与 UX-6.4 用户侧申诉按钮共用）。
     """
-    contact_url = (await get_config("reimburse_contact_url") or "").strip()
-    if not contact_url:
-        contact_url = (await get_config("lottery_contact_url") or "").strip()
+    contact_url = await get_reimburse_contact_url()
     rows: list[list[InlineKeyboardButton]] = []
     if contact_url:
         rows.append([
