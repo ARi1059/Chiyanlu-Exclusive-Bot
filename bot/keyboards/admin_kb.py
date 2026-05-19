@@ -274,11 +274,15 @@ def report_settings_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def admin_today_status_kb() -> InlineKeyboardMarkup:
-    """管理员今日开课状态总览页"""
+    """管理员今日开课状态总览页
+
+    返回按钮指向二级页 admin:teachers（👩‍🏫 老师管理），不再直接回 menu:main——
+    UX-1 第四批返回路径优化（2026-05）。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:today_status"),
-            InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main"),
+            InlineKeyboardButton(text="⬅️ 返回老师管理", callback_data="admin:teachers"),
         ],
     ])
 
@@ -287,12 +291,17 @@ def admin_today_status_kb() -> InlineKeyboardMarkup:
 
 
 def user_tags_menu_kb() -> InlineKeyboardMarkup:
-    """用户画像看板主面板"""
+    """用户画像看板主面板
+
+    返回按钮指向二级页 admin:teachers（👩‍🏫 老师管理），不再直接回 menu:main——
+    UX-1 第四批返回路径优化（2026-05）。查询结果页（user_tags_query_result_kb）
+    的「主菜单」快捷出口保持不变。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 查询标签用户", callback_data="admin:user_tags:query")],
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="admin:user_tags"),
-            InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main"),
+            InlineKeyboardButton(text="⬅️ 返回老师管理", callback_data="admin:teachers"),
         ],
     ])
 
@@ -411,13 +420,18 @@ def source_lookup_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def hot_manage_menu_kb() -> InlineKeyboardMarkup:
-    """热门推荐管理子面板"""
+    """热门推荐管理子面板
+
+    返回按钮指向二级页 admin:teachers（👩‍🏫 老师管理），不再直接回 menu:main——
+    UX-1 第四批返回路径优化（2026-05）。FSM 取消（hot_manage_cancel_kb）
+    指向 admin:hot_manage，保持不变。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ 添加推荐", callback_data="admin:hot:add")],
         [InlineKeyboardButton(text="✏️ 修改权重", callback_data="admin:hot:weight")],
         [InlineKeyboardButton(text="❌ 取消推荐", callback_data="admin:hot:remove")],
         [InlineKeyboardButton(text="🔄 重算热度", callback_data="admin:hot:recalc")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回老师管理", callback_data="admin:teachers")],
     ])
 
 
@@ -458,6 +472,10 @@ def teacher_menu_kb() -> InlineKeyboardMarkup:
     """老师管理子面板
 
     2026-05-17：移除简版录入入口；统一通过 [📋 老师档案管理] 进入完整档案流程。
+
+    返回按钮指向二级页 admin:teachers（👩‍🏫 老师管理），不再直接回 menu:main——
+    UX-1 第四批返回路径优化（2026-05）。深层子页（老师列表 / 老师档案管理 /
+    启停列表等）的返回路径保持不变。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 老师档案管理", callback_data="tprofile:menu")],
@@ -466,7 +484,7 @@ def teacher_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="启用老师", callback_data="teacher:enable"),
         ],
         [InlineKeyboardButton(text="📋 老师列表", callback_data="teacher:list")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回老师管理", callback_data="admin:teachers")],
     ])
 
 
