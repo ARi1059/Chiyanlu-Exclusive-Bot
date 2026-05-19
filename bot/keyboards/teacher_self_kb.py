@@ -64,23 +64,29 @@ FIELD_LABELS: dict[str, str] = {
 
 
 def teacher_profile_kb() -> InlineKeyboardMarkup:
-    """老师资料字段选择面板
+    """老师资料字段选择面板（UX-6.3：高频字段置顶）
 
-    6 个可改字段（display_name / region / price / tags / photo_file_id / button_text）
-    + 1 个锁定提示按钮（button_url，点击给提示）
-    + 返回主菜单
+    布局调整（PLAN §3.3.C 高频字段快捷入口 + UX-FEATURE-ITERATION §6 痛点 4）：
+        第一行（高频）：💰 价格 / 📍 地区
+        第二行（高频）：🏷️ 标签 / 🖼️ 图片
+        第三行（低频）：📝 艺名 / 🔠 按钮文本
+        第四行：🔗 链接（不可改） 锁定提示
+        第五行：🔙 返回主菜单
+
+    callback_data 全部保留（仅按钮位置重排）；
+    旧 inline button（历史快照）依然能命中各字段 edit FSM。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📝 艺名", callback_data="teacher_self:edit:display_name"),
+            InlineKeyboardButton(text="💰 价格", callback_data="teacher_self:edit:price"),
             InlineKeyboardButton(text="📍 地区", callback_data="teacher_self:edit:region"),
         ],
         [
-            InlineKeyboardButton(text="💰 价格", callback_data="teacher_self:edit:price"),
             InlineKeyboardButton(text="🏷️ 标签", callback_data="teacher_self:edit:tags"),
+            InlineKeyboardButton(text="🖼️ 图片", callback_data="teacher_self:edit:photo_file_id"),
         ],
         [
-            InlineKeyboardButton(text="🖼️ 图片", callback_data="teacher_self:edit:photo_file_id"),
+            InlineKeyboardButton(text="📝 艺名", callback_data="teacher_self:edit:display_name"),
             InlineKeyboardButton(text="🔠 按钮文本", callback_data="teacher_self:edit:button_text"),
         ],
         [
