@@ -1025,12 +1025,17 @@ def rreview_push_action_kb() -> InlineKeyboardMarkup:
 
 
 def admin_points_menu_kb() -> InlineKeyboardMarkup:
-    """[💰 积分管理] 子菜单（spec §3.2）"""
+    """[💰 积分管理] 子菜单（spec §3.2）
+
+    返回按钮指向二级页 admin:operations（🎲 活动运营），不再直接回 menu:main——
+    UX-1 第二批返回路径优化（2026-05）。深层子页（admin_points_back_kb 等）
+    的返回路径保持不变。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 查询用户积分", callback_data="admin:points:query")],
         [InlineKeyboardButton(text="➕ 手动加分",     callback_data="admin:points:grant")],
         [InlineKeyboardButton(text="📊 积分总览",     callback_data="admin:points:overview")],
-        [InlineKeyboardButton(text="🔙 返回主菜单",   callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回活动运营", callback_data="admin:operations")],
     ])
 
 
@@ -1153,13 +1158,18 @@ def rreview_approve_points_kb(review_id: int) -> InlineKeyboardMarkup:
 # ============ 抽奖管理（Phase L.1） ============
 
 def admin_lottery_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
-    """[🎲 抽奖管理] 子菜单"""
+    """[🎲 抽奖管理] 子菜单
+
+    返回按钮指向二级页 admin:operations（🎲 活动运营），不再直接回 menu:main——
+    UX-1 第二批返回路径优化（2026-05）。深层子页（list / detail / create FSM 等）
+    的返回路径保持不变。
+    """
     list_label = f"📋 抽奖列表 ({pending_count})" if pending_count else "📋 抽奖列表"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ 创建新抽奖",   callback_data="admin:lottery:create")],
         [InlineKeyboardButton(text=list_label,       callback_data="admin:lottery:list")],
         [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="admin:lottery:contact")],
-        [InlineKeyboardButton(text="🔙 返回主面板",   callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回活动运营", callback_data="admin:operations")],
     ])
 
 
