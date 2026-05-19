@@ -125,8 +125,21 @@ async def _build_card_text(state: FSMContext) -> str:
     anon = int(data.get("anonymous") or 0)
     anon_str = "😟 匿名" if anon == 1 else "😎 默认（显示用户）"
 
+    # UX-8.1：进度计数（已完成 N/9 + 可提交标记）
+    missing = _missing_fields(data)
+    total_fields = 9  # 出击证明 + 评级 + 6 维 + 过程描述
+    filled_count = total_fields - len(missing)
+    if not missing:
+        progress_line = f"📊 进度：已完成 {filled_count}/{total_fields} · ✅ 可提交"
+    else:
+        progress_line = (
+            f"📊 进度：已完成 {filled_count}/{total_fields} · "
+            f"还差 {len(missing)} 项"
+        )
+
     lines = [
         "📋 评价卡片（点按钮逐项填写，无顺序要求）",
+        progress_line,
         "━━━━━━━━━━━━━━━",
         f"老师：{tname}",
         f"🖼 出击证明：{evidence_count}/2 张" + ("（约课截图 + 现场手势）" if evidence_count < 2 else " ✅"),
@@ -154,7 +167,9 @@ async def render_card(
     await state.set_state(CardReviewStates.card)
     text = await _build_card_text(state)
     data = await state.get_data()
-    kb = review_card_kb(data)
+    # UX-8.1：把缺项数量传给 keyboard，提交按钮文案动态化
+    missing_count = len(_missing_fields(data))
+    kb = review_card_kb(data, missing_count=missing_count)
     try:
         if via_edit:
             await target_msg.edit_text(text, reply_markup=kb)
@@ -501,8 +516,10 @@ async def cb_card_submit(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     miss = _missing_fields(data)
     if miss:
+        # UX-8.1：alert 改为聚焦"第一个未填项"，减少用户认知负担；
+        # 余下未填项数量在卡片顶部进度行已可见。
         await callback.answer(
-            "⚠️ 还有未填项：\n" + "、".join(miss) + "\n请补齐后再提交",
+            f"⚠️ 先填「{miss[0]}」（还差 {len(miss)} 项）",
             show_alert=True,
         )
         return

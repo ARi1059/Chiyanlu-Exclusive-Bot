@@ -883,7 +883,9 @@ def _card_field_filled(data: dict, field: dict) -> bool:
     return True
 
 
-def review_card_kb(state_data: dict) -> InlineKeyboardMarkup:
+def review_card_kb(
+    state_data: dict, *, missing_count: Optional[int] = None,
+) -> InlineKeyboardMarkup:
     """评价卡片键盘（card_view 状态）
 
     布局：
@@ -892,10 +894,16 @@ def review_card_kb(state_data: dict) -> InlineKeyboardMarkup:
         Row 3: [💃 身材 / 🛎 服务]
         Row 4: [😊 态度 / 🏠 环境]
         Row 5: [📝 过程描述]
-        Row 6: [😟 匿名提交] [😎 默认提交]
+        Row 6: [😟 匿名提交] [😎 默认提交]    ← UX-8.1：missing_count > 0 时改为"还差 N 项"
         Row 7: [❌ 取消]
 
     callback：card:edit:<field_key> / card:submit:<anon|default> / card:cancel
+
+    Args:
+        missing_count: 缺项数量（caller 通过 _missing_fields 预算）；
+            None 时按既有"😟 匿名提交 / 😎 默认提交"展示（向后兼容旧调用方）；
+            0 时显示"✅ 提交（匿名 / 默认）"——明确告知"已可提交"；
+            > 0 时显示"还差 N 项（匿名 / 默认）"——按钮可点，命中 alert 提示。
     """
     rows: list[list[InlineKeyboardButton]] = []
     # 2 列布局：evidence+rating / 6 维 / summary 独占
@@ -916,9 +924,20 @@ def review_card_kb(state_data: dict) -> InlineKeyboardMarkup:
             ))
         rows.append(row)
 
+    # UX-8.1：提交按钮文案动态化
+    if missing_count is None:
+        anon_label = "😟 匿名提交"
+        default_label = "😎 默认提交"
+    elif missing_count == 0:
+        anon_label = "✅ 提交（匿名）"
+        default_label = "✅ 提交（默认）"
+    else:
+        anon_label = f"还差 {missing_count} 项（匿名）"
+        default_label = f"还差 {missing_count} 项（默认）"
+
     rows.append([
-        InlineKeyboardButton(text="😟 匿名提交", callback_data="card:submit:anon"),
-        InlineKeyboardButton(text="😎 默认提交", callback_data="card:submit:default"),
+        InlineKeyboardButton(text=anon_label, callback_data="card:submit:anon"),
+        InlineKeyboardButton(text=default_label, callback_data="card:submit:default"),
     ])
     rows.append([InlineKeyboardButton(text="❌ 取消", callback_data="card:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
