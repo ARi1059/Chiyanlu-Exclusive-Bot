@@ -73,7 +73,12 @@ async def _safe_log_admin_audit(
 
 
 def _settings_kb(daily_enabled: bool, weekly_enabled: bool) -> InlineKeyboardMarkup:
-    """报表设置主页键盘（动态显示开启/关闭文案）"""
+    """报表设置主页键盘（动态显示开启/关闭文案）
+
+    返回按钮指向二级页 admin:settings（⚙️ 系统配置），不再直接回 menu:main——
+    UX-1 第三批返回路径优化（2026-05）。FSM 各步骤的取消按钮（report_settings_cancel_kb）
+    指向 admin:report_settings，保持不变。
+    """
     daily_label = "❌ 关闭日报" if daily_enabled else "✅ 开启日报"
     weekly_label = "❌ 关闭周报" if weekly_enabled else "✅ 开启周报"
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -87,7 +92,7 @@ def _settings_kb(daily_enabled: bool, weekly_enabled: bool) -> InlineKeyboardMar
             InlineKeyboardButton(text="📤 测试日报", callback_data="admin:report:test_daily"),
             InlineKeyboardButton(text="📤 测试周报", callback_data="admin:report:test_weekly"),
         ],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
 
 

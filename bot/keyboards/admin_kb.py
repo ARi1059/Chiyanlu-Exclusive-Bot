@@ -319,13 +319,18 @@ def user_tags_query_result_kb() -> InlineKeyboardMarkup:
 
 
 def publish_templates_menu_kb() -> InlineKeyboardMarkup:
-    """发布模板管理主面板"""
+    """发布模板管理主面板
+
+    返回按钮指向二级页 admin:settings（⚙️ 系统配置），不再直接回 menu:main——
+    UX-1 第三批返回路径优化（2026-05）。深层子页（模板列表 / 详情等）
+    的返回路径保持不变。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 模板列表", callback_data="admin:publish_templates:list")],
         [InlineKeyboardButton(text="➕ 新建模板", callback_data="admin:publish_templates:create")],
         [InlineKeyboardButton(text="✏️ 编辑默认模板", callback_data="admin:publish_templates:edit_default")],
         [InlineKeyboardButton(text="✅ 设置默认模板", callback_data="admin:publish_templates:set_default")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
 
 
@@ -704,20 +709,28 @@ def channel_menu_kb() -> InlineKeyboardMarkup:
     """频道设置子面板
 
     Phase 9.2：新增 [📦 设置档案频道]（archive_channel_id），与"发布目标"解耦。
+
+    返回按钮指向二级页 admin:settings（⚙️ 系统配置），不再直接回 menu:main——
+    UX-1 第三批返回路径优化（2026-05）。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📌 设置发布目标", callback_data="channel:set_publish")],
         [InlineKeyboardButton(text="📦 设置档案频道", callback_data="channel:set_archive")],
         [InlineKeyboardButton(text="💬 设置响应群组", callback_data="channel:set_response")],
         [InlineKeyboardButton(text="📋 查看当前设置", callback_data="channel:view")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
 
 
 # ============ 系统设置子面板 ============
 
 def system_menu_kb() -> InlineKeyboardMarkup:
-    """系统设置子面板"""
+    """系统设置子面板
+
+    返回按钮指向二级页 admin:settings（⚙️ 系统配置），不再直接回 menu:main——
+    UX-1 第三批返回路径优化（2026-05）。深层子项（system:status / publish:* /
+    system:reminder_* 等）的返回路径保持不变。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="系统状态检查", callback_data="system:status")],
         [
@@ -745,7 +758,7 @@ def system_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏷 档案品牌名",   callback_data="system:brand_name"),
             InlineKeyboardButton(text="📡 档案品牌频道", callback_data="system:brand_channels"),
         ],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
 
 
