@@ -240,6 +240,22 @@ async def safe_notify_user_reimburse_reject(
         return False
 
 
+def build_user_reimburse_approved_kb() -> InlineKeyboardMarkup:
+    """构造"报销通过 / 口令已发放"通知 CTA keyboard（UX-4.2）。
+
+    布局：
+        - [📋 我的报销]   callback=user:reimburse   含本月统计、池剩余、最近 5 笔
+        - [🏠 返回主菜单] callback=user:main        兜底
+
+    "报销池剩余"未做独立按钮——总额信息已在 user:reimburse 总览页呈现，
+    单独入口会与「我的报销」语义重叠。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 我的报销", callback_data="user:reimburse")],
+        [InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main")],
+    ])
+
+
 async def safe_send_user_payout(
     bot: Bot,
     *,
@@ -250,10 +266,13 @@ async def safe_send_user_payout(
     """给用户发送口令红包消息，返回 (ok, error_text)。
 
     必须在调用方根据 ok 判断后才能更新报销状态（spec 要求"发送成功后才标记完成"）。
+    UX-4.2：随消息附 CTA keyboard（我的报销 / 主菜单），让用户兑换完口令后
+    能 1 次点击回查本月统计或回主菜单，而不是面对纯文本死胡同。
     """
     text = format_user_payout_message(token=token, amount=amount)
+    kb = build_user_reimburse_approved_kb()
     try:
-        await bot.send_message(chat_id=user_id, text=text)
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=kb)
         return True, None
     except Exception as e:
         logger.warning(
