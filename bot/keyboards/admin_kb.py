@@ -1821,6 +1821,63 @@ def reimburse_subreq_add_confirm_kb() -> InlineKeyboardMarkup:
     ])
 
 
+# ============ 报销审核 + 支付宝口令发放（2026-05） ============
+
+
+def reimburse_pending_super_notice_kb() -> InlineKeyboardMarkup:
+    """报告审核通过后通知超管的快捷按钮组。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💰 去审核报销", callback_data="reimburse:enter"),
+            InlineKeyboardButton(text="✅ 审核处理", callback_data="admin:review_tasks"),
+        ],
+    ])
+
+
+def reimburse_payout_waiting_cancel_kb(reimb_id: int) -> InlineKeyboardMarkup:
+    """waiting_token 期间的取消按钮（不修改报销状态，仅清理 FSM 回详情列表）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data=f"reimburse:payout:cancel:{reimb_id}",
+        )],
+    ])
+
+
+def reimburse_payout_confirm_kb(reimb_id: int) -> InlineKeyboardMarkup:
+    """confirming 状态下的确认页：发送 / 重新输入 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✅ 确认发送并完成",
+            callback_data=f"reimburse:payout:confirm:{reimb_id}",
+        )],
+        [
+            InlineKeyboardButton(
+                text="🔁 重新输入",
+                callback_data=f"reimburse:payout:retry:{reimb_id}",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data=f"reimburse:payout:cancel:{reimb_id}",
+            ),
+        ],
+    ])
+
+
+def reimburse_payout_done_kb() -> InlineKeyboardMarkup:
+    """口令发送成功后的"处理下一条 / 返回审核处理"。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="➡️ 处理下一条",
+            callback_data="reimburse:enter",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回审核处理",
+            callback_data="admin:review_tasks",
+        )],
+    ])
+
+
 def reimburse_subreq_user_gate_kb(
     missing: list[dict],
     *,

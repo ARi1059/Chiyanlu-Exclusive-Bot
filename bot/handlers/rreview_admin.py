@@ -32,6 +32,7 @@ from bot.database import (
     get_config,
     get_teacher,
     get_teacher_review,
+    get_user,
     get_user_total_points,
     is_super_admin,
     list_pending_reviews,
@@ -445,6 +446,42 @@ async def _do_approve_inner(
                             "status": reimb_status,
                         },
                     )
+                    # 2026-05 新增：通知所有超管去审核报销（pending / queued 都通知）
+                    # 通知失败不影响主流程，仅 logger.warning（safe_helper 内部容错）
+                    try:
+                        from bot.utils.reimburse_notify import (
+                            notify_supers_reimburse_pending,
+                        )
+                        teacher_obj = await get_teacher(teacher_id_for_reimb)
+                        teacher_label = (
+                            teacher_obj.get("display_name")
+                            if teacher_obj else f"#{teacher_id_for_reimb}"
+                        )
+                        try:
+                            user_obj = await get_user(int(user_id))
+                        except Exception:
+                            user_obj = None
+                        if user_obj and user_obj.get("username"):
+                            user_label = f"@{user_obj['username']}"
+                        elif user_obj and user_obj.get("first_name"):
+                            user_label = user_obj["first_name"]
+                        else:
+                            user_label = str(user_id)
+                        await notify_supers_reimburse_pending(
+                            bot,
+                            reimb_id=reimb_created_id,
+                            user_id=int(user_id),
+                            user_label=user_label,
+                            teacher_label=teacher_label,
+                            review_id=review_id,
+                            amount=reimb_amount,
+                            status=reimb_status,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "通知超管报销待审核失败 reimb=%s: %s",
+                            reimb_created_id, e,
+                        )
     except Exception as e:
         logger.warning("报销联动失败 review=%s: %s", review_id, e)
 

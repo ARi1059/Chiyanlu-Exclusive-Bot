@@ -63,6 +63,26 @@ class ReimburseSubReqAddStates(StatesGroup):
     waiting_invite_link  = State()
 
 
+class ReimbursePayoutStates(StatesGroup):
+    """报销支付宝口令红包发放 FSM（2026-05 新增）。
+
+    流程：
+        超管点击「✅ 同意报销」(reimburse:approve:<id>) → 进入 waiting_token
+        超管输入口令 → 进入 confirming
+        超管点确认（reimburse:payout:confirm:<id>） →
+            尝试给用户发送口令；成功才调 approve_reimbursement → status: approved
+            失败保留 pending；超管可重试或取消
+
+    state.data 累加：
+        reimbursement_id (int)
+        user_id (int)
+        amount (int)
+        token (str)  —— 仅 FSM 临时持有；确认发送后由 state.clear() 清理
+    """
+    waiting_token = State()
+    confirming    = State()
+
+
 class RReviewRejectStates(StatesGroup):
     """Phase 9.4：超管驳回报告时填写自定义原因 FSM
 

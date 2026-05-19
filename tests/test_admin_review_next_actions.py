@@ -142,8 +142,9 @@ def test_rreview_admin_approve_ack_uses_done_kb_review():
     src = _src(rra)
     idx = src.find("async def _do_approve_inner(")
     assert idx > 0, "找不到 _do_approve_inner 函数定义"
-    # _do_approve_inner 函数体较长（含 6 个步骤 + 通知 + 队列空分支），用 8000 字符窗口
-    body = src[idx:idx + 8000]
+    # _do_approve_inner 函数体较长（含 6 步骤 + 报销联动 + 通知超管 + 队列分支等），
+    # 用 12000 字符窗口
+    body = src[idx:idx + 12000]
     assert 'admin_review_done_next_kb("review")' in body
 
 

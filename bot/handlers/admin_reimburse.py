@@ -43,12 +43,23 @@ from bot.keyboards.admin_kb import (
     main_menu_kb,
     reimburse_action_kb,
     reimburse_empty_kb,
+    reimburse_payout_confirm_kb,
+    reimburse_payout_done_kb,
+    reimburse_payout_waiting_cancel_kb,
     reimburse_queued_item_kb,
     reimburse_queued_pagination_kb,
     reimburse_reject_cancel_kb,
     reimburse_reset_confirm_kb,
 )
-from bot.states.teacher_states import ReimburseRejectStates
+from bot.states.teacher_states import ReimbursePayoutStates, ReimburseRejectStates
+from bot.utils.reimburse_notify import (
+    POWERED_BY_FOOTER,
+    format_payout_confirm_text,
+    format_payout_done_text,
+    format_payout_waiting_token_text,
+    mask_token,
+    safe_send_user_payout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,10 +202,27 @@ async def cb_reimburse_item(callback: types.CallbackQuery, state: FSMContext):
 # ============ 通过 ============
 
 
+async def _user_label_for_reimb(reimb: dict) -> str:
+    """从 reimbursements 行查出 user 信息，组装 @username 或姓名兜底。"""
+    user_id = reimb.get("user_id")
+    try:
+        u = await get_user(int(user_id)) if user_id is not None else None
+    except Exception:
+        u = None
+    if not u:
+        return str(user_id)
+    name = u.get("username") or u.get("first_name") or ""
+    return f"@{name}" if u.get("username") else (name or str(user_id))
+
+
 @router.callback_query(F.data.startswith("reimburse:approve:"))
 @_super_admin_required
 async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext):
-    """通过报销：先校验周配额 + 月池，失败 alert 并提示用 [🔄 重置]"""
+    """点击「✅ 同意报销」——本批不再直接 approve，而是先做月池 / 周配额校验，
+    通过后进入 ReimbursePayoutStates.waiting_token，等待超管输入支付宝口令红包口令。
+
+    口令成功发给用户后才调 approve_reimbursement（保留与旧实现一致的 audit）。
+    """
     try:
         rid = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
@@ -208,7 +236,7 @@ async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext)
         await callback.answer(f"已是 {reimb['status']}", show_alert=True)
         return
 
-    # 月池校验
+    # 月池校验（与旧逻辑相同，不通过则 alert 拒绝）
     pool_raw = await get_config("reimbursement_monthly_pool")
     try:
         pool = int(pool_raw or 0)
@@ -228,9 +256,8 @@ async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext)
     week_used = await count_approved_reimbursements_in_week(
         reimb["user_id"], reimb["week_key"],
     )
-    reset_voucher = None
+    reset_voucher_id = None
     if week_used >= 1:
-        # 看是否有 reset voucher
         reset_voucher = await get_unused_reimbursement_reset(reimb["user_id"])
         if reset_voucher is None:
             await callback.answer(
@@ -238,54 +265,223 @@ async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext)
                 show_alert=True,
             )
             return
+        reset_voucher_id = reset_voucher["id"]
 
-    # 执行通过
-    ok = await approve_reimbursement(rid, callback.from_user.id)
-    if not ok:
-        await callback.answer("⚠️ 通过失败（可能已是终态）", show_alert=True)
-        return
-
-    # 消耗 reset voucher（如果用到）
-    if reset_voucher is not None:
-        try:
-            await consume_reimbursement_reset(reset_voucher["id"], rid)
-        except Exception as e:
-            logger.warning("consume_reset 失败 reset=%s reimb=%s: %s",
-                           reset_voucher["id"], rid, e)
-
-    await log_admin_audit(
-        admin_id=callback.from_user.id,
-        action="reimburse_approve",
-        target_type="reimbursement",
-        target_id=str(rid),
-        detail={
-            "user_id": reimb["user_id"],
-            "amount": reimb["amount"],
-            "week_key": reimb["week_key"],
-            "month_key": reimb["month_key"],
-            "reset_consumed": (reset_voucher["id"] if reset_voucher else None),
-        },
+    # 进入 waiting_token FSM；保留所有校验通过的上下文供后续 confirm 使用
+    await state.set_state(ReimbursePayoutStates.waiting_token)
+    await state.update_data(
+        reimbursement_id=rid,
+        user_id=reimb["user_id"],
+        amount=int(reimb["amount"]),
+        week_key=reimb["week_key"],
+        month_key=reimb["month_key"],
+        reset_voucher_id=reset_voucher_id,
     )
-
-    # 通知用户
+    text = format_payout_waiting_token_text()
     try:
-        await callback.bot.send_message(
-            chat_id=reimb["user_id"],
-            text=(
-                f"✅ 你的报销申请 #{rid} 已通过\n\n"
-                f"金额：{reimb['amount']} 元\n"
-                "请联系客服领取（如已设置抽奖客服链接，可一致联系方式）。"
-            ),
+        await callback.message.edit_text(
+            text, reply_markup=reimburse_payout_waiting_cancel_kb(rid),
         )
-    except Exception as e:
-        logger.info("通知报销用户失败 uid=%s: %s", reimb["user_id"], e)
+    except Exception:
+        await callback.message.answer(
+            text, reply_markup=reimburse_payout_waiting_cancel_kb(rid),
+        )
+    await callback.answer()
 
-    await callback.answer(f"✅ 已通过（{reimb['amount']} 元）")
-    # 推下一条（CallbackQuery 是 pydantic v2 frozen，不能直接赋值 data）
+
+# ============ 支付宝口令红包发放 FSM ============
+
+_TOKEN_MIN_LEN = 4
+_TOKEN_MAX_LEN = 200
+
+
+@router.message(ReimbursePayoutStates.waiting_token)
+@_super_admin_required
+async def step_reimburse_payout_token(
+    message: types.Message, state: FSMContext,
+):
+    """收到超管输入的口令 → 校验 → 展示确认页。"""
+    token = (message.text or "").strip()
+    data = await state.get_data()
+    rid = data.get("reimbursement_id")
+    if not token:
+        await message.reply(
+            "❌ 口令不能为空，请重新输入。",
+            reply_markup=reimburse_payout_waiting_cancel_kb(int(rid or 0)),
+        )
+        return
+    if len(token) < _TOKEN_MIN_LEN:
+        await message.reply(
+            f"❌ 口令过短（至少 {_TOKEN_MIN_LEN} 个字符），请重新输入。",
+            reply_markup=reimburse_payout_waiting_cancel_kb(int(rid or 0)),
+        )
+        return
+    if len(token) > _TOKEN_MAX_LEN:
+        await message.reply(
+            f"❌ 口令过长（最多 {_TOKEN_MAX_LEN} 个字符），请重新输入。",
+            reply_markup=reimburse_payout_waiting_cancel_kb(int(rid or 0)),
+        )
+        return
+    # 保存到 FSM data，进入 confirming
+    await state.update_data(token=token)
+    await state.set_state(ReimbursePayoutStates.confirming)
+
+    user_id = data.get("user_id")
+    amount = data.get("amount")
+    reimb = await get_reimbursement(int(rid)) if rid else None
+    user_label = await _user_label_for_reimb(reimb) if reimb else str(user_id)
+    text = format_payout_confirm_text(
+        user_id=int(user_id),
+        user_label=user_label,
+        amount=int(amount),
+        token=token,
+    )
+    await message.answer(text, reply_markup=reimburse_payout_confirm_kb(int(rid)))
+
+
+@router.callback_query(
+    F.data.startswith("reimburse:payout:retry:"),
+    ReimbursePayoutStates.confirming,
+)
+@_super_admin_required
+async def cb_reimburse_payout_retry(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """超管点「🔁 重新输入」→ 清掉 token，回到 waiting_token。"""
+    data = await state.get_data()
+    rid = data.get("reimbursement_id")
+    if rid is None:
+        await callback.answer("会话已过期，请重新进入审核", show_alert=True)
+        await state.clear()
+        return
+    # 清掉 token，但保留校验过的上下文
+    await state.update_data(token=None)
+    await state.set_state(ReimbursePayoutStates.waiting_token)
+    text = format_payout_waiting_token_text()
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=reimburse_payout_waiting_cancel_kb(int(rid)),
+        )
+    except Exception:
+        await callback.message.answer(
+            text, reply_markup=reimburse_payout_waiting_cancel_kb(int(rid)),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("reimburse:payout:cancel:"))
+@_super_admin_required
+async def cb_reimburse_payout_cancel(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """取消 payout FSM：清状态、不改报销 status；回到报销列表入口。
+
+    支持 waiting_token / confirming 两种状态下点击。
+    """
+    await state.clear()
+    await callback.answer("已取消，报销保持待审核")
+    # 回到入口（推下一条）
     await cb_reimburse_enter(
         callback.model_copy(update={"data": "reimburse:enter"}),
         state,
     )
+
+
+@router.callback_query(
+    F.data.startswith("reimburse:payout:confirm:"),
+    ReimbursePayoutStates.confirming,
+)
+@_super_admin_required
+async def cb_reimburse_payout_confirm(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """超管点「✅ 确认发送并完成」→ 给用户发口令 → 成功才 approve 报销 + audit log。
+
+    关键顺序：
+        1. 给用户 send_message；失败 → 不 approve，保留 FSM 让超管重试或取消
+        2. 用户发送成功 → approve_reimbursement → consume reset voucher（如有）→
+           mark_reimbursement_notified → write audit log（含 masked token）
+        3. 成功提示 + 清 FSM + 推下一条
+    """
+    data = await state.get_data()
+    rid = data.get("reimbursement_id")
+    token = data.get("token")
+    user_id = data.get("user_id")
+    amount = data.get("amount")
+    reset_voucher_id = data.get("reset_voucher_id")
+    if not rid or not token or not user_id or amount is None:
+        await callback.answer("会话已过期，请重新进入审核", show_alert=True)
+        await state.clear()
+        return
+
+    # 1. 先尝试发送给用户
+    ok, err = await safe_send_user_payout(
+        callback.bot, user_id=int(user_id), token=str(token), amount=int(amount),
+    )
+    if not ok:
+        # 发送失败 → 保留 FSM 让超管选择重试或取消
+        await callback.answer(
+            f"❌ 给用户发送口令失败：{err or '未知错误'}\n请重试或取消。",
+            show_alert=True,
+        )
+        return
+
+    # 2. 用户消息发送成功 → 真正 approve 报销
+    approved = await approve_reimbursement(int(rid), callback.from_user.id)
+    if not approved:
+        # 极端：刚才用户消息发出去了，但 DB 状态已被其它进程改了；只记录 warning
+        logger.warning(
+            "payout: 用户消息发送成功但 approve_reimbursement 失败 rid=%s",
+            rid,
+        )
+    # 消耗 reset voucher（如果之前判定要用）
+    if reset_voucher_id is not None:
+        try:
+            await consume_reimbursement_reset(int(reset_voucher_id), int(rid))
+        except Exception as e:
+            logger.warning(
+                "consume_reset 失败 reset=%s reimb=%s: %s",
+                reset_voucher_id, rid, e,
+            )
+    # 标记 notified（用 notified_at 字段表示口令已发送）
+    try:
+        from bot.database import mark_reimbursement_notified
+        await mark_reimbursement_notified(int(rid))
+    except Exception as e:
+        logger.warning("mark_reimbursement_notified 失败 rid=%s: %s", rid, e)
+
+    # 3. 写 audit log —— 不保存完整口令，只 mask token
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reimburse_payout_sent",
+        target_type="reimbursement",
+        target_id=str(rid),
+        detail={
+            "user_id": int(user_id),
+            "amount": int(amount),
+            "token_masked": mask_token(str(token)),
+            "reset_consumed": reset_voucher_id,
+        },
+    )
+
+    # 4. 给超管展示完成提示 + 清 FSM
+    reimb = await get_reimbursement(int(rid))
+    user_label = await _user_label_for_reimb(reimb) if reimb else str(user_id)
+    done_text = format_payout_done_text(
+        user_label=user_label,
+        user_id=int(user_id),
+        amount=int(amount),
+    )
+    await state.clear()
+    try:
+        await callback.message.edit_text(
+            done_text, reply_markup=reimburse_payout_done_kb(),
+        )
+    except Exception:
+        await callback.message.answer(
+            done_text, reply_markup=reimburse_payout_done_kb(),
+        )
+    await callback.answer(f"✅ 口令已发送给用户（{amount} 元）")
 
 
 # ============ 驳回 ============
