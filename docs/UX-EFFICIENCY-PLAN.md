@@ -637,6 +637,7 @@ Bot 内（**只读展示**）：
 - 第二批已落地：`🎲 抽奖管理` / `💰 积分管理` 主面板的返回按钮已从 `menu:main` 调整为 `admin:operations`（文案 `⬅️ 返回活动运营`）。仅改两个主面板 keyboard 与新增契约测试；深层子页（list / detail / 加分 FSM / 查询结果页等）的返回路径保持不变。
 - 第三批已落地：`📢 频道 / 群组设置` / `⚙️ 系统设置` / `🧩 发布模板` / `📅 报表设置` 四个主面板的返回按钮已从 `menu:main` 调整为 `admin:settings`（文案 `⬅️ 返回系统配置`）。改 3 个 keyboard（`channel_menu_kb` / `system_menu_kb` / `publish_templates_menu_kb`）+ `bot/handlers/report_settings.py` 内的私有 `_settings_kb`（返回按钮硬编码于 handler，符合例外条款）；深层子页（FSM 取消、模板列表返回等）的返回路径保持不变。
 - 第四批已落地：`👥 老师列表与启停` / `🔥 热门推荐` / `📅 今日发布状态` / `🏷 用户画像` 四个主面板的返回按钮已从 `menu:main` 调整为 `admin:teachers`（文案 `⬅️ 返回老师管理`）。改 4 个 keyboard（`teacher_menu_kb` / `hot_manage_menu_kb` / `admin_today_status_kb` / `user_tags_menu_kb`）+ 新增契约测试；深层子页（老师档案管理、用户画像查询结果页的「🏠 主菜单」快捷出口、hot/teacher FSM 取消等）的返回路径保持不变。
+- 第五批已落地：`👥 管理员管理` 主面板（`admin_menu_kb`）的返回按钮已从 `menu:main` 调整为 `admin:admin_settings`（文案 `⬅️ 返回管理员设置`）。审计日志 `dashboard:audit` 同时可从「📈 数据分析」(dashboard:enter) 进入，其返回路径**本批刻意不调整**，单独评估，以免影响旧数据分析路径体验。深层子页（`admin_remove_kb` 返回 menu:admin）保持不变。
 
 ### Sprint UX-2：管理员审核提效
 

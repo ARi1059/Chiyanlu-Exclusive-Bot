@@ -712,12 +712,20 @@ def teacher_profile_unpublish_confirm_kb(user_id: int) -> InlineKeyboardMarkup:
 # ============ 管理员管理子面板 ============
 
 def admin_menu_kb() -> InlineKeyboardMarkup:
-    """管理员管理子面板"""
+    """管理员管理子面板
+
+    返回按钮指向二级页 admin:admin_settings（🛡 管理员设置），不再直接回 menu:main——
+    UX-1 第五批返回路径优化（2026-05）。深层子页（admin_remove_kb 选择列表的
+    返回按钮指向 menu:admin）的返回路径保持不变。
+
+    注：dashboard:audit（审计日志）同时可从「📈 数据分析」进入，其返回路径
+    本批暂不调整，单独评估。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ 添加管理员", callback_data="admin:add")],
         [InlineKeyboardButton(text="➖ 移除管理员", callback_data="admin:remove")],
         [InlineKeyboardButton(text="📋 管理员列表", callback_data="admin:list")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="⬅️ 返回管理员设置", callback_data="admin:admin_settings")],
     ])
 
 
