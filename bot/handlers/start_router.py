@@ -477,7 +477,12 @@ async def _route_by_role(
         )
         if extra_text:
             text = f"{extra_text}\n\n{text}"
-        await message.answer(text, reply_markup=teacher_main_menu_kb())
+        # UX-5.1：动态决定签到按钮文案
+        from bot.utils.teacher_status import teacher_checked_in_today
+        checked = await teacher_checked_in_today(int(teacher["user_id"]))
+        await message.answer(
+            text, reply_markup=teacher_main_menu_kb(checked_in=checked),
+        )
         return
 
     # 3. 普通用户（Phase 7.1：首次进入展示新手引导，已看过则进主菜单）

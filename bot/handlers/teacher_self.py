@@ -219,10 +219,13 @@ async def cb_teacher_menu(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("⚠️ 你不在老师名单内", show_alert=True)
         return
     status = "" if teacher["is_active"] else "（账号已停用）"
+    # UX-5.1：动态决定签到按钮文案
+    from bot.utils.teacher_status import teacher_checked_in_today
+    checked = await teacher_checked_in_today(int(teacher["user_id"]))
     await callback.message.edit_text(
         f"👤 你好，{teacher['display_name']}{status}\n\n"
         "你的私聊功能：",
-        reply_markup=teacher_main_menu_kb(),
+        reply_markup=teacher_main_menu_kb(checked_in=checked),
     )
     await callback.answer()
 
@@ -293,9 +296,12 @@ async def cmd_cancel_edit(message: types.Message, state: FSMContext):
     if message.chat.type != "private":
         return
     await state.clear()
+    # UX-5.1：动态决定签到按钮文案
+    from bot.utils.teacher_status import teacher_checked_in_today
+    checked = await teacher_checked_in_today(message.from_user.id)
     await message.answer(
         "已取消修改",
-        reply_markup=teacher_main_menu_kb(),
+        reply_markup=teacher_main_menu_kb(checked_in=checked),
     )
 
 
@@ -469,6 +475,16 @@ async def cb_button_checkin(callback: types.CallbackQuery, state: FSMContext):
     if not ok:
         await callback.answer("⚠️ 签到失败，请稍后重试", show_alert=True)
         return
+
+    # UX-5.1：签到成功后立即把当前菜单的"✅ 今日签到"刷新为"✅ 今日已签到"
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=teacher_main_menu_kb(checked_in=True),
+        )
+    except Exception as e:
+        logger.info(
+            "[UX-5.1] 签到成功后菜单刷新失败 user=%s: %s", user_id, e,
+        )
 
     await callback.answer(
         f"✅ 签到成功 - {today_str} {now.strftime('%H:%M')}",

@@ -5,16 +5,23 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ============ 老师主菜单 ============
 
-def teacher_main_menu_kb() -> InlineKeyboardMarkup:
-    """老师私聊主菜单（v2 §2.5.5 + Phase 5 今日状态）
+def teacher_main_menu_kb(*, checked_in: bool = False) -> InlineKeyboardMarkup:
+    """老师私聊主菜单（v2 §2.5.5 + Phase 5 今日状态 + UX-5.1 签到优先）
 
+    - **今日签到 / 今日已签到**（置顶，UX-5.1 + PLAN §3.3.A）
+        文案根据 checked_in 动态切换；点击 callback 不变（既有 teacher_checkin handler
+        会判断是否已签到并相应处理）
     - 我的资料 → 自助管理入口（F3）
-    - 今日签到 → 等价于发文字"签到"（v1 行为，并存）
     - 今日状态 → Phase 5 老师今日开课状态管理
+
+    Args:
+        checked_in: 当日是否已签到。caller 应预先 `await is_checked_in(teacher_id, today_str)`
+            后传入；缺省 False 保留旧文案，确保旧 caller 兼容。
     """
+    checkin_label = "✅ 今日已签到" if checked_in else "✅ 今日签到"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=checkin_label, callback_data="teacher_self:checkin")],
         [InlineKeyboardButton(text="✏️ 我的资料", callback_data="teacher_self:profile")],
-        [InlineKeyboardButton(text="✅ 今日签到", callback_data="teacher_self:checkin")],
         [InlineKeyboardButton(text="📅 今日状态", callback_data="teacher:status")],
     ])
 
