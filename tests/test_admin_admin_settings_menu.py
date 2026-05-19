@@ -229,7 +229,14 @@ def test_no_new_migration_in_MIGRATIONS_list():
 
 
 def test_admin_management_handlers_still_present_in_source():
-    """4 个原管理员管理 handler 仍在 admin_panel.py 中，callback 含义未变。"""
+    """4 个原管理员管理 handler 仍在 admin_panel.py 中，callback 含义未变。
+
+    UX-9.6（2026-05-20）：dashboard:audit handler 从精确匹配 `F.data == ...`
+    升级为 `F.data.startswith("dashboard:audit")` 支持分页 + 筛选子路径
+    （dashboard:audit:p:N / dashboard:audit:f:<action>:N / dashboard:audit:filter
+    / dashboard:audit:all）。callback 字面量 "dashboard:audit" 含义未变，
+    仍是主入口（page=0，无过滤）。
+    """
     import bot.handlers.admin_panel as admin_panel_module
     import inspect
     src = inspect.getsource(admin_panel_module)
@@ -237,7 +244,11 @@ def test_admin_management_handlers_still_present_in_source():
     assert 'F.data == "admin:add"' in src
     assert 'F.data == "admin:remove"' in src
     assert 'F.data == "admin:list"' in src
-    assert 'F.data == "dashboard:audit"' in src
+    # UX-9.6：dashboard:audit 可能是 startswith 也可能是 ==；都视为存在
+    assert (
+        'F.data == "dashboard:audit"' in src
+        or 'F.data.startswith("dashboard:audit")' in src
+    )
 
 
 def test_admin_management_handlers_use_super_admin_required():

@@ -1117,20 +1117,126 @@ async def cb_dashboard_enter(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "dashboard:audit")
+# UX-9.6：操作日志分页 + action 筛选
+_AUDIT_PAGE_SIZE = 10
+
+# 筛选子菜单展示的常用 action（按 review / lottery / reimburse / admin 分组）
+_AUDIT_FILTER_OPTIONS: list[tuple[str, str]] = [
+    ("review_approve",     "✅ 审核通过（资料）"),
+    ("review_reject",      "❌ 审核驳回（资料）"),
+    ("rreview_approve",    "✅ 通过报告"),
+    ("rreview_reject",     "❌ 驳回报告"),
+    ("reimburse_approve",  "💰 通过报销"),
+    ("reimburse_reject",   "🛑 驳回报销"),
+    ("lottery_create",     "🎲 创建抽奖"),
+    ("lottery_cancel",     "🚫 取消抽奖"),
+    ("points_grant",       "💎 手动加扣积分"),
+    ("admin_add",          "👥 添加管理员"),
+]
+
+
+def _parse_audit_callback(data: str) -> tuple[int, Optional[str]]:
+    """解析操作日志 callback；返回 (page, action_filter)。
+
+    支持格式：
+        dashboard:audit               → (0, None)
+        dashboard:audit:p:N           → (N, None)
+        dashboard:audit:f:<action>:N  → (N, <action>)
+        dashboard:audit:all           → (0, None)
+    """
+    parts = data.split(":")
+    # parts[0]=dashboard, parts[1]=audit
+    if len(parts) <= 2:
+        return 0, None
+    head = parts[2]
+    if head == "all":
+        return 0, None
+    if head == "p" and len(parts) >= 4:
+        try:
+            return max(0, int(parts[3])), None
+        except ValueError:
+            return 0, None
+    if head == "f" and len(parts) >= 5:
+        action = parts[3]
+        try:
+            page = max(0, int(parts[4]))
+        except ValueError:
+            page = 0
+        return page, action
+    return 0, None
+
+
+@router.callback_query(F.data == "dashboard:audit:filter")
+@admin_required
+async def cb_dashboard_audit_filter(callback: types.CallbackQuery):
+    """UX-9.6：进入"按 action 筛选"子菜单。"""
+    from bot.keyboards.admin_kb import dashboard_audit_filter_menu_kb
+    text = (
+        "🔍 筛选 action\n"
+        "━━━━━━━━━━━━━━━\n"
+        "选择要查看的操作类别（仅显示前 10 个高频类别）：\n"
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=dashboard_audit_filter_menu_kb(_AUDIT_FILTER_OPTIONS),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dashboard:audit"))
 @admin_required
 async def cb_dashboard_audit(callback: types.CallbackQuery):
-    """管理员操作日志（最近 20 条）"""
-    rows = await list_recent_admin_audits(limit=20)
+    """管理员操作日志（UX-9.6：支持分页 + action 筛选）。
+
+    callback 格式参见 _parse_audit_callback。dashboard:audit:filter 由独立
+    handler 处理（注册在本 handler 之前以保证优先匹配）。
+    """
+    from bot.database import count_admin_audits, list_admin_audits_paged
+    from bot.keyboards.admin_kb import dashboard_audit_paginated_kb
+
+    # 排除 filter 子菜单 callback（已由 cb_dashboard_audit_filter 处理）
+    if callback.data == "dashboard:audit:filter":
+        return
+
+    page, action_filter = _parse_audit_callback(callback.data or "")
+    total = await count_admin_audits(action=action_filter)
+    total_pages = max(1, (total + _AUDIT_PAGE_SIZE - 1) // _AUDIT_PAGE_SIZE)
+    page = min(page, total_pages - 1)
+    if page < 0:
+        page = 0
+    offset = page * _AUDIT_PAGE_SIZE
+
+    rows = await list_admin_audits_paged(
+        offset=offset, limit=_AUDIT_PAGE_SIZE, action=action_filter,
+    )
+
+    title_action = (
+        f"（筛选：{_AUDIT_ACTION_LABELS.get(action_filter, action_filter)}）"
+        if action_filter else ""
+    )
     if not rows:
+        text = (
+            f"📜 操作日志{title_action}\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"(暂无记录)"
+        )
         await callback.message.edit_text(
-            "📜 操作日志\n\n(暂无记录)",
-            reply_markup=dashboard_audit_back_kb(),
+            text,
+            reply_markup=dashboard_audit_paginated_kb(
+                page=0, total_pages=1, action_filter=action_filter,
+            ),
         )
         await callback.answer()
         return
 
-    lines = ["📜 操作日志（最近 20 条）", "━━━━━━━━━━━━━━━"]
+    lines = [
+        f"📜 操作日志{title_action}",
+        f"共 {total} 条 · 第 {page + 1}/{total_pages} 页",
+        "━━━━━━━━━━━━━━━",
+    ]
     for r in rows:
         ts = (r.get("created_at") or "").replace("T", " ")[:19]
         action_label = _AUDIT_ACTION_LABELS.get(r["action"], r["action"])
@@ -1141,10 +1247,20 @@ async def cb_dashboard_audit(callback: types.CallbackQuery):
             line += f"  {summary}"
         lines.append(line)
 
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=dashboard_audit_back_kb(),
-    )
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…(本页过长，已截断)"
+
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=dashboard_audit_paginated_kb(
+                page=page, total_pages=total_pages, action_filter=action_filter,
+            ),
+        )
+    except Exception:
+        # 同页 edit 失败（如内容相同）→ 仍 ack
+        pass
     await callback.answer()
 
 

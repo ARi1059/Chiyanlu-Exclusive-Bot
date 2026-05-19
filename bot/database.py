@@ -2377,6 +2377,62 @@ async def list_recent_admin_audits(limit: int = 20) -> list[dict]:
         await db.close()
 
 
+async def list_admin_audits_paged(
+    *,
+    offset: int = 0,
+    limit: int = 10,
+    action: Optional[str] = None,
+) -> list[dict]:
+    """分页 + 按 action 过滤的管理员操作日志（UX-9.6）。
+
+    与 list_recent_admin_audits 一致：JOIN admins 拿 admin_username；
+    按 id DESC（最新在前）排序。
+
+    action=None / "" 视为不过滤。
+    """
+    db = await get_db()
+    try:
+        sql_parts = [
+            "SELECT a.*, COALESCE(adm.username, '') AS admin_username",
+            "FROM admin_audit_logs a",
+            "LEFT JOIN admins adm ON a.admin_id = adm.user_id",
+        ]
+        args: list = []
+        if action:
+            sql_parts.append("WHERE a.action = ?")
+            args.append(str(action))
+        sql_parts.append("ORDER BY a.id DESC LIMIT ? OFFSET ?")
+        args.append(int(limit))
+        args.append(int(offset))
+        cur = await db.execute(" ".join(sql_parts), args)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_admin_audits(
+    *,
+    action: Optional[str] = None,
+) -> int:
+    """统计管理员操作日志总数（按 action 过滤可选）（UX-9.6）。"""
+    db = await get_db()
+    try:
+        if action:
+            cur = await db.execute(
+                "SELECT COUNT(*) AS c FROM admin_audit_logs WHERE action = ?",
+                (str(action),),
+            )
+        else:
+            cur = await db.execute(
+                "SELECT COUNT(*) AS c FROM admin_audit_logs",
+            )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
 # ============ 最近浏览 / 热门老师（Phase 2） ============
 
 

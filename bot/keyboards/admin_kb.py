@@ -668,6 +668,92 @@ def dashboard_audit_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def dashboard_audit_paginated_kb(
+    *,
+    page: int,
+    total_pages: int,
+    action_filter: Optional[str] = None,
+) -> InlineKeyboardMarkup:
+    """操作日志分页 keyboard（UX-9.6）。
+
+    布局：
+        Row 1：[⬅️ 上一页] [📄 X/Y] [➡️ 下一页]
+        Row 2：[🔍 筛选 action] / 当前 action 过滤中 → [🔁 显示全部]
+        Row 3：[🔙 返回看板] [🏠 主菜单]
+
+    Args:
+        page:         当前页（0-based）
+        total_pages:  总页数（>=1）
+        action_filter: 当前 action 过滤；None 表示无过滤。
+            非空时翻页/筛选按钮 callback 都携带该 action。
+
+    callback 格式：
+        - 无过滤：dashboard:audit:p:<n>
+        - 有过滤：dashboard:audit:f:<action>:<n>
+        - 进入筛选子菜单：dashboard:audit:filter
+        - 显示全部（清除过滤）：dashboard:audit:all
+    """
+    def _page_cb(p: int) -> str:
+        if action_filter:
+            return f"dashboard:audit:f:{action_filter}:{p}"
+        return f"dashboard:audit:p:{p}"
+
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页", callback_data=_page_cb(page - 1),
+        ))
+    nav.append(InlineKeyboardButton(
+        text=f"📄 {page + 1}/{max(1, total_pages)}",
+        callback_data="noop:audit_page",
+    ))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="➡️ 下一页", callback_data=_page_cb(page + 1),
+        ))
+
+    if action_filter:
+        filter_row = [InlineKeyboardButton(
+            text=f"🔁 显示全部（当前过滤 {action_filter}）",
+            callback_data="dashboard:audit:all",
+        )]
+    else:
+        filter_row = [InlineKeyboardButton(
+            text="🔍 筛选 action", callback_data="dashboard:audit:filter",
+        )]
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        nav,
+        filter_row,
+        [
+            InlineKeyboardButton(text="🔙 返回看板", callback_data="dashboard:enter"),
+            InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main"),
+        ],
+    ])
+
+
+def dashboard_audit_filter_menu_kb(action_options: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """操作日志筛选子菜单（UX-9.6）。
+
+    Args:
+        action_options: list[(action_key, display_label)]——caller 决定哪些 action
+            出现在筛选选项里（建议按高频排序，控制在 8-10 个内避免按钮溢出）。
+
+    callback 格式：dashboard:audit:f:<action>:0 直接进 page 0。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    # 每行 1 个按钮（避免文案太长溢出）
+    for action_key, label in action_options:
+        rows.append([InlineKeyboardButton(
+            text=f"{label}",
+            callback_data=f"dashboard:audit:f:{action_key}:0",
+        )])
+    rows.append([
+        InlineKeyboardButton(text="🔙 返回日志", callback_data="dashboard:audit"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 # ============ 老师管理子面板 ============
 
 def teacher_menu_kb() -> InlineKeyboardMarkup:
