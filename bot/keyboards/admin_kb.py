@@ -1216,6 +1216,37 @@ def review_empty_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def review_claim_conflict_kb(
+    kind: str, target_id: int,
+) -> InlineKeyboardMarkup:
+    """审核冲突页 keyboard（UX-7.1）。
+
+    展示给"另一管理员正在审核此条"的访问者，提供：
+        - [🛡 强制接管 + 进入审核]   强制覆盖锁后渲染详情
+        - [🔙 返回审核处理]          放弃
+
+    Args:
+        kind:    "edit_request"（老师资料）/ "teacher_review"（评价）/
+                 "reimbursement"（报销）；决定 force_claim callback 命名空间。
+        target_id: 对应资源 id。
+    """
+    if kind == "edit_request":
+        force_cb = f"review:force_claim:{target_id}"
+    elif kind == "teacher_review":
+        force_cb = f"rreview:force_claim:{target_id}"
+    elif kind == "reimbursement":
+        force_cb = f"reimburse:force_claim:{target_id}"
+    else:
+        # 未知 kind：兜底回审核处理，不出现 force_claim 按钮
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")],
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛡 强制接管 + 进入审核", callback_data=force_cb)],
+        [InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")],
+    ])
+
+
 # ============ 报告审核中心（Phase 9.4） ============
 
 def rreview_action_kb(

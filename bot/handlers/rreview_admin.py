@@ -114,6 +114,46 @@ async def cb_rreview_enter(callback: types.CallbackQuery, state: FSMContext):
     await _show_review_at_index(callback, state, pending, 0)
 
 
+@router.callback_query(F.data.startswith("rreview:force_claim:"))
+@_super_admin_required
+async def cb_rreview_force_claim(callback: types.CallbackQuery, state: FSMContext):
+    """UX-7.1：强制接管评价审核锁，然后重新进入详情。"""
+    try:
+        review_id = int(callback.data[len("rreview:force_claim:"):])
+    except ValueError:
+        await callback.answer("⚠️ 无效操作", show_alert=True)
+        return
+    admin_id = callback.from_user.id
+    try:
+        from bot.utils.review_claim import force_claim, get_claim
+        existing = get_claim("teacher_review", review_id)
+        force_claim("teacher_review", review_id, admin_id)
+        prev_holder = existing.admin_id if existing else None
+    except Exception as e:
+        logger.warning(
+            "[UX-7.1] rreview force_claim 异常 review=%s: %s", review_id, e,
+        )
+        prev_holder = None
+    try:
+        await log_admin_audit(
+            admin_id=admin_id,
+            action="rreview_force_claim",
+            target_type="teacher_review",
+            target_id=str(review_id),
+            detail={"previous_holder": prev_holder},
+        )
+    except Exception:
+        pass
+    pending = await list_pending_reviews(limit=50)
+    idx = next((i for i, r in enumerate(pending) if r["id"] == review_id), -1)
+    if idx == -1:
+        await _show_empty(callback)
+        await callback.answer("已接管，但该条已离开队列")
+        return
+    await _show_review_at_index(callback, state, pending, idx)
+    await callback.answer("✅ 已强制接管")
+
+
 @router.callback_query(F.data.startswith("rreview:show:"))
 @_super_admin_required
 async def cb_rreview_show(callback: types.CallbackQuery, state: FSMContext):
@@ -399,6 +439,12 @@ async def _do_approve_inner(
             "new_total": new_total,
         },
     )
+    # UX-7.1：处理完成后释放 claim 锁
+    try:
+        from bot.utils.review_claim import release_claim
+        release_claim("teacher_review", review_id, reviewer_id)
+    except Exception:
+        pass
 
     # 2.5 报销联动：
     #   request_reimbursement=1 (用户勾选) → status='pending'（admin 审批）
@@ -646,6 +692,25 @@ async def _send_review_at_index(
     teacher = await get_teacher(review["teacher_id"])
     total = len(pending)
 
+    # UX-7.1：尝试 claim 锁；冲突时发冲突文字而非详情媒体组
+    if viewer_admin_id:
+        try:
+            from bot.utils.review_claim import try_claim
+            ok_claim, existing = try_claim(
+                "teacher_review", review["id"], viewer_admin_id,
+            )
+            if not ok_claim and existing is not None:
+                await _render_claim_conflict_message(
+                    bot, chat_id,
+                    kind="teacher_review", target_id=review["id"],
+                    existing=existing,
+                )
+                return
+        except Exception as e:
+            logger.warning(
+                "[UX-7.1] try_claim 失败（放行）review=%s: %s", review["id"], e,
+            )
+
     # 媒体组：2 张证据图
     media = [
         InputMediaPhoto(
@@ -720,6 +785,41 @@ async def _send_review_at_index(
         )
     except Exception:
         pass
+
+
+async def _render_claim_conflict_message(
+    bot, chat_id: int, *, kind: str, target_id: int, existing,
+) -> None:
+    """UX-7.1：评价审核冲突渲染（_send_review_at_index 路径用，无 callback 上下文）。
+
+    与 admin_review._render_claim_conflict 的功能等价；评价审核侧不能用 edit_text
+    （因 _send 是从 cleanup 之后调，可能没有 message 句柄）——直接 send_message。
+    """
+    import time
+    from bot.utils.review_viewers_hint import _relative_zh
+    from bot.keyboards.admin_kb import review_claim_conflict_kb
+
+    elapsed = max(0, int(time.time() - float(existing.acquired_at)))
+    rel = _relative_zh(elapsed)
+    text = (
+        "⚠️ 审核冲突\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"管理员 #{existing.admin_id} {rel} 进入了此条审核\n"
+        "（锁将在 5 分钟无操作后自动释放）\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "如需协同处理，请先与对方沟通；\n"
+        "或点击下方按钮强制接管（会写入审计日志）。"
+    )
+    try:
+        await bot.send_message(
+            chat_id=chat_id, text=text,
+            reply_markup=review_claim_conflict_kb(kind, target_id),
+        )
+    except Exception as e:
+        logger.warning(
+            "[UX-7.1] 渲染冲突页失败 chat=%s target=%s: %s",
+            chat_id, target_id, e,
+        )
 
 
 async def _cleanup_messages(bot, chat_id: int, state: FSMContext):
@@ -1062,6 +1162,12 @@ async def _do_reject(
             "reason": reason or "",
         },
     )
+    # UX-7.1：处理完成后释放 claim 锁
+    try:
+        from bot.utils.review_claim import release_claim
+        release_claim("teacher_review", review_id, reviewer_id)
+    except Exception:
+        pass
 
     teacher = await get_teacher(review["teacher_id"])
     teacher_name = teacher["display_name"] if teacher else None

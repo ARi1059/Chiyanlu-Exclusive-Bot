@@ -114,6 +114,19 @@ async def _show_request_at_index(
     req = pending[index]
     admin_id = callback.from_user.id
 
+    # UX-7.1：尝试 claim 锁；冲突时渲染冲突页而非详情
+    try:
+        from bot.utils.review_claim import try_claim
+        ok, existing = try_claim("edit_request", req["id"], admin_id)
+        if not ok and existing is not None:
+            await _render_claim_conflict(
+                callback, kind="edit_request",
+                target_id=req["id"], existing=existing,
+            )
+            return
+    except Exception as e:
+        logger.warning("[UX-7.1] try_claim 失败（放行）req=%s: %s", req["id"], e)
+
     # UX-7.4：查近 5 分钟内其他管理员对该请求的 view 记录（排除自己）
     viewers_hint: str | None = None
     try:
@@ -161,6 +174,42 @@ async def _find_index_of_request(
         if r["id"] == request_id:
             return i
     return 0
+
+
+async def _render_claim_conflict(
+    callback: types.CallbackQuery, *, kind: str, target_id: int, existing,
+) -> None:
+    """UX-7.1：渲染"审核冲突"页（另一管理员持有锁）。
+
+    `existing` 是 bot.utils.review_claim.ClaimInfo dataclass；本函数仅渲染，
+    不修改锁状态——access 决策（强制接管 / 放弃）由用户在按钮上做出。
+    """
+    import time
+    from bot.utils.review_viewers_hint import _relative_zh
+    from bot.keyboards.admin_kb import review_claim_conflict_kb
+
+    elapsed = max(0, int(time.time() - float(existing.acquired_at)))
+    rel = _relative_zh(elapsed)
+    text = (
+        "⚠️ 审核冲突\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"管理员 #{existing.admin_id} {rel} 进入了此条审核\n"
+        "（锁将在 5 分钟无操作后自动释放）\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "如需协同处理，请先与对方沟通；\n"
+        "或点击下方按钮强制接管（会写入审计日志）。"
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=review_claim_conflict_kb(kind, target_id),
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            reply_markup=review_claim_conflict_kb(kind, target_id),
+        )
+    await callback.answer()
 
 
 async def _notify_teacher_approved(
@@ -320,6 +369,60 @@ async def cb_review_nav(callback: types.CallbackQuery):
 
 
 # ========================================================
+# 强制接管（UX-7.1）
+# ========================================================
+
+@router.callback_query(F.data.startswith("review:force_claim:"))
+@admin_required
+async def cb_review_force_claim(callback: types.CallbackQuery):
+    """强制接管老师资料审核锁（UX-7.1）。
+
+    流程：
+        1. 取 request_id
+        2. 读取现有锁（用于 audit detail）
+        3. force_claim 覆盖锁
+        4. 写 audit "review_force_claim"（含 previous_holder）
+        5. 重新进入 _show_request_at_index 渲染详情
+    """
+    try:
+        request_id = int(callback.data[len("review:force_claim:"):])
+    except ValueError:
+        await callback.answer("⚠️ 无效操作", show_alert=True)
+        return
+    admin_id = callback.from_user.id
+    try:
+        from bot.utils.review_claim import force_claim, get_claim
+        existing = get_claim("edit_request", request_id)
+        force_claim("edit_request", request_id, admin_id)
+        prev_holder = existing.admin_id if existing else None
+    except Exception as e:
+        logger.warning("[UX-7.1] force_claim 异常 req=%s: %s", request_id, e)
+        prev_holder = None
+    try:
+        await log_admin_audit(
+            admin_id=admin_id,
+            action="review_force_claim",
+            target_type="edit_request",
+            target_id=request_id,
+            detail={"previous_holder": prev_holder},
+        )
+    except Exception:
+        pass
+    # 重新进入详情：找到该条在 pending 中的位置
+    pending = await list_pending_edits()
+    if not pending:
+        await callback.message.edit_text(
+            "✅ 没有待审核的修改",
+            reply_markup=review_empty_kb(),
+        )
+        await callback.answer("已接管，但队列已空")
+        return
+    idx = await _find_index_of_request(pending, request_id)
+    await _show_request_at_index(callback, pending, idx)
+    await callback.answer("✅ 已强制接管")
+
+
+# ========================================================
 # 通过 / 驳回
 # ========================================================
 
@@ -351,6 +454,12 @@ async def cb_review_approve(callback: types.CallbackQuery):
                 "field": approved["field_name"] if approved else None,
             },
         )
+        # UX-7.1：处理完成后释放 claim 锁，避免占用 5 分钟超时
+        try:
+            from bot.utils.review_claim import release_claim
+            release_claim("edit_request", request_id, callback.from_user.id)
+        except Exception:
+            pass
         # UX-5.2：通过审核后通知老师（与既有 _notify_teacher_rejected 对称）
         if approved:
             await _notify_teacher_approved(
@@ -557,6 +666,12 @@ async def _perform_reject_from_message(
                     "reason": reason,
                 },
             )
+            # UX-7.1：处理完成后释放 claim 锁
+            try:
+                from bot.utils.review_claim import release_claim
+                release_claim("edit_request", request_id, message.from_user.id)
+            except Exception:
+                pass
             await _notify_teacher_rejected(
                 message.bot,
                 req["teacher_id"],
