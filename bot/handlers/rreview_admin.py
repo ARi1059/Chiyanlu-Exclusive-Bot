@@ -535,26 +535,23 @@ async def _do_approve_inner(
 
     pending = await list_pending_reviews(limit=50)
     if not pending:
+        # UX-5.3：清完队列时显示 done_next_kb 给明确出口（切换审核类型 / 处理下一条）
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=f"✅ 已通过评价 #{review_id}（+{delta} 积分）\n\n"
-                     "🔧 痴颜录管理面板（队列已清空）",
-                reply_markup=main_menu_kb(
-                    pending_count=0,
-                    pending_review_count=0,
-                    is_super=True,
-                ),
+                     "当前没有待审核的报告。",
+                reply_markup=admin_review_done_next_kb("review"),
             )
         except Exception as e:
-            logger.warning("发送空队列回主面板失败: %s", e)
+            logger.warning("发送空队列 done_next_kb 失败: %s", e)
         return
     if message is not None:
         # 自定义 FSM 路径：发个 ack 文字然后推下一条
+        # UX-5.3：非空队列只发简短 ack，不再附 done_next_kb（避免与自动推下一条重复）
         try:
             await message.answer(
                 f"✅ 已通过评价 #{review_id}（+{delta} 积分）",
-                reply_markup=admin_review_done_next_kb("review"),
             )
         except Exception:
             pass
@@ -1032,25 +1029,19 @@ async def _do_reject(
     await _cleanup_messages(bot, chat_id, state)
     pending = await list_pending_reviews(limit=50)
     if not pending:
+        # UX-5.3：清完队列时显示 done_next_kb 给明确出口
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=f"{ack_text}\n\n✅ 当前已无待审核的报告。",
-                reply_markup=main_menu_kb(
-                    pending_count=0,
-                    pending_review_count=0,
-                    is_super=True,
-                ),
+                reply_markup=admin_review_done_next_kb("review"),
             )
         except Exception as e:
             logger.warning("driver_reject empty msg 失败: %s", e)
         return
+    # UX-5.3：非空队列只发简短 ack，不再附 done_next_kb（避免与自动推下一条重复）
     try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=ack_text,
-            reply_markup=admin_review_done_next_kb("review"),
-        )
+        await bot.send_message(chat_id=chat_id, text=ack_text)
     except Exception:
         pass
     await _send_review_at_index(bot, chat_id, state, pending, 0)

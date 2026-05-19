@@ -324,9 +324,10 @@ async def cb_review_approve(callback: types.CallbackQuery):
     # 刷新列表，跳到下一条（保持索引同一位置，因为当前条已离开 pending 队列）
     pending = await list_pending_edits()
     if not pending:
+        # UX-5.3：清完队列时显示 done_next_kb 给明确出口（切换审核类型 / 处理下一条）
         await callback.message.edit_text(
-            "✅ 没有待审核的修改",
-            reply_markup=review_empty_kb(),
+            "✅ 全部已处理完毕\n\n当前没有待审核的修改。",
+            reply_markup=admin_review_done_next_kb("edit"),
         )
         return
     await _show_request_at_index(callback, pending, 0)

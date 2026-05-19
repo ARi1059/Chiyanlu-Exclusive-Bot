@@ -604,13 +604,10 @@ async def on_reimburse_reject_reason(message: types.Message, state: FSMContext):
     )
 
     await state.clear()
-    await message.answer(
-        f"✅ 已驳回 #{rid}",
-        reply_markup=admin_review_done_next_kb("reimburse"),
-    )
-    # 推下一条
+    # UX-5.3：非空队列只发简短 ack；空队列时显示 done_next_kb 给出口
     pending = await list_pending_reimbursements(limit=1)
     if pending:
+        await message.answer(f"✅ 已驳回 #{rid}")
         reimb_next = pending[0]
         text_next = await _render_reimbursement_detail(reimb_next)
         await message.answer(
@@ -619,7 +616,8 @@ async def on_reimburse_reject_reason(message: types.Message, state: FSMContext):
         )
     else:
         await message.answer(
-            "✅ 当前没有待审核的报销申请。", reply_markup=reimburse_empty_kb(),
+            f"✅ 已驳回 #{rid}\n\n当前没有待审核的报销申请。",
+            reply_markup=admin_review_done_next_kb("reimburse"),
         )
 
 
