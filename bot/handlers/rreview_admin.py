@@ -43,6 +43,7 @@ from bot.database import (
     REVIEW_RATINGS,
 )
 from bot.keyboards.admin_kb import (
+    admin_review_done_next_kb,
     main_menu_kb,
     rreview_action_kb,
     rreview_approve_points_kb,
@@ -515,7 +516,10 @@ async def _do_approve_inner(
     if message is not None:
         # 自定义 FSM 路径：发个 ack 文字然后推下一条
         try:
-            await message.answer(f"✅ 已通过评价 #{review_id}（+{delta} 积分）")
+            await message.answer(
+                f"✅ 已通过评价 #{review_id}（+{delta} 积分）",
+                reply_markup=admin_review_done_next_kb("review"),
+            )
         except Exception:
             pass
     if state is None:
@@ -1006,7 +1010,11 @@ async def _do_reject(
             logger.warning("driver_reject empty msg 失败: %s", e)
         return
     try:
-        await bot.send_message(chat_id=chat_id, text=ack_text)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=ack_text,
+            reply_markup=admin_review_done_next_kb("review"),
+        )
     except Exception:
         pass
     await _send_review_at_index(bot, chat_id, state, pending, 0)

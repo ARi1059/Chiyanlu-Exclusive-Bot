@@ -211,6 +211,48 @@ def admin_review_tasks_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+# UX-2 第二项：审核完成后快捷动作 ============================================
+
+_REVIEW_DONE_ENTRY = {
+    # kind → 各自审核入口 callback（重新进入 = 看下一条待审，或显示空状态）
+    "edit": "review:enter",          # 老师资料审核
+    "review": "rreview:enter",       # 评价审核
+    "reimburse": "reimburse:enter",  # 报销审核
+}
+
+
+def admin_review_done_next_kb(kind: str) -> InlineKeyboardMarkup:
+    """审核完成后的快捷动作面板（UX-2 第二项）。
+
+    在「老师资料 / 评价 / 报销」三类审核 approve / reject 成功后，紧跟 ack 消息
+    给出两个快捷按钮：
+
+        [➡️ 处理下一条] → 各自 entry callback（review:enter / rreview:enter /
+                          reimburse:enter）：重新进入入口看下一条待审，或显示空状态
+        [⬅️ 返回审核处理] → admin:review_tasks：回到审核处理二级页
+
+    与既有「自动推下一条详情」流程互补：自动推送负责高频路径，本快捷按钮
+    给「不想看下一条 / 错过推送 / 想换审核类型」的管理员一个明确出口。
+
+    Args:
+        kind: "edit" / "review" / "reimburse"，分别对应三类审核。
+
+    Raises:
+        ValueError: 传入非预期 kind。
+    """
+    try:
+        entry = _REVIEW_DONE_ENTRY[kind]
+    except KeyError as e:
+        raise ValueError(
+            f"admin_review_done_next_kb: 未知 kind={kind!r}，"
+            f"期望 {sorted(_REVIEW_DONE_ENTRY)}"
+        ) from e
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➡️ 处理下一条", callback_data=entry)],
+        [InlineKeyboardButton(text="⬅️ 返回审核处理", callback_data="admin:review_tasks")],
+    ])
+
+
 def admin_dashboard_kb() -> InlineKeyboardMarkup:
     """二级「📊 数据看板」面板：聚合三个只读看板入口 + 返回后台
 

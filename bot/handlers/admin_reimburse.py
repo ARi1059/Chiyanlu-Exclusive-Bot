@@ -39,6 +39,7 @@ from bot.database import (
     sum_approved_reimbursements_in_month,
 )
 from bot.keyboards.admin_kb import (
+    admin_review_done_next_kb,
     main_menu_kb,
     reimburse_action_kb,
     reimburse_empty_kb,
@@ -392,7 +393,10 @@ async def on_reimburse_reject_reason(message: types.Message, state: FSMContext):
         logger.info("通知报销驳回失败 uid=%s: %s", reimb["user_id"], e)
 
     await state.clear()
-    await message.answer(f"✅ 已驳回 #{rid}")
+    await message.answer(
+        f"✅ 已驳回 #{rid}",
+        reply_markup=admin_review_done_next_kb("reimburse"),
+    )
     # 推下一条
     pending = await list_pending_reimbursements(limit=1)
     if pending:

@@ -31,6 +31,7 @@ from bot.database import (
     reject_edit_request,
 )
 from bot.keyboards.admin_kb import (
+    admin_review_done_next_kb,
     main_menu_kb,
     review_action_kb,
     review_empty_kb,
@@ -477,7 +478,8 @@ async def _perform_reject_from_message(
                 reason,
             )
             await message.answer(
-                f"❌ 已驳回（原因已推送给老师）\n请求 ID: {request_id}"
+                f"❌ 已驳回（原因已推送给老师）\n请求 ID: {request_id}",
+                reply_markup=admin_review_done_next_kb("edit"),
             )
         else:
             await message.answer("⚠️ 驳回操作失败")

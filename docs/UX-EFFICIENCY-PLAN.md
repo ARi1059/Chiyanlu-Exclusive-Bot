@@ -658,6 +658,7 @@ Bot 内（**只读展示**）：
 进度（2026-05）：
 
 - 第一项已落地：审核处理 badge 优化。`main_menu_kb` 综合 badge（超管=老师资料+评价+报销 pending；普通管理员=老师资料 pending；queued **不计入** 主菜单总数）与 `admin_review_tasks_kb` 各按钮独立 badge（老师资料 / 评价 / 报销 / queued）均已在前序 commit 实现；caller wiring（`_build_main_menu_kb` 与 `cb_admin_review_tasks` 把全部 pending count 传给 keyboard）以及 0 不显示括号、非超管不可见超管入口等所有契约由新增的 `tests/test_admin_review_tasks_badges.py`（14 个 test）集中锁定。本项**未触动**任何审核业务 handler / service / 迁移。
+- 第二项已落地：审核完成后增加「处理下一条 / 返回审核处理」快捷按钮。新增 `admin_review_done_next_kb(kind)` helper（kind ∈ `edit`/`review`/`reimburse`），在三个 handler 共 4 处 ack 消息（`admin_review.py` FSM 驳回、`rreview_admin.py` 通过/驳回、`admin_reimburse.py` FSM 驳回）上挂载 reply_markup。与既有「自动推下一条详情」流程互补，给"想换审核类型 / 错过推送 / 想停下"的管理员一个出口。零修改审核通过/驳回业务逻辑、callback 含义、schema；契约由 `tests/test_admin_review_next_actions.py`（20 个 test）集中锁定。
 
 ### Sprint UX-3：用户找老师提效
 
