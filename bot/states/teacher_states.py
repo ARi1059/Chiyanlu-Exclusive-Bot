@@ -167,14 +167,24 @@ class LotteryEditStates(StatesGroup):
 
 
 class LotteryCreateStates(StatesGroup):
-    """Phase L.1：超管创建抽奖 10 步 FSM（spec §3.3）
+    """Phase L.1 + UX-9.5：超管创建抽奖 11 步 FSM（原 10 步，UX-9.5 把
+    entry_cost_points 升为主线 Step 8）。
 
     state.data 累加：
         name / description / cover_file_id /
         entry_method ('button'|'code') / entry_code (仅 code) /
         prize_count / prize_description /
         required_chat_ids (list[int]) /
+        entry_cost_points (int, UX-9.5 主线必填) /
         publish_mode ('immediate'|'scheduled') / publish_at / draw_at
+
+    步骤序号（spec §3.3 + UX-9.5 修订）：
+        Step 1 name → Step 2 description → Step 3 cover →
+        Step 4 entry_method → (Step 4.5 entry_code, code 模式) →
+        Step 5 prize_count → Step 6 prize_description →
+        Step 7 required_chats → **Step 8 entry_cost（UX-9.5 新增）** →
+        Step 9 publish_mode → (Step 9b publish_at, scheduled 模式) →
+        Step 10 draw_at → Step 11 confirm
     """
     waiting_name              = State()
     waiting_description       = State()
@@ -186,11 +196,13 @@ class LotteryCreateStates(StatesGroup):
     waiting_prize_description = State()
     waiting_required_chats    = State()
     waiting_required_chat_id  = State()
+    waiting_entry_cost        = State()  # UX-9.5：主线 Step 8 入口
     waiting_publish_mode      = State()
     waiting_publish_at        = State()
     waiting_draw_at           = State()
     waiting_confirm           = State()
-    waiting_entry_cost_input  = State()  # Step 10 确认页 [💰 设置参与所需积分] 子流程
+    waiting_entry_cost_input  = State()  # 确认页 [💰 设置参与所需积分] 返修入口
+                                         # （UX-9.5：保留旧 callback 兼容；与 waiting_entry_cost 区分）
 
 
 class UserReviewsHomeStates(StatesGroup):

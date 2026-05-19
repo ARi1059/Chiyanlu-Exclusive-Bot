@@ -108,7 +108,7 @@ async def cb_admin_lottery(callback: types.CallbackQuery, state: FSMContext):
     n = await count_lotteries_by_status()
     text = (
         "🎲 抽奖管理\n\n"
-        "- ➕ 创建新抽奖：完整 10 步流程录入草稿\n"
+        "- ➕ 创建新抽奖：完整 11 步流程录入草稿\n"
         "- 📋 抽奖列表：按状态查看所有抽奖（草稿 / 已计划 / 进行中 / 已开奖 / 已取消）\n\n"
         f"当前共 {n} 条抽奖记录。"
     )
@@ -1075,9 +1075,10 @@ async def on_lottery_edit_value(message: types.Message, state: FSMContext):
     )
 
 
-# ============ 创建 10 步 FSM (Phase L.1.2) ============
+# ============ 创建 11 步 FSM (Phase L.1.2 + UX-9.5 主线 entry_cost) ============
 
-# 各步序号在 spec §3.3 中（含 Step 4.5 / 5 子分支）；UI 显示 Step N/10
+# 各步序号在 spec §3.3 中（含 Step 4.5 / 5 子分支）；UI 显示 Step N/11
+# UX-9.5：entry_cost_points 升为主线 Step 8（原 8/9/10 步序号 +1）
 _NAME_MAX = 30
 _DESCRIPTION_MAX = 500
 _ENTRY_CODE_MAX = 20
@@ -1118,7 +1119,7 @@ async def cb_admin_lottery_create(callback: types.CallbackQuery, state: FSMConte
     await state.set_state(LotteryCreateStates.waiting_name)
     await state.set_data({"required_chat_ids": []})
     await callback.message.edit_text(
-        "🎲 创建新抽奖（Step 1/10）\n\n"
+        "🎲 创建新抽奖（Step 1/11）\n\n"
         "请输入抽奖名称（≤ 30 字）。\n"
         "/cancel 取消。",
         reply_markup=lottery_create_cancel_kb(),
@@ -1168,7 +1169,7 @@ async def on_name(message: types.Message, state: FSMContext):
     await state.update_data(name=text)
     await state.set_state(LotteryCreateStates.waiting_description)
     await message.answer(
-        f"🎲 创建抽奖（Step 2/10）\n\n"
+        f"🎲 创建抽奖（Step 2/11）\n\n"
         f"请输入活动规则 / 备注（1-{_DESCRIPTION_MAX} 字）。",
         reply_markup=lottery_create_cancel_kb(),
     )
@@ -1188,7 +1189,7 @@ async def on_description(message: types.Message, state: FSMContext):
     await state.update_data(description=text)
     await state.set_state(LotteryCreateStates.waiting_cover)
     await message.answer(
-        "🎲 创建抽奖（Step 3/10）\n\n"
+        "🎲 创建抽奖（Step 3/11）\n\n"
         "请发送一张封面图（可跳过）。",
         reply_markup=lottery_create_skip_cancel_kb(),
     )
@@ -1203,7 +1204,7 @@ async def on_cover_photo(message: types.Message, state: FSMContext):
     await state.update_data(cover_file_id=fid)
     await state.set_state(LotteryCreateStates.waiting_entry_method)
     await message.answer(
-        "🎲 创建抽奖（Step 4/10）\n\n"
+        "🎲 创建抽奖（Step 4/11）\n\n"
         "请选择参与方式：",
         reply_markup=lottery_create_method_kb(),
     )
@@ -1215,7 +1216,7 @@ async def cb_lottery_c_skip_cover(callback: types.CallbackQuery, state: FSMConte
     await state.update_data(cover_file_id=None)
     await state.set_state(LotteryCreateStates.waiting_entry_method)
     await callback.message.edit_text(
-        "🎲 创建抽奖（Step 4/10）\n\n"
+        "🎲 创建抽奖（Step 4/11）\n\n"
         "请选择参与方式：",
         reply_markup=lottery_create_method_kb(),
     )
@@ -1247,7 +1248,7 @@ async def cb_lottery_c_method(callback: types.CallbackQuery, state: FSMContext):
     if method == "code":
         await state.set_state(LotteryCreateStates.waiting_entry_code)
         await callback.message.edit_text(
-            f"🎲 创建抽奖（Step 4.5/10）\n\n"
+            f"🎲 创建抽奖（Step 4.5/11）\n\n"
             f"请输入抽奖口令（1-{_ENTRY_CODE_MAX} 字，区分中英文，全局唯一）。\n"
             "用户在私聊里发该口令参与抽奖。",
             reply_markup=lottery_create_cancel_kb(),
@@ -1284,7 +1285,7 @@ async def on_entry_code(message: types.Message, state: FSMContext):
 async def _enter_prize_count_step(msg_or_cb, state: FSMContext, *, via_edit: bool):
     await state.set_state(LotteryCreateStates.waiting_prize_count)
     text = (
-        f"🎲 创建抽奖（Step 5/10）\n\n"
+        f"🎲 创建抽奖（Step 5/11）\n\n"
         f"请选择中奖人数（1-{_PRIZE_COUNT_MAX}），点击下方按钮或自定义：")
     kb = lottery_create_prize_count_kb()
     if via_edit and isinstance(msg_or_cb, types.CallbackQuery):
@@ -1318,7 +1319,7 @@ async def cb_lottery_c_count(callback: types.CallbackQuery, state: FSMContext):
 async def cb_lottery_c_count_custom(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(LotteryCreateStates.waiting_prize_count_input)
     await callback.message.edit_text(
-        f"🎲 创建抽奖（Step 5b/10）\n\n"
+        f"🎲 创建抽奖（Step 5b/11）\n\n"
         f"请输入中奖人数（{_PRIZE_COUNT_MIN}-{_PRIZE_COUNT_MAX} 整数）。",
         reply_markup=lottery_create_cancel_kb(),
     )
@@ -1348,7 +1349,7 @@ async def on_prize_count_input(message: types.Message, state: FSMContext):
 async def _enter_prize_description_step(msg_or_cb, state: FSMContext, *, via_edit: bool):
     await state.set_state(LotteryCreateStates.waiting_prize_description)
     text = (
-        f"🎲 创建抽奖（Step 6/10）\n\n"
+        f"🎲 创建抽奖（Step 6/11）\n\n"
         f"请描述奖品（1-{_PRIZE_DESCRIPTION_MAX} 字）。"
     )
     kb = lottery_create_cancel_kb()
@@ -1384,7 +1385,7 @@ async def _enter_required_chats_step(msg_or_cb, state: FSMContext):
     data = await state.get_data()
     n = len(data.get("required_chat_ids") or [])
     text = (
-        f"🎲 创建抽奖（Step 7/10）\n\n"
+        f"🎲 创建抽奖（Step 7/11）\n\n"
         f"请添加本次抽奖要求用户必关的频道/群组（≥ 1 项）。\n"
         f"bot 必须已加入对应频道才能添加成功。\n\n"
         f"当前已添加：{n} 项"
@@ -1454,17 +1455,73 @@ async def cb_lottery_c_req_done(callback: types.CallbackQuery, state: FSMContext
     if not chats:
         await callback.answer("至少添加 1 个必关频道/群组", show_alert=True)
         return
+    # UX-9.5：必关频道完成后进主线 entry_cost step（原直接进 publish_mode）
+    await _enter_entry_cost_step(callback, state)
+    await callback.answer()
+
+
+# ---- Step 8: entry_cost（UX-9.5 主线必填）----
+
+async def _enter_entry_cost_step(msg_or_cb, state: FSMContext):
+    """UX-9.5：必关频道完成后进入主线 entry_cost 步骤（Step 8/11）。
+
+    与确认页 [💰 设置参与所需积分] 返修入口（waiting_entry_cost_input）
+    使用不同的 state 区分：完成后路径不同
+      - waiting_entry_cost      → 完成后进入 waiting_publish_mode（主线）
+      - waiting_entry_cost_input → 完成后回到 waiting_confirm（返修）
+    """
+    await state.set_state(LotteryCreateStates.waiting_entry_cost)
+    data = await state.get_data()
+    current = int(data.get("entry_cost_points") or 0)
+    chats = data.get("required_chat_ids") or []
+    current_label = f"{current} 积分" if current > 0 else "免费（0 积分）"
+    text = (
+        f"🎲 创建抽奖（Step 8/11）\n\n"
+        f"已添加 {len(chats)} 个必关频道。\n\n"
+        f"💰 设置参与所需积分（0-1000000）：\n"
+        f"当前值：{current_label}\n\n"
+        f"请输入整数（0 = 免费；> 0 时用户参与会自动扣分，余额不足无法参与）。"
+    )
+    kb = lottery_create_cancel_kb()
+    if isinstance(msg_or_cb, types.CallbackQuery):
+        try:
+            await msg_or_cb.message.edit_text(text, reply_markup=kb)
+            return
+        except Exception:
+            await msg_or_cb.message.answer(text, reply_markup=kb)
+    else:
+        await msg_or_cb.answer(text, reply_markup=kb)
+
+
+@router.message(LotteryCreateStates.waiting_entry_cost, F.text)
+@_super_admin_required
+async def on_entry_cost_mainline(message: types.Message, state: FSMContext):
+    """UX-9.5：主线 entry_cost 输入处理。成功后进入 waiting_publish_mode。"""
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        return await cmd_cancel_lottery_create(message, state)
+    if not text.lstrip("-").isdigit():
+        await message.reply("❌ 请输入整数（0-1000000）。")
+        return
+    n = int(text)
+    if not (0 <= n <= 1000000):
+        await message.reply("❌ 取值范围 0-1000000。")
+        return
+    await state.update_data(entry_cost_points=n)
+    label = f"{n} 积分" if n > 0 else "免费"
+    await message.answer(f"✅ 参与所需积分已设为：{label}")
+    # 进入 Step 9：publish_mode
     await state.set_state(LotteryCreateStates.waiting_publish_mode)
-    await callback.message.edit_text(
-        f"🎲 创建抽奖（Step 8/10）\n\n"
+    chats = (await state.get_data()).get("required_chat_ids") or []
+    await message.answer(
+        f"🎲 创建抽奖（Step 9/11）\n\n"
         f"已添加 {len(chats)} 个必关频道。\n\n"
         "请选择发布模式：",
         reply_markup=lottery_create_publish_mode_kb(),
     )
-    await callback.answer()
 
 
-# ---- Step 8: publish_mode ----
+# ---- Step 9: publish_mode ----
 
 @router.callback_query(F.data.startswith("admin:lottery:c_pub:"))
 @_super_admin_required
@@ -1482,7 +1539,7 @@ async def cb_lottery_c_pub(callback: types.CallbackQuery, state: FSMContext):
     else:
         await state.set_state(LotteryCreateStates.waiting_publish_at)
         await callback.message.edit_text(
-            "🎲 创建抽奖（Step 8b/10）\n\n"
+            "🎲 创建抽奖（Step 9b/11）\n\n"
             "请输入发布时间（YYYY-MM-DD HH:MM，例：2026-05-20 14:00）。\n"
             f"时区：{config.timezone}",
             reply_markup=lottery_create_cancel_kb(),
@@ -1509,12 +1566,12 @@ async def on_publish_at(message: types.Message, state: FSMContext):
     await _enter_draw_at_step(message, state)
 
 
-# ---- Step 9: draw_at ----
+# ---- Step 10: draw_at ----
 
 async def _enter_draw_at_step(msg_or_cb, state: FSMContext):
     await state.set_state(LotteryCreateStates.waiting_draw_at)
     text = (
-        f"🎲 创建抽奖（Step 9/10）\n\n"
+        f"🎲 创建抽奖（Step 10/11）\n\n"
         "请输入开奖时间（YYYY-MM-DD HH:MM，必须晚于发布时间）。\n"
         f"时区：{config.timezone}"
     )
@@ -1570,7 +1627,7 @@ async def _enter_confirm_step(msg_or_cb, state: FSMContext):
     pub_label = "⚡ 立即发布" if pub_mode == "immediate" else "⏰ 定时发布"
 
     lines = [
-        "🎲 创建抽奖（Step 10/10 确认）",
+        "🎲 创建抽奖（Step 11/11 确认）",
         "━━━━━━━━━━━━━━━",
         f"🏷 名称：{data.get('name', '?')}",
         f"📋 规则：{data.get('description', '?')[:100]}",
@@ -1607,7 +1664,7 @@ async def _enter_confirm_step(msg_or_cb, state: FSMContext):
 @router.callback_query(F.data == "admin:lottery:c_set_cost")
 @_super_admin_required
 async def cb_lottery_c_set_cost(callback: types.CallbackQuery, state: FSMContext):
-    """Step 10 确认页 [💰 设置参与所需积分] → 进 waiting_entry_cost_input"""
+    """Step 11 确认页 [💰 设置参与所需积分] → 进 waiting_entry_cost_input（返修入口）"""
     data = await state.get_data()
     current = int(data.get("entry_cost_points") or 0)
     await state.set_state(LotteryCreateStates.waiting_entry_cost_input)
@@ -1627,7 +1684,7 @@ async def cb_lottery_c_set_cost(callback: types.CallbackQuery, state: FSMContext
 @router.callback_query(F.data == "admin:lottery:c_cost_back")
 @_super_admin_required
 async def cb_lottery_c_cost_back(callback: types.CallbackQuery, state: FSMContext):
-    """设置参与积分子流程取消 → 回 Step 10 确认页"""
+    """设置参与积分子流程取消 → 回 Step 11 确认页"""
     await _enter_confirm_step(callback, state)
     await callback.answer()
 
