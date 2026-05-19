@@ -681,6 +681,7 @@ Bot 内（**只读展示**）：
 进度（2026-05）：
 
 - 第一批已落地：新增「🔎 找老师」分组入口，聚合 4 个找老师 callback（`user:hot` / `user:today` / `user:filter` / `user:search_history`）。`user_main_menu_kb` 新增独占首行 `[🔎 找老师 → user:find]`，原 13 个一级按钮位置完全保留；新增 `user_find_kb()` 二级页含 4 个收纳按钮 + 返回主菜单；新增 `cb_user_find` handler；**刻意不收纳**留存类（`user:favorites` / `user:recent`）、直接搜索（`user:search`）与其它一级 callback。旧入口进入双跑观察期。契约由 `tests/test_user_find_menu.py`（20 个 test）集中锁定。零修改 service / 搜索算法 / 收藏 / 老师详情 / 群关键词 / start_router / schema。
+- 第二批已落地：老师详情页支持来源感知返回按钮。新增 `teacher:view:<id>:from:<source>` 兼容格式（旧格式完全保留 fallback）；`user_kb.py` 加 `TEACHER_VIEW_SOURCES` 白名单 + `format_teacher_view_callback` / `parse_teacher_view_callback` helper；`teacher_detail_kb` 增加 source 参数按映射渲染返回按钮（hot/today/filter/search/history/recent/favorites）；`teacher_detail.cb_teacher_view` 用 parser 解析新格式并把 source 透传到 `_render_detail` → `_build_detail_payload` → `teacher_detail_kb`。已接入 7 个低风险列表生产点：`my_favorites_kb`(favorites) / `recent_views_rich_kb`(recent) / `favorites_rich_kb`(favorites) / `user_search._send_list`(search) / `hot_teachers.cb_user_hot`(hot) / `user_panel.cb_today`(today) / `user_filter._filter_result_kb`(filter)。**刻意不接入**：teacher:similar 子页（回退主菜单） / `start_router` deep link 落地 / 群卡片 v2 兜底 / 评价取消返回详情 / 评价分页返回详情 / user_recommend / user_history reminders（不在 spec 白名单）。契约由 `tests/test_teacher_detail_return_source.py`（41 个 test）集中锁定。零修改搜索算法 / 收藏 / 最近看过 / 老师详情核心逻辑 / schema；callback 字节数全部 ≤ 64 字节 Telegram 限制。
 
 ### Sprint UX-4：老师签到提效
 

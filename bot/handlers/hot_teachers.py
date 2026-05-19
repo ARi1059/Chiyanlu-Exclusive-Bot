@@ -107,6 +107,7 @@ async def cb_user_hot(callback: types.CallbackQuery):
         teachers,
         per_row=1,
         label_fn=_label,
+        source="hot",  # UX-3 第二批：详情页"返回"指向 user:hot
     )
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()

@@ -513,7 +513,10 @@ def test_user_recent_callback_present_in_main_menu_kb():
 
 
 def test_recent_views_rich_kb_has_view_and_refresh_and_back():
-    """rich kb 含 teacher:view:<id> + user:recent:refresh + user:main。"""
+    """rich kb 含 teacher:view:<id>:from:recent + user:recent:refresh + user:main。
+
+    UX-3 第二批：列表 callback 现带 from:recent，让详情页"返回"指向最近看过。
+    """
     from bot.keyboards.user_kb import recent_views_rich_kb
     items = [
         RecentTeacherViewItem(teacher_id=10, display_name="老师A", viewed_at=None),
@@ -521,8 +524,8 @@ def test_recent_views_rich_kb_has_view_and_refresh_and_back():
     ]
     kb = recent_views_rich_kb(items)
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "teacher:view:10" in callbacks
-    assert "teacher:view:20" in callbacks
+    assert "teacher:view:10:from:recent" in callbacks
+    assert "teacher:view:20:from:recent" in callbacks
     assert "user:recent:refresh" in callbacks
     assert "user:main" in callbacks
 
@@ -533,7 +536,7 @@ def test_recent_views_rich_kb_supports_dict_input():
     items = [{"teacher_id": 5, "display_name": "老师 X"}]
     kb = recent_views_rich_kb(items)
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "teacher:view:5" in callbacks
+    assert "teacher:view:5:from:recent" in callbacks
 
 
 def test_recent_views_empty_kb_has_guide_callbacks():

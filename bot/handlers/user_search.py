@@ -157,6 +157,7 @@ async def _send_list(message: types.Message, teachers: list[dict]) -> None:
         sorted_teachers,
         per_row=1,
         label_fn=_label,
+        source="search",  # UX-3 第二批：详情页"返回"指向 user:search
     )
     await message.answer(text, reply_markup=kb)
 

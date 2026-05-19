@@ -184,12 +184,14 @@ async def cb_today(callback: types.CallbackQuery):
         await callback.answer()
         return
 
+    # UX-3 第二批：详情页"返回"指向 user:today
+    from bot.keyboards.user_kb import format_teacher_view_callback
     rows: list[list[types.InlineKeyboardButton]] = []
     row: list[types.InlineKeyboardButton] = []
     for t in teachers:
         row.append(types.InlineKeyboardButton(
             text=build_today_label(t),
-            callback_data=f"teacher:view:{t['user_id']}",
+            callback_data=format_teacher_view_callback(t["user_id"], "today"),
         ))
         if len(row) == 2:
             rows.append(row)

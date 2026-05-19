@@ -507,8 +507,9 @@ def test_favorites_rich_kb_all_mode_callbacks():
     ]
     kb = favorites_rich_kb(items, mode="all")
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "teacher:view:10" in callbacks
-    assert "teacher:view:20" in callbacks
+    # UX-3 第二批：callback 现带 from:favorites
+    assert "teacher:view:10:from:favorites" in callbacks
+    assert "teacher:view:20:from:favorites" in callbacks
     assert "user:favorites:rm:10" in callbacks
     assert "user:favorites:rm:20" in callbacks
     # all 模式下应显示切换到 today 的按钮
@@ -537,7 +538,8 @@ def test_favorites_rich_kb_supports_dict_input():
     items = [{"teacher_id": 5, "display_name": "X"}]
     kb = favorites_rich_kb(items, mode="all")
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "teacher:view:5" in callbacks
+    # UX-3 第二批：callback 现带 from:favorites
+    assert "teacher:view:5:from:favorites" in callbacks
     assert "user:favorites:rm:5" in callbacks
 
 

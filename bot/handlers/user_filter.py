@@ -120,13 +120,17 @@ def _filter_options_kb(options: list[dict]) -> InlineKeyboardMarkup:
 
 
 def _filter_result_kb(teachers: list[dict]) -> InlineKeyboardMarkup:
-    """结果列表按钮（每位老师一行，进入详情页）"""
+    """结果列表按钮（每位老师一行，进入详情页）
+
+    UX-3 第二批：每个老师 callback 带 from:filter，详情页"返回"指向 user:filter。
+    """
+    from bot.keyboards.user_kb import format_teacher_view_callback
     rows: list[list[InlineKeyboardButton]] = []
     for t in teachers:
         label = t.get("button_text") or t.get("display_name") or "?"
         rows.append([InlineKeyboardButton(
             text=label,
-            callback_data=f"teacher:view:{t['user_id']}",
+            callback_data=format_teacher_view_callback(t["user_id"], "filter"),
         )])
     rows.append([
         InlineKeyboardButton(text="🔙 返回筛选", callback_data="user:filter"),

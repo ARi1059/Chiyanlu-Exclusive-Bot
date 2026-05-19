@@ -86,8 +86,14 @@ def format_teacher_detail_text(
 async def _build_detail_payload(
     user_id: int,
     teacher: dict,
+    *,
+    source: str = "main",
 ) -> tuple[str, types.InlineKeyboardMarkup]:
-    """聚合详情页文本 + 键盘，供本文件和 user_search 共用"""
+    """聚合详情页文本 + 键盘，供本文件和 user_search 共用。
+
+    UX-3 第二批：source 参数（默认 "main"）透传给 teacher_detail_kb，决定
+    底部"返回 X"按钮目标。
+    """
     today = _today_str()
     is_signed_in = await is_checked_in(teacher["user_id"], today)
     is_fav = await is_favorited(user_id, teacher["user_id"])
@@ -154,6 +160,7 @@ async def _build_detail_payload(
         is_favorited=is_fav,
         notify_enabled=notify_enabled,
         review_count=review_count,
+        source=source,
     )
     return text, kb
 
@@ -164,12 +171,14 @@ async def send_teacher_detail_message(
     teacher: dict,
     *,
     record_view: bool = True,
+    source: str = "main",
 ) -> None:
     """以"新消息"的形式发送详情页（用于 message handler 场景，如搜索 FSM 收到文字）
 
     callback 场景请改用 _render_detail（edit_text）。
+    UX-3 第二批：source 参数透传给 _build_detail_payload（默认 "main"）。
     """
-    text, kb = await _build_detail_payload(user_id, teacher)
+    text, kb = await _build_detail_payload(user_id, teacher, source=source)
     await message.answer(text, reply_markup=kb)
     if record_view:
         await record_teacher_view(user_id, teacher["user_id"])
@@ -184,8 +193,12 @@ async def _render_detail(
     teacher_id: int,
     *,
     record_view: bool,
+    source: str = "main",
 ) -> None:
-    """以"编辑当前消息"的形式渲染详情页（用于 callback 场景）"""
+    """以"编辑当前消息"的形式渲染详情页（用于 callback 场景）。
+
+    UX-3 第二批：source 参数透传给 _build_detail_payload（默认 "main"）。
+    """
     teacher = await get_teacher(teacher_id)
     if not teacher or not teacher.get("is_active"):
         await callback.answer("该老师暂不可查看", show_alert=True)
@@ -205,7 +218,7 @@ async def _render_detail(
             user.id, teacher_id, "view_teacher",
         )
 
-    text, kb = await _build_detail_payload(user.id, teacher)
+    text, kb = await _build_detail_payload(user.id, teacher, source=source)
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except Exception:
@@ -218,18 +231,25 @@ async def _render_detail(
 
 @router.callback_query(F.data.startswith("teacher:view:"))
 async def cb_teacher_view(callback: types.CallbackQuery):
-    """打开老师详情页（仅私聊场景）"""
+    """打开老师详情页（仅私聊场景）。
+
+    UX-3 第二批：兼容两种 callback 格式——
+        teacher:view:<id>               → source="main"
+        teacher:view:<id>:from:<source> → source 透传到 teacher_detail_kb 决定返回按钮
+    白名单外 / 解析失败的 source 自动回退 "main"，详情正文与按钮顺序不变。
+    """
     if callback.message and callback.message.chat.type != "private":
         await callback.answer("详情页仅在私聊中可用", show_alert=True)
         return
 
+    from bot.keyboards.user_kb import parse_teacher_view_callback
     try:
-        teacher_id = int(callback.data[len("teacher:view:"):])
+        teacher_id, source = parse_teacher_view_callback(callback.data)
     except ValueError:
         await callback.answer("⚠️ 无效操作")
         return
 
-    await _render_detail(callback, teacher_id, record_view=True)
+    await _render_detail(callback, teacher_id, record_view=True, source=source)
     await callback.answer()
 
 

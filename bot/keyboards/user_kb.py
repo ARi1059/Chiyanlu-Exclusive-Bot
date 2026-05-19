@@ -7,6 +7,75 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from bot.utils.url import normalize_url
 
 
+# ============ UX-3 第二批：teacher:view 来源感知 helper ============
+#
+# 设计：
+#   旧 callback：teacher:view:<id>
+#   新 callback：teacher:view:<id>:from:<source>  （source 在白名单内）
+#
+#   cb_teacher_view 一律走 parse_teacher_view_callback 解析；
+#   产生 callback 的 kb / handler 走 format_teacher_view_callback；
+#   teacher_detail_kb 根据 source 渲染对应"返回 X"按钮，未知 source 回退 main。
+#
+#   白名单严格限制——任意字符串都不会被当作有效 source 使用。
+
+TEACHER_VIEW_SOURCES: frozenset[str] = frozenset({
+    "main", "hot", "today", "filter",
+    "search", "history", "recent", "favorites", "similar",
+})
+
+# (按钮文案, 返回 callback) — 详情页底部"返回 X"按钮配置
+_BACK_BUTTON_BY_SOURCE: dict[str, tuple[str, str]] = {
+    "main":      ("🔙 返回主菜单",   "user:main"),
+    "hot":       ("🔙 返回热门推荐", "user:hot"),
+    "today":     ("🔙 返回今日可约", "user:today"),
+    "filter":    ("🔙 返回条件筛选", "user:filter"),
+    "search":    ("🔙 返回搜索",     "user:search"),
+    "history":   ("🔙 返回搜索历史", "user:search_history"),
+    "recent":    ("🔙 返回最近看过", "user:recent"),
+    "favorites": ("🔙 返回我的收藏", "user:favorites"),
+    # similar 比较特殊：相似推荐点击其它老师后的详情页，本批不引入"返回相似"
+    # 返回按钮——直接回退主菜单，避免造成跨老师对比链回环
+    "similar":   ("🔙 返回主菜单",   "user:main"),
+}
+
+
+def format_teacher_view_callback(teacher_id: int, source: str = "main") -> str:
+    """生成 teacher:view callback 字符串。
+
+    - source 在白名单内且非 "main" → "teacher:view:<id>:from:<source>"
+    - source 为 "main" 或不在白名单 → "teacher:view:<id>"（与旧格式完全一致）
+
+    旧调用方传 source="main" 或不传，得到的字符串与旧格式逐字相同；新调用方
+    传业务来源得到带 source 的格式。
+    """
+    if source != "main" and source in TEACHER_VIEW_SOURCES:
+        return f"teacher:view:{teacher_id}:from:{source}"
+    return f"teacher:view:{teacher_id}"
+
+
+def parse_teacher_view_callback(data: str) -> tuple[int, str]:
+    """解析 teacher:view callback 字符串，返回 (teacher_id, source)。
+
+    支持两种格式：
+        teacher:view:<id>               → (id, "main")
+        teacher:view:<id>:from:<src>    → (id, src) if src ∈ TEACHER_VIEW_SOURCES else (id, "main")
+
+    source 不在白名单时回退 "main"；teacher_id 解析失败抛 ValueError，由
+    cb_teacher_view 兜底（保留与旧实现一致的失败语义）。
+    """
+    prefix = "teacher:view:"
+    if not data.startswith(prefix):
+        raise ValueError(f"不是 teacher:view callback: {data!r}")
+    rest = data[len(prefix):]
+    parts = rest.split(":from:", 1)
+    teacher_id = int(parts[0])  # 旧实现同样直接 int()，失败语义一致
+    source = parts[1] if len(parts) == 2 else "main"
+    if source not in TEACHER_VIEW_SOURCES:
+        source = "main"
+    return teacher_id, source
+
+
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
@@ -182,7 +251,8 @@ def my_favorites_kb(favorites: list[dict]) -> InlineKeyboardMarkup:
         label = f"{t['display_name']} · {t['region']} · {t['price']}"
         teacher_btn = InlineKeyboardButton(
             text=label,
-            callback_data=f"teacher:view:{t['user_id']}",
+            # UX-3 第二批：附带 from:favorites，详情页"返回"指向我的收藏
+            callback_data=format_teacher_view_callback(t["user_id"], "favorites"),
         )
         rm_btn = InlineKeyboardButton(
             text="❌",
@@ -240,8 +310,9 @@ def teacher_detail_kb(
     is_favorited: bool,
     notify_enabled: bool = True,
     review_count: int = 0,
+    source: str = "main",
 ) -> InlineKeyboardMarkup:
-    """老师详情页按钮组（Phase 9.6：5 行布局，新增 [📖 查看全部评价]）
+    """老师详情页按钮组（Phase 9.6：5 行布局；UX-3 第二批：返回按钮按来源切换）
 
     布局：
         [📩 联系老师]                              ← button_url 有效时显示
@@ -249,12 +320,24 @@ def teacher_detail_kb(
         [📖 查看全部评价 (N)]                       ← review_count > 0 时显示（9.6）
         [✨ 相似推荐]
         [📝 写评价]                                 ← 9.3 已加
-        [🔙 返回主菜单]
+        [🔙 返回 X]                                 ← UX-3 第二批：X 随 source 切换
 
     提醒按钮 3 态（Phase 7.3 §四）：
         - 未收藏              → "🔔 TA 开课提醒"
         - 已收藏 + notify=1   → "🔔 已开启提醒"
         - 已收藏 + notify=0   → "🔕 提醒已关闭，点击开启"
+
+    UX-3 第二批：source 参数（默认 "main"）决定底部返回按钮：
+        source=hot       → "🔙 返回热门推荐"     user:hot
+        source=today     → "🔙 返回今日可约"     user:today
+        source=filter    → "🔙 返回条件筛选"     user:filter
+        source=search    → "🔙 返回搜索"         user:search
+        source=history   → "🔙 返回搜索历史"     user:search_history
+        source=recent    → "🔙 返回最近看过"     user:recent
+        source=favorites → "🔙 返回我的收藏"     user:favorites
+        source=similar / main / 未知 → "🔙 返回主菜单"  user:main
+
+    收藏 / 写评价 / 相似推荐等其它按钮 callback 完全不变。
     """
     teacher_id = teacher["user_id"]
     fav_text = "✅ 已收藏，点击取消" if is_favorited else "⭐ 收藏"
@@ -314,10 +397,11 @@ def teacher_detail_kb(
         ),
     ])
 
-    # 返回主菜单
-    rows.append([
-        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
-    ])
+    # 返回按钮（UX-3 第二批：按 source 渲染）
+    back_text, back_cb = _BACK_BUTTON_BY_SOURCE.get(
+        source, _BACK_BUTTON_BY_SOURCE["main"],
+    )
+    rows.append([InlineKeyboardButton(text=back_text, callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -327,6 +411,7 @@ def teacher_detail_list_kb(
     per_row: int = 1,
     label_fn: Optional[Callable[[dict], str]] = None,
     extra_back_buttons: Optional[list[list[InlineKeyboardButton]]] = None,
+    source: str = "main",
 ) -> InlineKeyboardMarkup:
     """老师列表 keyboard：每个按钮进入 teacher:view 详情页
 
@@ -335,6 +420,10 @@ def teacher_detail_list_kb(
         per_row: 每行多少个老师按钮（默认 1）
         label_fn: 自定义按钮文案，默认为 display_name
         extra_back_buttons: 自定义返回按钮行；默认仅一行"🔙 返回主菜单"
+        source: UX-3 第二批—— 列表的"业务来源"，决定每个老师 callback 是否
+                附带 ":from:<source>" 后缀；source="main"（默认）与旧格式一致。
+                调用方按入口语义传值：搜索结果 → "search"；热门 → "hot"；
+                今日 → "today"；条件筛选 → "filter"；最近 → "recent"；收藏 → "favorites"。
     """
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -342,7 +431,7 @@ def teacher_detail_list_kb(
         label = label_fn(t) if label_fn else t["display_name"]
         row.append(InlineKeyboardButton(
             text=label,
-            callback_data=f"teacher:view:{t['user_id']}",
+            callback_data=format_teacher_view_callback(t["user_id"], source),
         ))
         if len(row) == per_row:
             rows.append(row)
@@ -391,7 +480,8 @@ def recent_views_rich_kb(items: list) -> InlineKeyboardMarkup:
             label = label[:39] + "…"
         rows.append([InlineKeyboardButton(
             text=label,
-            callback_data=f"teacher:view:{teacher_id}",
+            # UX-3 第二批：附带 from:recent，详情页"返回"指向最近看过
+            callback_data=format_teacher_view_callback(teacher_id, "recent"),
         )])
     rows.append([
         InlineKeyboardButton(text="🔄 刷新", callback_data="user:recent:refresh"),
@@ -438,13 +528,15 @@ def favorites_rich_kb(items: list, mode: str = "all") -> InlineKeyboardMarkup:
         label = f"📋 #{i} {display_name}"
         if len(label) > 40:
             label = label[:39] + "…"
+        # UX-3 第二批：附带 from:favorites，详情页"返回"指向我的收藏
+        view_cb = format_teacher_view_callback(teacher_id, "favorites")
         rows.append([InlineKeyboardButton(
-            text=label, callback_data=f"teacher:view:{teacher_id}",
+            text=label, callback_data=view_cb,
         )])
         rows.append([
             InlineKeyboardButton(
                 text="👀 查看详情",
-                callback_data=f"teacher:view:{teacher_id}",
+                callback_data=view_cb,
             ),
             InlineKeyboardButton(
                 text="❌ 取消收藏",
