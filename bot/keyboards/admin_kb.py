@@ -1159,6 +1159,8 @@ def review_action_kb(
     ]
     if nav:
         rows.append(nav)
+    # UX-4.6：先回审核处理（上下文），再保留旧的主菜单兜底
+    rows.append([InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")])
     rows.append([InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1175,8 +1177,9 @@ def review_reject_choice_kb(request_id: int) -> InlineKeyboardMarkup:
 
 
 def review_empty_kb() -> InlineKeyboardMarkup:
-    """审核队列为空时的返回按钮"""
+    """审核队列为空时的返回按钮（UX-4.6：先回审核处理，再保留主菜单兜底）"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 
@@ -1207,6 +1210,8 @@ def rreview_action_kb(
         nav.append(InlineKeyboardButton(text="➡️ 下一条", callback_data=f"rreview:nav:next:{review_id}"))
     if nav:
         rows.append(nav)
+    # UX-4.6：先回审核处理（上下文），再保留旧的主面板兜底
+    rows.append([InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")])
     rows.append([InlineKeyboardButton(text="🔙 返回主面板", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1227,8 +1232,9 @@ def rreview_reject_choice_kb(review_id: int) -> InlineKeyboardMarkup:
 
 
 def rreview_empty_kb() -> InlineKeyboardMarkup:
-    """报告审核队列为空"""
+    """报告审核队列为空（UX-4.6：先回审核处理，再保留主面板兜底）"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")],
         [InlineKeyboardButton(text="🔙 返回主面板", callback_data="menu:main")],
     ])
 
@@ -1666,7 +1672,7 @@ def lottery_create_cost_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def reimburse_action_kb(reimb_id: int, user_id: int) -> InlineKeyboardMarkup:
-    """报销详情页操作按钮"""
+    """报销详情页操作按钮（UX-4.6：先回审核处理，再保留主菜单兜底）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ 通过",   callback_data=f"reimburse:approve:{reimb_id}"),
@@ -1674,13 +1680,15 @@ def reimburse_action_kb(reimb_id: int, user_id: int) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="🔄 重置该用户本周",
                               callback_data=f"reimburse:reset:{user_id}:{reimb_id}")],
+        [InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 
 
 def reimburse_empty_kb() -> InlineKeyboardMarkup:
-    """无待审核报销时显示"""
+    """无待审核报销时显示（UX-4.6：先回审核处理，再保留主菜单兜底）"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回审核处理", callback_data="admin:review_tasks")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
     ])
 
