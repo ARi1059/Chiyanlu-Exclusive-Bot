@@ -17,7 +17,10 @@ from bot.database import (
     get_teacher,
     list_approved_reviews,
 )
-from bot.keyboards.user_kb import review_list_pagination_kb
+from bot.keyboards.user_kb import (
+    review_list_empty_kb,
+    review_list_pagination_kb,
+)
 from bot.utils.review_detail_render import (
     REVIEWS_PAGE_SIZE,
     fetch_signer_names,
@@ -66,7 +69,24 @@ async def cb_teacher_reviews(callback: types.CallbackQuery):
 
     total = await count_approved_reviews(teacher_id)
     if total == 0:
-        await callback.answer("该老师暂无评价", show_alert=True)
+        # UX-8.3：把"暂无评价" alert 改为完整页面 + [📝 写第一条评价] CTA
+        teacher_name = teacher.get("display_name", "?")
+        empty_text = (
+            f"📖 {teacher_name} 的评价列表\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"暂无评价 · 做第一个评价的人 🎉\n"
+            f"━━━━━━━━━━━━━━━\n\n"
+            f"💡 提交评价可获得积分；满足条件还能申请报销。"
+        )
+        try:
+            await callback.message.edit_text(
+                empty_text,
+                reply_markup=review_list_empty_kb(teacher_id),
+            )
+        except Exception:
+            # edit 失败（如同文本）→ 仍 ack callback 避免按钮显示 loading
+            pass
+        await callback.answer()
         return
     total_pages = (total + REVIEWS_PAGE_SIZE - 1) // REVIEWS_PAGE_SIZE
     page = min(page, total_pages - 1)  # 边界保护

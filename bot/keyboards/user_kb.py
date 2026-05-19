@@ -703,6 +703,25 @@ def search_suggestion_kb(keywords: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def review_list_empty_kb(teacher_id: int) -> InlineKeyboardMarkup:
+    """评价列表空状态 keyboard（UX-8.3）。
+
+    某老师 0 评价时 cb_teacher_reviews 渲染的页面 keyboard：
+        [📝 写第一条评价]   → review:start:<teacher_id>（既有 callback，无新增）
+        [🔙 返回老师详情]   → teacher:view:<teacher_id>
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📝 写第一条评价",
+            callback_data=f"review:start:{teacher_id}",
+        )],
+        [InlineKeyboardButton(
+            text="🔙 返回老师详情",
+            callback_data=f"teacher:view:{teacher_id}",
+        )],
+    ])
+
+
 def review_list_pagination_kb(
     teacher_id: int,
     page: int,

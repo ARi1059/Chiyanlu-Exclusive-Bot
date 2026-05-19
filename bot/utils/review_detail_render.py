@@ -54,13 +54,16 @@ def anonymize_signer(first_name: Optional[str]) -> str:
 def format_review_stats_block(stats: Optional[dict]) -> str:
     """详情页统计块（4 行，spec §5 格式）
 
-    stats 为 None 或 review_count == 0 → 返回 ""（详情页省略整段）。
+    stats 为 None → 返回 ""（详情页省略整段）。
+    review_count == 0 → 返回单行"📊 0 条车评，欢迎首评 🎉"
+        （UX-8.3：把空字符串改为"首评引导"提示行；详情页 keyboard 已含 [📝 写评价]
+        按钮，本行仅是文字提示，让用户看到"还没人评过"现状）。
     """
     if not stats:
         return ""
     rc = stats.get("review_count", 0) or 0
     if rc == 0:
-        return ""
+        return "📊 0 条车评，欢迎首评 🎉"
 
     pos = stats.get("positive_count", 0) or 0
     neu = stats.get("neutral_count", 0) or 0
