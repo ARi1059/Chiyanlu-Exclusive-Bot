@@ -6,6 +6,10 @@
 
 容错：用户屏蔽 bot / chat 不可达 → TelegramForbiddenError / BadRequest 时仅 warning，
 不抛错（不阻塞超管审核流程）。
+
+UX-4.3：私聊评价者的通过 / 驳回通知附 CTA keyboard：
+    通过 → [📝 个人评价主页] [🔥 找下一个老师] [🏠 返回主菜单]
+    驳回 → [📝 个人评价主页] [📩 联系超管 (URL, 仅当 config 配置)] [🏠 返回主菜单]
 """
 from __future__ import annotations
 
@@ -14,10 +18,11 @@ from typing import Optional
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.types import InputMediaPhoto
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 
 from bot.database import (
     REVIEW_RATINGS,
+    get_config,
     get_teacher_review,
     get_teacher,
     list_super_admins,
@@ -25,6 +30,50 @@ from bot.database import (
 from bot.keyboards.admin_kb import rreview_push_action_kb
 
 logger = logging.getLogger(__name__)
+
+
+def build_user_review_approved_kb() -> InlineKeyboardMarkup:
+    """构造"评价通过"通知 CTA keyboard（UX-4.3）。
+
+    布局：
+        - [📝 个人评价主页]   callback=user:write_review  查看自己所有评价
+        - [🔥 找下一个老师]   callback=user:find          找老师聚合页
+        - [🏠 返回主菜单]     callback=user:main          兜底
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 个人评价主页", callback_data="user:write_review")],
+        [InlineKeyboardButton(text="🔥 找下一个老师", callback_data="user:find")],
+        [InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main")],
+    ])
+
+
+async def build_user_review_rejected_kb() -> InlineKeyboardMarkup:
+    """构造"评价驳回"通知 CTA keyboard（UX-4.3）。
+
+    布局：
+        - [📝 个人评价主页]   callback=user:write_review  查看驳回详情 + 重新提交入口
+        - [📩 联系超管]       url=<contact_url>           仅当 config 配置时显示
+        - [🏠 返回主菜单]     callback=user:main          兜底
+
+    联系超管 URL 读取优先级：review_contact_url → lottery_contact_url；
+    双空时只有 2 个 callback 按钮，不引入死链。
+    """
+    contact_url = (await get_config("review_contact_url") or "").strip()
+    if not contact_url:
+        contact_url = (await get_config("lottery_contact_url") or "").strip()
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(
+            text="📝 个人评价主页", callback_data="user:write_review",
+        )],
+    ]
+    if contact_url:
+        rows.append([
+            InlineKeyboardButton(text="📩 联系超管", url=contact_url),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _rating_str(rating_key: Optional[str]) -> str:
@@ -97,7 +146,11 @@ async def notify_review_approved(
     lines.append("")
     lines.append("感谢你的反馈！")
     text = "\n".join(lines)
-    await _safe_send_text(bot, review["user_id"], text)
+    # UX-4.3：通过通知附 CTA keyboard（个人评价主页 / 找下一个老师 / 主菜单）
+    await _safe_send_text(
+        bot, review["user_id"], text,
+        reply_markup=build_user_review_approved_kb(),
+    )
 
 
 async def notify_review_rejected(
@@ -123,7 +176,9 @@ async def notify_review_rejected(
         f"{reason_line}\n\n"
         "如有疑问可联系超管。"
     )
-    await _safe_send_text(bot, review["user_id"], text)
+    # UX-4.3：驳回通知附 CTA keyboard（个人评价主页 / 联系超管 / 主菜单）
+    kb = await build_user_review_rejected_kb()
+    await _safe_send_text(bot, review["user_id"], text, reply_markup=kb)
 
 
 def _anonymize_user_id(uid: int) -> str:
