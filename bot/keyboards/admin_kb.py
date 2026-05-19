@@ -1,4 +1,12 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+if TYPE_CHECKING:
+    # 仅类型提示用，避免运行时循环依赖
+    from bot.services.admin_overview import AdminOverviewStats
 
 
 # ============ 主菜单 ============
@@ -272,14 +280,70 @@ def admin_dashboard_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def admin_overview_kb() -> InlineKeyboardMarkup:
-    """运营总览面板：刷新 / 返回二级页 admin:dashboard（📊 运营看板）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:overview:refresh"),
-            InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
-        ],
+def admin_overview_kb(
+    stats: Optional["AdminOverviewStats"] = None,
+    *,
+    is_super: bool = False,
+) -> InlineKeyboardMarkup:
+    """运营总览面板：（条件）快捷跳转 + 刷新 + 返回二级页 admin:dashboard。
+
+    UX-2 第三项第一批：当 stats 传入时，按 pending count 与权限渲染快捷跳转：
+
+        老师资料审核 (>0)        → review:enter         所有 admin 可见
+        评价审核     (>0)        → rreview:enter        仅超管
+        报销审核     (>0)        → reimburse:enter      仅超管
+        报销名单     (queued>0)  → reimburse:queued:0   仅超管
+        抽奖管理     (active+scheduled>0) → admin:lottery  仅超管
+
+    每个快捷按钮带 (N) 角标；count=0 时该按钮整体不显示。
+    刷新 + 返回按钮始终保留。
+
+    Args:
+        stats: 运营总览统计；None 时不渲染任何快捷跳转（旧调用兼容）
+        is_super: 是否超管；非超管不显示评价 / 报销 / 名单 / 抽奖入口
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if stats is not None:
+        pending_edits = stats.pending_teacher_edits or 0
+        if pending_edits > 0:
+            rows.append([InlineKeyboardButton(
+                text=f"👩‍🏫 老师资料审核 ({pending_edits})",
+                callback_data="review:enter",
+            )])
+        if is_super:
+            pending_review = stats.pending_reviews or 0
+            if pending_review > 0:
+                rows.append([InlineKeyboardButton(
+                    text=f"📝 评价审核 ({pending_review})",
+                    callback_data="rreview:enter",
+                )])
+            pending_reimb = stats.pending_reimbursements or 0
+            if pending_reimb > 0:
+                rows.append([InlineKeyboardButton(
+                    text=f"💰 报销审核 ({pending_reimb})",
+                    callback_data="reimburse:enter",
+                )])
+            queued = stats.queued_reimbursements or 0
+            if queued > 0:
+                rows.append([InlineKeyboardButton(
+                    text=f"📋 报销名单 ({queued})",
+                    callback_data="reimburse:queued:0",
+                )])
+            active = stats.active_lotteries or 0
+            scheduled = stats.scheduled_lotteries or 0
+            lottery_total = active + scheduled
+            if lottery_total > 0:
+                rows.append([InlineKeyboardButton(
+                    text=f"🎲 抽奖管理 ({lottery_total})",
+                    callback_data="admin:lottery",
+                )])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 刷新", callback_data="admin:overview:refresh"),
+        InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_reimbursement_pool_kb() -> InlineKeyboardMarkup:

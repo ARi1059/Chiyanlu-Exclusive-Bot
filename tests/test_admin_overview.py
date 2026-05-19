@@ -48,6 +48,7 @@ def test_stats_defaults_all_none():
     assert stats.today_new_users is None
     assert stats.today_new_favorites is None
     assert stats.today_new_reviews is None
+    assert stats.pending_teacher_edits is None  # UX-2 第三项第一批新增
     assert stats.pending_reviews is None
     assert stats.pending_reimbursements is None
     assert stats.queued_reimbursements is None

@@ -1337,15 +1337,18 @@ async def cb_admin_overview(callback: types.CallbackQuery):
     """运营总览：今日数据 / 待处理 / 抽奖 / 系统迁移失败统计
 
     只读聚合，不修改任何业务流程。
+    UX-2 第三项第一批：根据 stats 与权限渲染快捷跳转按钮。
     """
     from bot.services.admin_overview import (
         get_admin_overview_stats,
         render_admin_overview,
     )
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
     stats = await get_admin_overview_stats()
     await callback.message.edit_text(
         render_admin_overview(stats),
-        reply_markup=admin_overview_kb(),
+        reply_markup=admin_overview_kb(stats, is_super=is_super),
     )
     await callback.answer()
 
@@ -1358,11 +1361,13 @@ async def cb_admin_overview_refresh(callback: types.CallbackQuery):
         get_admin_overview_stats,
         render_admin_overview,
     )
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
     stats = await get_admin_overview_stats()
     try:
         await callback.message.edit_text(
             render_admin_overview(stats),
-            reply_markup=admin_overview_kb(),
+            reply_markup=admin_overview_kb(stats, is_super=is_super),
         )
     except Exception:
         # 文本未变时 Telegram 会抛 message is not modified，吞掉即可

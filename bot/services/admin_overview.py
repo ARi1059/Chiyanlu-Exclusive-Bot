@@ -42,6 +42,7 @@ class AdminOverviewStats:
     today_new_users: Optional[int] = None
     today_new_favorites: Optional[int] = None
     today_new_reviews: Optional[int] = None
+    pending_teacher_edits: Optional[int] = None  # UX-2 第三项第一批新增（只读，不改原口径）
     pending_reviews: Optional[int] = None
     pending_reimbursements: Optional[int] = None
     queued_reimbursements: Optional[int] = None
@@ -115,6 +116,12 @@ async def get_admin_overview_stats() -> AdminOverviewStats:
         )
 
         # ---- 待处理 ----
+        # UX-2 第三项第一批：老师资料审核 pending（用于运营总览快捷跳转判断；
+        # 渲染层未输出该字段以避免改动正文）
+        stats.pending_teacher_edits = await _scalar_int(
+            db,
+            "SELECT COUNT(*) FROM teacher_edit_requests WHERE status = 'pending'",
+        )
         stats.pending_reviews = await _scalar_int(
             db,
             "SELECT COUNT(*) FROM teacher_reviews WHERE status = 'pending'",
