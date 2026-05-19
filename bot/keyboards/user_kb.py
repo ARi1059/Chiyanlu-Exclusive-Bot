@@ -128,7 +128,49 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📝 写评价", callback_data="user:write_review"),
+            InlineKeyboardButton(text="🎁 抽奖中心", callback_data="user:lottery"),
         ],
+    ])
+
+
+# ============ 抽奖中心（UX-6.1） ============
+
+
+def user_lottery_menu_kb(
+    *, active_count: int, joined_count: int, drawn_count: int,
+) -> InlineKeyboardMarkup:
+    """「🎁 抽奖中心」二级菜单（UX-6.1）。
+
+    三个 tab 入口（角标显示 count；count=0 时仍显示，避免按钮"消失"）：
+        - 🎲 进行中可参与   user:lottery:active
+        - 📋 我已参与       user:lottery:joined
+        - 🏆 已开奖记录     user:lottery:drawn
+    + 返回主菜单
+    """
+    def _badge(n: int) -> str:
+        return f" ({n})" if n > 0 else ""
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"🎲 进行中可参与{_badge(active_count)}",
+            callback_data="user:lottery:active",
+        )],
+        [InlineKeyboardButton(
+            text=f"📋 我已参与{_badge(joined_count)}",
+            callback_data="user:lottery:joined",
+        )],
+        [InlineKeyboardButton(
+            text=f"🏆 已开奖记录{_badge(drawn_count)}",
+            callback_data="user:lottery:drawn",
+        )],
+        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
+    ])
+
+
+def user_lottery_back_kb() -> InlineKeyboardMarkup:
+    """抽奖中心 tab 页底部返回按钮（仅"返回抽奖中心"）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 返回抽奖中心", callback_data="user:lottery")],
     ])
 
 

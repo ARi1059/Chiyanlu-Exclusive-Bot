@@ -5916,6 +5916,80 @@ async def list_lottery_entries_paged(
         await db.close()
 
 
+async def list_user_lottery_entries(
+    user_id: int,
+    *,
+    lottery_statuses: Optional[list[str]] = None,
+    limit: int = 10,
+    offset: int = 0,
+) -> list[dict]:
+    """列出某用户参与的抽奖（UX-6.1，JOIN lotteries 一次拿全字段）。
+
+    返回字段：含 entry 字段（entry_id / entered_at / won / notified_at）+
+    lottery 字段（lottery_id / name / status / draw_at / channel_chat_id /
+    channel_msg_id / result_msg_id）。
+
+    lottery_statuses=None 取所有状态；过滤时使用 IN (...) 子句。
+    排序：开奖中的（status='active'）优先 → 然后按 entered_at DESC。
+    """
+    db = await get_db()
+    try:
+        sql_parts = [
+            "SELECT",
+            "  e.id AS entry_id, e.lottery_id, e.user_id, e.entered_at,",
+            "  e.won, e.notified_at,",
+            "  l.name AS lottery_name, l.status AS lottery_status, l.draw_at,",
+            "  l.channel_chat_id, l.channel_msg_id, l.result_msg_id,",
+            "  l.prize_description, l.prize_count, l.entry_cost_points",
+            "FROM lottery_entries e",
+            "LEFT JOIN lotteries l ON l.id = e.lottery_id",
+            "WHERE e.user_id = ?",
+        ]
+        args: list = [user_id]
+        if lottery_statuses:
+            placeholders = ",".join("?" * len(lottery_statuses))
+            sql_parts.append(f"AND l.status IN ({placeholders})")
+            args.extend(lottery_statuses)
+        sql_parts.append(
+            "ORDER BY "
+            "CASE l.status WHEN 'active' THEN 0 ELSE 1 END, "
+            "e.entered_at DESC, e.id DESC",
+        )
+        sql_parts.append("LIMIT ? OFFSET ?")
+        args.append(int(limit))
+        args.append(int(offset))
+        cur = await db.execute(" ".join(sql_parts), args)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def count_user_lottery_entries(
+    user_id: int,
+    *,
+    lottery_statuses: Optional[list[str]] = None,
+) -> int:
+    """统计某用户参与的抽奖条数（按 lottery 状态过滤可选）。"""
+    db = await get_db()
+    try:
+        sql = (
+            "SELECT COUNT(*) AS c FROM lottery_entries e "
+            "LEFT JOIN lotteries l ON l.id = e.lottery_id "
+            "WHERE e.user_id = ?"
+        )
+        args: list = [user_id]
+        if lottery_statuses:
+            placeholders = ",".join("?" * len(lottery_statuses))
+            sql += f" AND l.status IN ({placeholders})"
+            args.extend(lottery_statuses)
+        cur = await db.execute(sql, args)
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
 async def mark_lottery_entries_won(entry_ids: list[int]) -> int:
     """标记 winners（won=1）；返回更新行数"""
     if not entry_ids:

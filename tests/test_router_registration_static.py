@@ -153,12 +153,13 @@ def test_subsystem_routers_all_registered():
 
 def test_total_router_count_matches_pre_split():
     """拆分前 main.py 共 33 个 include_router 调用；
-    2026-05 新增 reimburse_subreq_admin_router(34) + reimburse_settings_admin_router(35)。
+    2026-05 新增 reimburse_subreq_admin_router(34) + reimburse_settings_admin_router(35)；
+    UX-6.1 新增 user_lottery_router(36)。
 
     本测试是回归网，防止有人不小心删了 router。
     """
     calls = _include_router_calls(_read())
-    assert len(calls) == 35, f"期望 35 个 include_router，实际 {len(calls)}"
+    assert len(calls) == 36, f"期望 36 个 include_router，实际 {len(calls)}"
 
 
 def test_router_names_are_unique():

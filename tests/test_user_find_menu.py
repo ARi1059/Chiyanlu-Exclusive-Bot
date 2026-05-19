@@ -295,9 +295,14 @@ def test_search_and_teacher_detail_handlers_still_importable():
 
 
 def test_user_main_kb_still_has_write_review_at_end():
-    """旧布局契约：「📝 写评价」仍是最后独占一行（防止本批误重排）。"""
+    """末行布局契约：「📝 写评价」与「🎁 抽奖中心」（UX-6.1 新增）同一行；
+    write_review 仍排第一（左侧）。"""
     from bot.keyboards.user_kb import user_main_menu_kb
     kb = user_main_menu_kb()
     last_row = kb.inline_keyboard[-1]
-    assert len(last_row) == 1
-    assert last_row[0].callback_data == "user:write_review"
+    cbs = [b.callback_data for b in last_row]
+    assert "user:write_review" in cbs
+    # UX-6.1：抽奖中心入口与写评价共享末行
+    assert "user:lottery" in cbs
+    # write_review 应排在 lottery 之前
+    assert cbs.index("user:write_review") < cbs.index("user:lottery")
