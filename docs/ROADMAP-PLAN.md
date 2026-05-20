@@ -456,6 +456,16 @@ bash -n scripts/prune.sh
 - 老师不会误进入管理员 / 用户专属页面。
 - CI 全绿，生产 healthcheck 0 ERR。
 
+### 8.6 进度（2026-05）
+
+- **§8.3 审查 PR 已落地**（本 PR）：产出 [docs/TEACHER-PANEL-AUDIT-2026-05.md](TEACHER-PANEL-AUDIT-2026-05.md)。审查结论：
+  1. 老师主菜单当前已 3 按钮（`teacher_self:checkin` / `teacher_self:profile` / `teacher:status`），UX-5.1 已实现"签到置顶 + 动态文案"。§8.5 验收 4 项**当前全部已满足**（入口清晰 / 按钮数减少 / 签到流程未变 / 无误触发 admin-user 入口）。
+  2. §8.2 建议入口 5 个**比现状多**，与 §8.5 "按钮数量减少" 冲突；其中"📝 我的评价"和"❓ 帮助"对应**当前项目不存在的业务功能**，新增违反 §8.4 "不引入用户/管理员功能"。
+  3. `teacher:*` 命名空间被三角色共用（老师 `teacher:status*` / 管理员 `teacher:list/delete/enable/...` / 用户 `teacher:view/similar/...`），但 handler 级别权限校验完备（`get_teacher` / `admin_required` / 私聊校验），不构成功能错误；大改命名空间会破坏所有历史 inline button，与 §2.4 "旧 callback 兼容" 冲突，故**不推荐**。
+  4. 全部 `teacher_self:*` / `teacher:status*` callback 均有 handler 引用，无遗弃路径。
+- **§8.3 精简 PR 推荐范围**（可选下一 PR）：仅做防御性测试与文档约束 —— 新增 `tests/test_teacher_main_menu.py` 锁定「主菜单按钮数 ≤ 3 + 签到 callback 在第一行」契约；零 keyboard / handler 代码改动。零业务功能扩展。
+- 零代码改动；零 schema 变更；零 keyboard 改动；CI 全绿（1610 测试沿用本审查 PR 不引入新测试）。
+
 ---
 
 ## 9. Sprint 7：维护清理
