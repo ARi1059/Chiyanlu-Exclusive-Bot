@@ -187,7 +187,10 @@ def test_build_success_returns_text_with_promo_link(temp_db, script_mod):
     built, reason = _run(script_mod._build_new_text_and_kb("ChiYanBookBot", rid))
     assert reason is None
     assert built is not None
-    chat_id, msg_id, text, kb = built
+    # 2026-05-20：tuple 形状改为 (teacher_id, chat_id, msg_id, text, kb)，
+    # 多带出 teacher_id 供后续按老师聚合通知（DM 老师 footer 已批量更新）
+    teacher_id, chat_id, msg_id, text, kb = built
+    assert teacher_id == tid
     assert chat_id == -1001234567890
     assert msg_id == 555
     assert "出击报销八折" in text
@@ -332,6 +335,9 @@ def test_args_default_is_dry_run(script_mod, monkeypatch):
     assert args.execute is False
     assert args.limit == 0
     assert args.throttle_ms == 1500
+    # 2026-05-20：默认开启老师 DM 通知（仅 --execute 下生效）
+    assert args.notify is True
+    assert args.notify_throttle_ms == 1500
 
 
 def test_args_execute_flag(script_mod, monkeypatch):
@@ -348,3 +354,225 @@ def test_args_limit_and_throttle(script_mod, monkeypatch):
     assert args.execute is True
     assert args.limit == 50
     assert args.throttle_ms == 2000
+
+
+def test_args_no_notify_flag(script_mod, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["sync", "--execute", "--no-notify"])
+    args = script_mod._parse_args()
+    assert args.execute is True
+    assert args.notify is False
+
+
+def test_args_notify_throttle_custom(script_mod, monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv", ["sync", "--execute", "--notify-throttle-ms", "3000"],
+    )
+    args = script_mod._parse_args()
+    assert args.notify_throttle_ms == 3000
+
+
+# ============================================================
+# 5. 老师 DM 通知（2026-05-20 新增功能）
+# ============================================================
+
+
+def test_build_review_link_private_supergroup(script_mod):
+    """-100 开头 chat_id → 构造 t.me/c/<rest>/<msg> 形式直链。"""
+    link = script_mod._build_review_link(-1001234567890, 555)
+    assert link == "https://t.me/c/1234567890/555"
+
+
+def test_build_review_link_invalid_chat_id_returns_none(script_mod):
+    """非 -100 开头 → 返回 None（讨论群理论上必带）。"""
+    assert script_mod._build_review_link(123456, 555) is None
+    assert script_mod._build_review_link(0, 555) is None
+
+
+def test_build_teacher_notify_text_contains_count_and_links(script_mod):
+    """聚合 DM 应含老师名 / 总数 / 评价直链 / footer 说明。"""
+    items = [
+        (101, -1001234567890, 111),
+        (102, -1001234567890, 222),
+    ]
+    text = script_mod._build_teacher_notify_text("林老师", items)
+    assert "林老师" in text
+    assert "<b>2</b>" in text
+    assert "https://t.me/c/1234567890/111" in text
+    assert "https://t.me/c/1234567890/222" in text
+    assert "评价 #101" in text
+    assert "评价 #102" in text
+    assert "出击报销八折" in text
+
+
+def test_build_teacher_notify_text_collapses_when_over_20(script_mod):
+    """>20 条评价 → 列前 20 + 「还有 N 条」折叠，避免单条 DM 超长。"""
+    items = [(i, -1001234567890, i * 10) for i in range(1, 26)]  # 25 条
+    text = script_mod._build_teacher_notify_text("林老师", items)
+    assert "<b>25</b>" in text
+    assert "评价 #20" in text  # 第 20 条还在
+    assert "评价 #21" not in text  # 第 21 条已折叠
+    assert "还有 5 条" in text
+
+
+def test_build_teacher_notify_text_escapes_html_in_name(script_mod):
+    """老师名含 HTML 关键字符 → 应被 escape，避免破坏外层 <b> 标签。"""
+    text = script_mod._build_teacher_notify_text(
+        "<script>x</script>", [(1, -1001234567890, 1)],
+    )
+    assert "<script>" not in text
+    assert "&lt;script&gt;" in text
+
+
+def test_send_teacher_notification_dry_run_skips(script_mod):
+    """dry-run 仅校验长度，不调 bot.send_message。"""
+    import logging
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    res = _run(script_mod._send_teacher_notification(
+        bot, teacher_id=99, text="hello",
+        dry_run=True, logger=logging.getLogger("test"),
+    ))
+    assert res == "ok"
+    bot.send_message.assert_not_awaited()
+
+
+def test_send_teacher_notification_execute_calls_send_message(script_mod):
+    """execute 模式 → bot.send_message 被调，参数含 chat_id / parse_mode HTML。"""
+    import logging
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=True)
+    res = _run(script_mod._send_teacher_notification(
+        bot, teacher_id=99, text="hi <b>name</b>",
+        dry_run=False, logger=logging.getLogger("test"),
+    ))
+    assert res == "ok"
+    bot.send_message.assert_awaited_once()
+    kw = bot.send_message.await_args.kwargs
+    assert kw["chat_id"] == 99
+    assert "HTML" in str(kw["parse_mode"]).upper()
+    assert kw["disable_web_page_preview"] is True
+
+
+def test_send_teacher_notification_forbidden_returns_fail(script_mod):
+    """老师未启动过 bot → ForbiddenError 仅记录 warning，返回 fail:forbidden。"""
+    import logging
+    from aiogram.exceptions import TelegramForbiddenError
+    bot = MagicMock()
+    bot.send_message = AsyncMock(
+        side_effect=TelegramForbiddenError(
+            method=MagicMock(), message="Forbidden: bot can't initiate conversation",
+        ),
+    )
+    res = _run(script_mod._send_teacher_notification(
+        bot, teacher_id=99, text="hi",
+        dry_run=False, logger=logging.getLogger("test"),
+    ))
+    assert res == "fail:forbidden"
+
+
+def test_notify_teachers_aggregated_groups_by_teacher(temp_db, script_mod):
+    """两位老师 + 三条评价 → 调 bot.send_message 两次，每次一位老师。"""
+    import logging
+    t1 = _run(_make_teacher(user_id=101, display_name="张老师"))
+    t2 = _run(_make_teacher(user_id=102, display_name="李老师"))
+    edits = {
+        t1: [(1, -1001234567890, 11), (2, -1001234567890, 22)],
+        t2: [(3, -1001234567890, 33)],
+    }
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=True)
+    counts = _run(script_mod.notify_teachers_aggregated(
+        bot, edits, dry_run=False, throttle_ms=0,
+        logger=logging.getLogger("test"),
+    ))
+    assert counts == {"ok": 2}
+    assert bot.send_message.await_count == 2
+    chat_ids = [c.kwargs["chat_id"] for c in bot.send_message.await_args_list]
+    assert sorted(chat_ids) == sorted([t1, t2])
+
+
+def test_notify_teachers_aggregated_empty_returns_empty(script_mod):
+    """无任何 edit → 跳过通知阶段，不调 bot。"""
+    import logging
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    counts = _run(script_mod.notify_teachers_aggregated(
+        bot, {}, dry_run=False, throttle_ms=0,
+        logger=logging.getLogger("test"),
+    ))
+    assert counts == {}
+    bot.send_message.assert_not_awaited()
+
+
+def test_notify_teachers_aggregated_missing_teacher_skips(temp_db, script_mod):
+    """teacher_id 对应记录已删 → skip:no_teacher 记数；不阻塞其他老师。"""
+    import logging
+    t1 = _run(_make_teacher(user_id=101, display_name="张老师"))
+    edits = {
+        t1: [(1, -1001234567890, 11)],
+        9999: [(2, -1001234567890, 22)],  # 不存在的老师
+    }
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=True)
+    counts = _run(script_mod.notify_teachers_aggregated(
+        bot, edits, dry_run=False, throttle_ms=0,
+        logger=logging.getLogger("test"),
+    ))
+    assert counts.get("ok") == 1
+    assert counts.get("skip:no_teacher") == 1
+    # 仅给存在的老师发了 1 条
+    assert bot.send_message.await_count == 1
+
+
+def test_edit_one_review_calls_on_edited_on_success(temp_db, script_mod):
+    """成功 edit → 触发 on_edited 回调，传递 (review_id, teacher_id, chat_id, msg_id)。"""
+    import logging
+    tid = _run(_make_teacher())
+    rid = _run(_make_review(teacher_id=tid))
+    bot = _mk_bot()
+    captured = []
+    res = _run(script_mod.edit_one_review(
+        bot, rid, "Bot",
+        dry_run=False, logger=logging.getLogger("test"),
+        on_edited=lambda rev_id, t_id, c_id, m_id: captured.append((rev_id, t_id, c_id, m_id)),
+    ))
+    assert res == "ok"
+    assert len(captured) == 1
+    assert captured[0] == (rid, tid, -1001234567890, 555)
+
+
+def test_edit_one_review_no_on_edited_on_noop(temp_db, script_mod):
+    """noop（message is not modified）→ 不触发 on_edited，避免误推已是最新格式的评价。"""
+    import logging
+    from aiogram.exceptions import TelegramBadRequest
+    tid = _run(_make_teacher())
+    rid = _run(_make_review(teacher_id=tid))
+    err = TelegramBadRequest(
+        method=MagicMock(),
+        message="Bad Request: message is not modified: ...",
+    )
+    bot = _mk_bot(side_effect=err)
+    captured = []
+    res = _run(script_mod.edit_one_review(
+        bot, rid, "Bot",
+        dry_run=False, logger=logging.getLogger("test"),
+        on_edited=lambda *a: captured.append(a),
+    ))
+    assert res == "noop"
+    assert captured == []
+
+
+def test_edit_one_review_no_on_edited_on_dry_run(temp_db, script_mod):
+    """dry-run → 即便结果是 ok 也不触发 on_edited（dry-run 不真改）。"""
+    import logging
+    tid = _run(_make_teacher())
+    rid = _run(_make_review(teacher_id=tid))
+    bot = _mk_bot()
+    captured = []
+    res = _run(script_mod.edit_one_review(
+        bot, rid, "Bot",
+        dry_run=True, logger=logging.getLogger("test"),
+        on_edited=lambda *a: captured.append(a),
+    ))
+    assert res == "ok"
+    assert captured == []
