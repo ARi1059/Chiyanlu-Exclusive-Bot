@@ -1459,10 +1459,30 @@ def admin_points_menu_kb() -> InlineKeyboardMarkup:
     的返回路径保持不变。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📜 积分规则一览（只读）", callback_data="admin:points_rules")],
         [InlineKeyboardButton(text="🔍 查询用户积分", callback_data="admin:points:query")],
         [InlineKeyboardButton(text="➕ 手动加分",     callback_data="admin:points:grant")],
         [InlineKeyboardButton(text="📊 积分总览",     callback_data="admin:points:overview")],
         [InlineKeyboardButton(text="⬅️ 返回活动运营", callback_data="admin:operations")],
+    ])
+
+
+def admin_points_rules_kb() -> InlineKeyboardMarkup:
+    """积分规则只读页 keyboard（Sprint 4 §6.2.1）。
+
+    无任何编辑按钮（§6.3 禁止）；仅刷新 + 返回积分管理。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔄 刷新",
+                callback_data="admin:points_rules:refresh",
+            ),
+            InlineKeyboardButton(
+                text="⬅️ 返回积分管理",
+                callback_data="admin:points",
+            ),
+        ],
     ])
 
 

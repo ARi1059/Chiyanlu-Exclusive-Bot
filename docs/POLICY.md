@@ -243,7 +243,48 @@
 
 ---
 
-## 九、用户申诉建议
+## 九、积分规则只读总览（2026-05 新增，Sprint 4 §6.2.1）
+
+### 9.1 用途
+
+为超管提供 **一页式只读** 积分规则总览，无需在多个 FSM 子菜单 / POLICY 文档间切换。展示口径与本文档 Part I §三 / §四 / §五 / §六 完全一致；服务函数 `services/points_rules.py::get_points_rules_snapshot()` 是唯一聚合口径，避免漂移。
+
+### 9.2 展示字段
+
+| 段落 | 字段 | 来源 |
+| --- | --- | --- |
+| 积分流水 reason 取值 | 5 个 reason + 含义 + 来源 + delta 符号 | `REASON_CATALOG`（与 §3 同步） |
+| 评价加分套餐 | 5 个 POINT_PACKAGE_OPTIONS + 自定义范围 0~100 | `bot.database.POINT_PACKAGE_OPTIONS` |
+| 手动加扣分预设 | 4 个 POINT_GRANT_REASON_OPTIONS + 自定义 -100~+100 | `bot.database.POINT_GRANT_REASON_OPTIONS` |
+| 抽奖积分 | 扣分时机 / 退款时机 / 原子性风险说明 | POLICY §5.1 文案 |
+| 报销最低门槛 | 当前值 + 跨页引用 admin:reimburse_rules | `get_reimbursement_min_points()` |
+| 余额一致性 | total_points = SUM(delta) + §6.2.3 引用 | 硬编码说明 |
+
+### 9.3 后台入口
+
+| 路径 | callback | 权限 |
+| --- | --- | --- |
+| `/admin` → 🎲 活动运营 → 💰 积分管理 → 📜 积分规则一览（只读） | `admin:points_rules` | **仅超管** |
+
+子动作：
+- `admin:points_rules` — 入口
+- `admin:points_rules:refresh` — 刷新当前 snapshot
+
+### 9.4 边界
+
+- **严格只读**：本页**不**提供任何加扣分入口；加扣分仍走 `admin:points:grant` 4 步 FSM
+- **不写表 / 不写 audit log**：纯展示
+- **N/A 容错**：报销门槛读取异常 → 跨页引用 `admin:reimburse_rules`，本页字段降级 N/A
+- **跨页引用**：报销门槛与 `services/reimbursement_rules.py` 共用 `get_reimbursement_min_points()`，避免漂移
+
+### 9.5 后续计划
+
+- §6.2.2 积分规则配置化：**下一个 Sprint**（编辑能力 + audit log + 必要时走 `MIGRATIONS`），不在本页范围
+- §6.2.3 积分异常对账：`users.total_points` vs `SUM(point_transactions.delta)` 差异用户列表，独立 PR
+
+---
+
+## 十、用户申诉建议
 
 用户对积分有异议时，应在群组 / 私聊中**提供以下材料**，便于运营核对：
 

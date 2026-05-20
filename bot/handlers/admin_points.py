@@ -44,6 +44,7 @@ from bot.keyboards.admin_kb import (
     admin_points_grant_reason_kb,
     admin_points_grant_value_kb,
     admin_points_menu_kb,
+    admin_points_rules_kb,
 )
 from bot.states.teacher_states import (
     AdminPointsGrantStates,
@@ -91,6 +92,7 @@ async def cb_admin_points(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     text = (
         "💰 积分管理\n\n"
+        "- 📜 积分规则一览：查看 reason 取值 / 套餐预设 / 范围（只读）\n"
         "- 🔍 查询用户积分：输入 user_id 或 @username 查看明细\n"
         "- ➕ 手动加分：4 步流程（用户 → 数值 → 原因 → 确认）\n"
         "- 📊 积分总览：持币用户数 / 累计加分 / TOP 10"
@@ -100,6 +102,52 @@ async def cb_admin_points(callback: types.CallbackQuery, state: FSMContext):
     except Exception:
         await callback.message.answer(text, reply_markup=admin_points_menu_kb())
     await callback.answer()
+
+
+# ============ 积分规则只读总览（Sprint 4 §6.2.1，admin:points_rules） ============
+# 仅超管可见。展示所有当前生效的积分规则（reason 取值 / 套餐预设 /
+# 自定义范围 / 报销门槛交叉引用 / 余额一致性约束）。
+# 严格只读（§6.3 禁止）：不放任何加扣分入口，加扣分仍走既有 admin:points:grant。
+
+
+@router.callback_query(F.data == "admin:points_rules")
+@_super_admin_required
+async def cb_admin_points_rules(callback: types.CallbackQuery, state: FSMContext):
+    """积分规则只读总览页（Sprint 4 §6.2.1）。"""
+    from bot.services.points_rules import (
+        get_points_rules_snapshot,
+        render_points_rules,
+    )
+    await state.clear()
+    snap = await get_points_rules_snapshot()
+    text = render_points_rules(snap)
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_points_rules_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_points_rules_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:points_rules:refresh")
+@_super_admin_required
+async def cb_admin_points_rules_refresh(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """积分规则页刷新按钮。"""
+    from bot.services.points_rules import (
+        get_points_rules_snapshot,
+        render_points_rules,
+    )
+    snap = await get_points_rules_snapshot()
+    try:
+        await callback.message.edit_text(
+            render_points_rules(snap),
+            reply_markup=admin_points_rules_kb(),
+        )
+    except Exception:
+        # 文本未变 → message is not modified
+        pass
+    await callback.answer("已刷新")
 
 
 # ============ 查询用户积分 ============

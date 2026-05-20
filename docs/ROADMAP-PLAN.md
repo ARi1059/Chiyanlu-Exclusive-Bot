@@ -360,6 +360,12 @@ bash -n scripts/prune.sh
 - `POLICY.md` Part I 与只读页口径一致。
 - CI 全绿，生产 healthcheck 0 ERR。
 
+### 6.5 进度（2026-05）
+
+- **§6.2.1 已落地**：积分规则只读页。新增 `bot/services/points_rules.py`（`PointsRulesSnapshot` dataclass + `REASON_CATALOG` 5 条 / `MANUAL_GRANT_DELTA_MIN/MAX` ±100 常量 + `get_points_rules_snapshot()` + `render_points_rules()`），暴露 6 段规则：① 5 个 reason 取值映射 ② 评价加分 5 个套餐 + 自定义 0~100 范围 ③ 手动加扣分 4 个原因预设 + 自定义 ±100 + 不校验余额警告 ④ 抽奖积分扣分/退款时机 + 非原子风险（POLICY §5.1）⑤ 报销最低门槛跨页引用 `admin:reimburse_rules`（共用 `get_reimbursement_min_points`）⑥ 余额一致性约束 + §6.2.3 对账占位。`admin_points_menu_kb` 顶部新增「📜 积分规则一览（只读）」按钮（callback `admin:points_rules`，遵循 §6.1 "优先做只读"纪律置于第一行）。新增 `admin_points_rules_kb`（仅刷新 + 返回积分管理）。新增 `cb_admin_points_rules` + `cb_admin_points_rules_refresh` 两个 super-gated handler（沿用 `admin_points._super_admin_required`）。零修改加扣分逻辑（`add_point_transaction` / 既有 FSM）；零 schema 变更；零编辑按钮（§6.3）。新增测试 28 个 service test（常量 / REASON_CATALOG 5 条 + delta_sign 校验 / `_fmt_delta` 三态 / `_fmt_reimburse_min` 三态 / render 含全部 7 章节 + 全 reason 行 + 全 5 套餐 + 余额检查警告 + 非原子风险 + 跨页引用 + N/A 回退 + 只读标记 + 时间戳 / `get_snapshot` monkeypatch 4 场景含异常容错 + 浅拷贝隔离）+ 6 个 kb test（菜单入口位置契约 + 按钮总数 4 → 5 + 规则 kb 仅刷新返回 + 防御性"无加扣分按钮"+ callback ≤ 64B）。`POLICY.md` 新增 §九「积分规则只读总览」段（5 小节：用途 / 字段映射 / 后台入口 / 边界 / 后续计划），旧 §九"用户申诉建议"重编号为 §十。
+- **§6.2.2 积分规则配置化**：待后续 PR（需要 audit log + 可能涉及 MIGRATIONS）。
+- **§6.2.3 积分异常对账**：待后续 PR。
+
 ---
 
 ## 7. Sprint 5：用户首页重组
