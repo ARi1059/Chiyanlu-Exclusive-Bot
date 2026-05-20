@@ -135,12 +135,13 @@ def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
         - system:reimburse_toggle  🔛 报销功能开关 (@super_admin_required)
 
     callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
-    聚合视图组合。关键词管理无独立 callback（群关键词是 message handler），
-    本菜单不构造伪入口。
+    聚合视图组合。UX-9.1：群组快捷词配置入口 admin:keywords（handler 在
+    admin_keyword.py），消息匹配触发仍由 keyword.py 处理。
     """
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📢 必关订阅",        callback_data="admin:subreq")],
         [InlineKeyboardButton(text="🧩 发布模板",        callback_data="admin:publish_templates")],
+        [InlineKeyboardButton(text="🗝 关键词管理",      callback_data="admin:keywords")],
         [InlineKeyboardButton(text="📣 频道 / 群组设置", callback_data="menu:channel")],
         [InlineKeyboardButton(text="📅 日报 / 周报设置", callback_data="admin:report_settings")],
         [InlineKeyboardButton(text="⚙️ 系统设置",        callback_data="menu:system")],
@@ -2185,3 +2186,98 @@ def reimburse_subreq_user_gate_kb(
         callback_data=f"reimburse:subreq:back:{context}",
     )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ============ 群组快捷词管理（UX-9.1） ============
+
+
+def admin_keyword_list_kb(
+    items: list[dict],
+) -> InlineKeyboardMarkup:
+    """关键词列表面板：每条占两行（标题 + 编辑/启停/删除按钮组）。
+
+    items: list[dict]，每行需含 id / trigger / enabled / hit_count。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    rows.append([InlineKeyboardButton(
+        text="➕ 新增关键词", callback_data="admin:keywords:add",
+    )])
+    for it in items:
+        kid = int(it["id"])
+        enabled = int(it.get("enabled") or 0)
+        trigger = it.get("trigger") or "?"
+        hits = int(it.get("hit_count") or 0)
+        flag = "✅" if enabled else "⏸"
+        # 第 1 行：标签 + 命中次数（只读展示，点击进入编辑详情）
+        rows.append([InlineKeyboardButton(
+            text=f"{flag} {trigger}（命中 {hits}）",
+            callback_data=f"admin:keywords:view:{kid}",
+        )])
+        # 第 2 行：编辑 + 启停 + 删除
+        toggle_text = "⏸ 停用" if enabled else "▶️ 启用"
+        rows.append([
+            InlineKeyboardButton(
+                text="✏️ 编辑", callback_data=f"admin:keywords:edit:{kid}",
+            ),
+            InlineKeyboardButton(
+                text=toggle_text, callback_data=f"admin:keywords:toggle:{kid}",
+            ),
+            InlineKeyboardButton(
+                text="🗑 删除", callback_data=f"admin:keywords:delete:{kid}",
+            ),
+        ])
+    rows.append([InlineKeyboardButton(
+        text="⬅️ 返回系统配置", callback_data="admin:settings",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_keyword_edit_kb(kid: int) -> InlineKeyboardMarkup:
+    """单条关键词编辑面板：4 个字段 + 启停 + 返回列表。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🏷 修改触发词", callback_data=f"admin:keywords:set_trigger:{kid}",
+            ),
+            InlineKeyboardButton(
+                text="🪧 修改标题", callback_data=f"admin:keywords:set_banner:{kid}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📝 修改正文", callback_data=f"admin:keywords:set_body:{kid}",
+            ),
+            InlineKeyboardButton(
+                text="🔘 修改按钮", callback_data=f"admin:keywords:set_buttons:{kid}",
+            ),
+        ],
+        [InlineKeyboardButton(
+            text="🔁 切换启停", callback_data=f"admin:keywords:toggle:{kid}",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回列表", callback_data="admin:keywords",
+        )],
+    ])
+
+
+def admin_keyword_confirm_delete_kb(kid: int) -> InlineKeyboardMarkup:
+    """删除二次确认面板。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认删除", callback_data=f"admin:keywords:delete_yes:{kid}",
+            ),
+            InlineKeyboardButton(
+                text="⬅️ 取消", callback_data=f"admin:keywords:edit:{kid}",
+            ),
+        ],
+    ])
+
+
+def admin_keyword_cancel_input_kb() -> InlineKeyboardMarkup:
+    """FSM 输入页的"取消"按钮，回到关键词列表。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="⬅️ 取消输入", callback_data="admin:keywords",
+        )],
+    ])

@@ -234,7 +234,7 @@ def test_schema_migrations_baseline_unchanged():
 
 def test_migrations_list_still_empty():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}
 
 
 # ============ 28. 新增 callback 字面量锁定 ============

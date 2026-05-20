@@ -359,4 +359,4 @@ def test_show_request_renders_detail_when_self_holds_lock():
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}

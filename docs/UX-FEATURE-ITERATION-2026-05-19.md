@@ -650,7 +650,7 @@ Week 12+:  UX-9 单项独立 Sprint；UX-10.2 任意空档
 - [x] UX-8.2 已实现 commit:2097e97（2026-05-20）
 - [x] UX-8.3 已实现 commit:f9aedc8（2026-05-20，方案 A：评价空状态 CTA）
 - [x] UX-8.4 已实现 commit:675115f（2026-05-20，默认 off + active 改 cost 公告）
-- [ ] UX-9.1（最后一个，留作 Sprint UX-9 收尾）
+- [x] UX-9.1 已实现（2026-05-20，MVP：quick_entry 表化 + seed 默认 5 条 + 硬编码 fallback + admin 面板 CRUD）
 - [x] UX-9.2 已实现 commit:c4f9227（2026-05-20，FSM 超时中间件 30 分钟）
 - [x] UX-9.3 已实现 commit:df08453（2026-05-20，引入首条 Migration baseline）
 - [x] UX-9.5 已实现 commit:cc32db0（2026-05-20，entry_cost 升主线 Step 8/11）

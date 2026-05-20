@@ -105,10 +105,11 @@ def test_settings_kb_back_button_is_menu_main():
 
 
 def test_settings_kb_row_counts():
-    """超管：5 base + 2 super + 1 back = 8 行；非超管：5 base + 1 back = 6 行。"""
+    """超管：6 base + 2 super + 1 back = 9 行；非超管：6 base + 1 back = 7 行。
+    UX-9.1 在 base 区追加 [🗝 关键词管理]，故每模式 +1 行。"""
     from bot.keyboards.admin_kb import admin_settings_kb
-    assert len(admin_settings_kb(is_super=True).inline_keyboard) == 8
-    assert len(admin_settings_kb(is_super=False).inline_keyboard) == 6
+    assert len(admin_settings_kb(is_super=True).inline_keyboard) == 9
+    assert len(admin_settings_kb(is_super=False).inline_keyboard) == 7
 
 
 def test_settings_kb_button_texts_match_labels():
@@ -133,14 +134,13 @@ def test_settings_kb_button_texts_match_labels():
 
 def test_settings_kb_does_not_contain_downed_callbacks():
     """spec：promo_links / source_stats 在 Phase 4 已下线，不重新启用。
-    关键词管理无独立 callback，不构造伪入口。"""
+    UX-9.1：关键词管理已有独立 callback admin:keywords，允许出现。"""
     from bot.keyboards.admin_kb import admin_settings_kb
     kb = admin_settings_kb(is_super=True)
     callbacks = [b.callback_data or "" for row in kb.inline_keyboard for b in row]
     for cb in callbacks:
         assert "admin:promo" not in cb, f"不应启用已下线的 promo_links：{cb}"
         assert "admin:source_stats" not in cb, f"不应启用已下线的 source_stats：{cb}"
-        assert "admin:keyword" not in cb, f"关键词无独立 callback，不应构造伪入口：{cb}"
 
 
 def test_settings_kb_does_not_contain_other_submenu_callbacks():
@@ -251,7 +251,7 @@ def test_schema_migrations_baseline_unchanged_count():
 
 def test_no_new_migration_in_MIGRATIONS_list():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}
 
 
 # ============ 不修改业务 handler ============

@@ -408,3 +408,17 @@ class TeacherProfileAlbumStates(StatesGroup):
     waiting_add_photos     = State()  # 收图
     waiting_remove_index   = State()  # 选 index 删除
     waiting_replace_photos = State()  # 收图（整体替换）
+
+
+class QuickEntryKeywordStates(StatesGroup):
+    """UX-9.1：群组快捷词配置 FSM
+
+    state.data：
+        新增（add 模式）: {"mode": "add", "trigger": str, "banner": str, "body": str}
+        编辑（edit 模式）: {"mode": "edit", "kid": int, "field": str}
+    """
+    waiting_add_trigger = State()
+    waiting_add_banner  = State()
+    waiting_add_body    = State()
+    waiting_add_buttons = State()
+    waiting_edit_value  = State()

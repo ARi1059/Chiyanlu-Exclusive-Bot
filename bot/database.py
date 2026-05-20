@@ -606,6 +606,80 @@ async def _migrate_001_teacher_draft_states(db: aiosqlite.Connection) -> None:
     await db.commit()
 
 
+# UX-9.1 quick_entry_keywords seed：与历史 _QUICK_ENTRY_CONFIG 一一对应
+# 保留为模块级常量，handler fallback 与 migration seed 共享同源数据
+_QUICK_ENTRY_SEED: tuple[tuple[str, str, str, list], ...] = (
+    (
+        "菜单",
+        "📌 痴颜录 Bot 菜单",
+        "你可以点击下方进入私聊使用：",
+        [("打开菜单", "menu"), ("今日开课", "today"), ("热门推荐", "hot")],
+    ),
+    (
+        "今日",
+        "📚 今日开课入口",
+        "点击下方进入私聊查看今日开课老师。",
+        [("打开今日开课", "today"), ("按条件筛选", "filter"), ("热门推荐", "hot")],
+    ),
+    (
+        "热门",
+        "🔥 热门推荐入口",
+        "点击下方查看近期热门老师。",
+        [("热门推荐", "hot"), ("帮我推荐", "recommend"), ("按条件筛选", "filter")],
+    ),
+    (
+        "推荐",
+        "🎯 推荐入口",
+        "想让 Bot 根据你的浏览、搜索和收藏推荐老师，请进入私聊使用。",
+        [("为我推荐", "recommend"), ("热门推荐", "hot"), ("按条件筛选", "filter")],
+    ),
+    (
+        "筛选",
+        "🔎 条件筛选入口",
+        "可以按地区、价格、标签查找老师。",
+        [("按条件筛选", "filter"), ("今日开课", "today"), ("热门推荐", "hot")],
+    ),
+)
+
+
+async def _migrate_002_quick_entry_keywords(db: aiosqlite.Connection) -> None:
+    """UX-9.1：群组快捷词配置表 + seed 默认 5 条。
+
+    设计要点：
+        - trigger 用 COLLATE NOCASE，匹配现网"大小写无关"语义
+        - seeded=1 标记 migration 初始化的行，运营可改/删，不被 migration 再次覆盖
+        - buttons_json 存 [(label, deep_link_target), ...]，与 _QUICK_ENTRY_CONFIG 同形
+        - 表为空时 handler 走硬编码 _QUICK_ENTRY_CONFIG fallback（同源 _QUICK_ENTRY_SEED）
+    """
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quick_entry_keywords (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            banner        TEXT NOT NULL DEFAULT '',
+            body          TEXT NOT NULL DEFAULT '',
+            buttons_json  TEXT NOT NULL DEFAULT '[]',
+            enabled       INTEGER NOT NULL DEFAULT 1,
+            hit_count     INTEGER NOT NULL DEFAULT 0,
+            seeded        INTEGER NOT NULL DEFAULT 0,
+            created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+    # seed 5 条；INSERT OR IGNORE 保证幂等（trigger UNIQUE）
+    for trigger, banner, body, buttons in _QUICK_ENTRY_SEED:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO quick_entry_keywords
+                (trigger, banner, body, buttons_json, enabled, seeded)
+            VALUES (?, ?, ?, ?, 1, 1)
+            """,
+            (trigger, banner, body, json.dumps(buttons, ensure_ascii=False)),
+        )
+    await db.commit()
+
+
 # 未来新增迁移在此追加。
 MIGRATIONS: list[Migration] = [
     Migration(
@@ -613,6 +687,12 @@ MIGRATIONS: list[Migration] = [
         name="UX-9.3 admin teacher_profile 录入草稿表",
         kind="soft",  # soft：表创建失败不阻断启动；handler 端会 try/except 容错
         func=_migrate_001_teacher_draft_states,
+    ),
+    Migration(
+        version="20260520_002_quick_entry_keywords",
+        name="UX-9.1 群组快捷词配置表 + seed 默认",
+        kind="soft",  # soft：表缺失时 handler 走硬编码 fallback
+        func=_migrate_002_quick_entry_keywords,
     ),
 ]
 
@@ -2476,6 +2556,242 @@ async def clear_teacher_draft(admin_id: int) -> bool:
     except Exception as e:
         logger.warning("clear_teacher_draft 删除失败 admin=%s: %s", admin_id, e)
         return False
+    finally:
+        await db.close()
+
+
+# ============ 群组快捷词 (UX-9.1) ============
+
+
+def _quick_entry_row_to_dict(row) -> dict:
+    """统一把 quick_entry_keywords 行（aiosqlite.Row）转成可序列化 dict。
+
+    buttons_json 字段会在此处解码：解码失败 → 视为空 list（前端降级到无按钮）。
+    """
+    if row is None:
+        return None  # type: ignore[return-value]
+    raw_btns = row["buttons_json"] or "[]"
+    try:
+        buttons = json.loads(raw_btns)
+        if not isinstance(buttons, list):
+            buttons = []
+    except (json.JSONDecodeError, TypeError):
+        buttons = []
+    return {
+        "id": row["id"],
+        "trigger": row["trigger"],
+        "banner": row["banner"] or "",
+        "body": row["body"] or "",
+        "buttons": buttons,
+        "buttons_json": raw_btns,
+        "enabled": int(row["enabled"] or 0),
+        "hit_count": int(row["hit_count"] or 0),
+        "seeded": int(row["seeded"] or 0),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def list_quick_entry_keywords(
+    *, enabled_only: bool = False, limit: int = 200,
+) -> list[dict]:
+    """列出群组快捷词（按 id 升序）；enabled_only=True 只取启用项。"""
+    db = await get_db()
+    try:
+        sql = "SELECT * FROM quick_entry_keywords"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY id ASC LIMIT ?"
+        cur = await db.execute(sql, (int(limit),))
+        rows = await cur.fetchall()
+        return [_quick_entry_row_to_dict(r) for r in rows]
+    except Exception as e:
+        logger.warning("list_quick_entry_keywords 失败: %s", e)
+        return []
+    finally:
+        await db.close()
+
+
+async def get_quick_entry_keyword(kid: int) -> Optional[dict]:
+    """按 id 取一行；不存在 → None。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM quick_entry_keywords WHERE id = ?", (int(kid),),
+        )
+        row = await cur.fetchone()
+        return _quick_entry_row_to_dict(row) if row else None
+    except Exception as e:
+        logger.warning("get_quick_entry_keyword 失败 id=%s: %s", kid, e)
+        return None
+    finally:
+        await db.close()
+
+
+async def get_quick_entry_by_trigger(trigger: str) -> Optional[dict]:
+    """按 trigger 取一行（大小写不敏感）；不存在 / 异常 → None。
+
+    handler 端用本函数做关键词命中查询；trigger COLLATE NOCASE 走 UNIQUE 索引。
+    """
+    if not trigger:
+        return None
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM quick_entry_keywords WHERE trigger = ? COLLATE NOCASE",
+            (trigger,),
+        )
+        row = await cur.fetchone()
+        return _quick_entry_row_to_dict(row) if row else None
+    except Exception as e:
+        logger.warning("get_quick_entry_by_trigger 失败 trigger=%r: %s", trigger, e)
+        return None
+    finally:
+        await db.close()
+
+
+async def create_quick_entry_keyword(
+    *,
+    trigger: str,
+    banner: str,
+    body: str,
+    buttons: list,
+    enabled: bool = True,
+) -> Optional[int]:
+    """新增一条快捷词；trigger 冲突 → 返回 None。"""
+    trigger = (trigger or "").strip()
+    if not trigger:
+        return None
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """
+            INSERT INTO quick_entry_keywords
+                (trigger, banner, body, buttons_json, enabled, seeded)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (
+                trigger,
+                banner or "",
+                body or "",
+                json.dumps(buttons or [], ensure_ascii=False),
+                1 if enabled else 0,
+            ),
+        )
+        await db.commit()
+        return cur.lastrowid
+    except aiosqlite.IntegrityError:
+        return None
+    except Exception as e:
+        logger.warning("create_quick_entry_keyword 失败 trigger=%r: %s", trigger, e)
+        return None
+    finally:
+        await db.close()
+
+
+async def update_quick_entry_keyword(
+    kid: int,
+    *,
+    trigger: Optional[str] = None,
+    banner: Optional[str] = None,
+    body: Optional[str] = None,
+    buttons: Optional[list] = None,
+    enabled: Optional[bool] = None,
+) -> bool:
+    """部分更新；trigger 冲突 → 返回 False。"""
+    sets: list[str] = []
+    args: list = []
+    if trigger is not None:
+        trigger = trigger.strip()
+        if not trigger:
+            return False
+        sets.append("trigger = ?")
+        args.append(trigger)
+    if banner is not None:
+        sets.append("banner = ?")
+        args.append(banner)
+    if body is not None:
+        sets.append("body = ?")
+        args.append(body)
+    if buttons is not None:
+        sets.append("buttons_json = ?")
+        args.append(json.dumps(buttons, ensure_ascii=False))
+    if enabled is not None:
+        sets.append("enabled = ?")
+        args.append(1 if enabled else 0)
+    if not sets:
+        return False
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    sql = f"UPDATE quick_entry_keywords SET {', '.join(sets)} WHERE id = ?"
+    args.append(int(kid))
+    db = await get_db()
+    try:
+        cur = await db.execute(sql, tuple(args))
+        await db.commit()
+        return cur.rowcount > 0
+    except aiosqlite.IntegrityError:
+        return False
+    except Exception as e:
+        logger.warning("update_quick_entry_keyword 失败 id=%s: %s", kid, e)
+        return False
+    finally:
+        await db.close()
+
+
+async def delete_quick_entry_keyword(kid: int) -> bool:
+    """物理删除一行（含 seeded）；不存在 → False。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "DELETE FROM quick_entry_keywords WHERE id = ?", (int(kid),),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.warning("delete_quick_entry_keyword 失败 id=%s: %s", kid, e)
+        return False
+    finally:
+        await db.close()
+
+
+async def toggle_quick_entry_enabled(kid: int) -> Optional[bool]:
+    """切换启用状态；返回切换后的状态（True=enabled / False=disabled），
+    不存在 → None。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            """UPDATE quick_entry_keywords
+               SET enabled = 1 - enabled,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (int(kid),),
+        )
+        await db.commit()
+        cur = await db.execute(
+            "SELECT enabled FROM quick_entry_keywords WHERE id = ?", (int(kid),),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return bool(row["enabled"])
+    except Exception as e:
+        logger.warning("toggle_quick_entry_enabled 失败 id=%s: %s", kid, e)
+        return None
+    finally:
+        await db.close()
+
+
+async def increment_quick_entry_hit_count(kid: int) -> None:
+    """命中计数 +1；异常静默（埋点级别，不阻断业务）。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE quick_entry_keywords SET hit_count = hit_count + 1 WHERE id = ?",
+            (int(kid),),
+        )
+        await db.commit()
+    except Exception as e:
+        logger.debug("increment_quick_entry_hit_count 失败 id=%s: %s", kid, e)
     finally:
         await db.close()
 

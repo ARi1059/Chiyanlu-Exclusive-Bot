@@ -88,11 +88,12 @@ def test_empty_migrations_is_noop(monkeypatch):
 
 
 def test_module_level_migrations_is_baseline():
-    """生产代码 MIGRATIONS 应是 list；UX-9.3 引入第一条 baseline migration
-    (20260520_001_teacher_draft_states)；后续 PR 加新迁移时本契约同步更新。"""
+    """生产代码 MIGRATIONS 应是 list；UX-9.3 引入第一条 baseline，
+    UX-9.1（20260520_002_quick_entry_keywords）追加第二条；后续 PR 加新迁移时同步更新。"""
     assert isinstance(db_mod.MIGRATIONS, list)
     assert {m.version for m in db_mod.MIGRATIONS} == {
         "20260520_001_teacher_draft_states",
+        "20260520_002_quick_entry_keywords",
     }
 
 

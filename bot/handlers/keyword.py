@@ -15,6 +15,7 @@
 
 import logging
 from datetime import datetime
+from typing import Optional
 
 from aiogram import Router, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -339,9 +340,48 @@ async def _send_teacher_group_card_v2(
 # ============ 2. 群组快捷词（Phase 8.2 §七） ============
 
 
+async def _get_quick_entry_config(keyword: str) -> Optional[dict]:
+    """读取群组快捷词配置（UX-9.1：DB 表优先，硬编码 fallback）。
+
+    查找顺序：
+        1. 查 quick_entry_keywords 表 → 命中 enabled=1 行 → 返回 DB 行（含 id）
+        2. DB 异常 / 行不存在 / enabled=0 → 回退到 _QUICK_ENTRY_CONFIG 硬编码（无 id）
+        3. 全无命中 → 返回 None
+
+    返回 dict 结构（与历史 _QUICK_ENTRY_CONFIG 同形）：
+        {"banner": str, "body": str, "buttons": list, "id": Optional[int]}
+    """
+    if not keyword:
+        return None
+    try:
+        from bot.database import get_quick_entry_by_trigger
+        row = await get_quick_entry_by_trigger(keyword)
+    except Exception as e:
+        logger.debug("get_quick_entry_by_trigger 异常 kw=%r: %s", keyword, e)
+        row = None
+    if row and row.get("enabled"):
+        return {
+            "banner": row.get("banner") or "",
+            "body": row.get("body") or "",
+            "buttons": row.get("buttons") or [],
+            "id": row.get("id"),
+        }
+    # fallback：硬编码常量
+    cfg = _QUICK_ENTRY_CONFIG.get(keyword)
+    if cfg:
+        return {
+            "banner": cfg.get("banner") or "",
+            "body": cfg.get("body") or "",
+            "buttons": list(cfg.get("buttons") or []),
+            "id": None,
+        }
+    return None
+
+
 async def _send_quick_entry(
     message: types.Message,
     keyword: str,
+    cfg: Optional[dict] = None,
 ) -> bool:
     """发送群组快捷词回复
 
@@ -349,7 +389,8 @@ async def _send_quick_entry(
         True  → 成功发送（调用方应记录冷却）
         False → 没发出（bot_username 缺失等异常；调用方不要记录冷却）
     """
-    cfg = _QUICK_ENTRY_CONFIG.get(keyword)
+    if cfg is None:
+        cfg = await _get_quick_entry_config(keyword)
     if not cfg:
         return False
 
@@ -369,6 +410,15 @@ async def _send_quick_entry(
     except Exception as e:
         logger.warning("发送群内快捷入口失败: %s", e)
         return False
+
+    # 命中计数（仅 DB 行有 id；fallback 路径无 id 不累计）
+    kid = cfg.get("id")
+    if kid:
+        try:
+            from bot.database import increment_quick_entry_hit_count
+            await increment_quick_entry_hit_count(int(kid))
+        except Exception as e:
+            logger.debug("increment_quick_entry_hit_count 失败 id=%s: %s", kid, e)
 
     return True
 
@@ -601,7 +651,8 @@ async def on_keyword_message(message: types.Message):
         return
 
     # ============ 优先级 2：群组快捷词 ============
-    if keyword in _QUICK_ENTRY_CONFIG:
+    quick_cfg = await _get_quick_entry_config(keyword)
+    if quick_cfg:
         allowed, reason = await check_group_cooldown(group_id, user_id, normalized)
         if not allowed:
             await _safe_log_event(
@@ -615,16 +666,19 @@ async def on_keyword_message(message: types.Message):
                 },
             )
             return
-        sent = await _send_quick_entry(message, keyword)
+        sent = await _send_quick_entry(message, keyword, cfg=quick_cfg)
         if not sent:
             return
         record_group_cooldown(group_id, user_id, normalized)
+        # 安全取第一个按钮的 target；空 buttons 时降级为空字符串
+        buttons = quick_cfg.get("buttons") or []
+        target = buttons[0][1] if (buttons and len(buttons[0]) >= 2) else ""
         await _safe_log_event(
             user_id,
             "group_quick_entry",
             {
                 "keyword": keyword,
-                "target": _QUICK_ENTRY_CONFIG[keyword]["buttons"][0][1],
+                "target": target,
                 "group_id": group_id,
             },
         )
