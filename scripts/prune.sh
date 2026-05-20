@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# Chiyanlu-Exclusive-Bot 历史数据 pruning · P2 dry-run（详见 docs/INFRASTRUCTURE-DESIGN.md (Part B)）
+# Chiyanlu-Exclusive-Bot 历史数据 pruning · P2 dry-run + P3 --confirm
+#   （详见 docs/INFRASTRUCTURE-DESIGN.md (Part B) + ROADMAP-PLAN.md §9.2）
 #
 # 用法：
-#   ./scripts/prune.sh --dry-run                  # 默认 days=180
+#   ./scripts/prune.sh --dry-run                    # 默认 days=180，仅统计
 #   ./scripts/prune.sh --dry-run --days 180
 #   ./scripts/prune.sh --dry-run --days 365
+#   ./scripts/prune.sh --confirm --days 180         # 真实删除（P3）
 #   ./scripts/prune.sh --help
 #
-# ⚠️ 本阶段（P2）严格只读 —— 不删除任何数据，不执行 VACUUM。
-#    脚本对数据库的实际 sqlite3 调用仅包含 PRAGMA / SELECT 语句。
-#    任何形如 --confirm / --delete / --vacuum / --execute 的参数都会立即报错退出，
-#    防止误以为 P3 已实现而触发删除路径。
+# ⚠️ --confirm 路径双重保护：
+#    1. 必须**显式**传 --days N（即便用默认 180 也得显式带）—— 强制运维
+#       重新输入 days，避免"依赖上一次 dry-run 的 days"
+#    2. --confirm 与 --dry-run 互斥
+#
+# ⚠️ 永久禁止表（即使有人不慎修改 WHITELIST_TABLES 也会被 PERMANENT_FORBIDDEN
+#    交集检查阻断）：
+#      point_transactions / reimbursements / lottery_entries / teacher_reviews /
+#      admin_audit_logs / users / teachers / favorites
 #
 # 适用：Debian 12 生产服务器；可手工触发，**不**接 scheduler。
 
@@ -24,13 +31,29 @@ cd "${PROJECT_DIR}"
 # ============ 默认配置 ============
 DEFAULT_DAYS=180
 DEFAULT_DB_PATH="data/bot.db"
+BACKUP_DIR="${PROJECT_DIR}/backups"
+SAFETY_DELAY_SECONDS=5
 
 # 第一阶段白名单表：仅纯日志类（详见 INFRASTRUCTURE-DESIGN.md Part B §四）
 # 不要在此列表中加入任何权益类表（point_transactions / reimbursements /
-# lottery_entries / teacher_reviews 等），P3 阶段也不会加。
+# lottery_entries / teacher_reviews 等）。下方 PERMANENT_FORBIDDEN_TABLES 会做
+# 交集检查，违规会立即报错 exit。
 WHITELIST_TABLES=(
     "user_events"
     "user_teacher_views"
+)
+
+# 永久禁止 prune 的权益表（ROADMAP §9.2 / POLICY 多处）。即使有人误把这些表加到
+# WHITELIST_TABLES，--confirm 路径会先做交集检查并立即 exit 1（编程错误防护）。
+PERMANENT_FORBIDDEN_TABLES=(
+    "point_transactions"
+    "reimbursements"
+    "lottery_entries"
+    "teacher_reviews"
+    "admin_audit_logs"
+    "users"
+    "teachers"
+    "favorites"
 )
 
 # 每张白名单表对应的时间字段（真实 schema 中的列名）
@@ -62,6 +85,7 @@ show_help() {
 用法：
   ./scripts/prune.sh --dry-run                默认 days=180，只统计、不删除
   ./scripts/prune.sh --dry-run --days N       自定义保留天数（非负整数）
+  ./scripts/prune.sh --confirm --days N       真实删除 N 天前的白名单表数据（P3）
   ./scripts/prune.sh --help                   显示帮助
 
 输出：
@@ -70,26 +94,40 @@ show_help() {
     matched_rows      命中行数
     oldest_created_at 命中行中最早时间戳
     newest_created_at 命中行中最新时间戳
-    action            safe-to-delete-after-backup 或 nothing-to-prune
-  最后打印 summary（tables_checked / tables_skipped / total_matched_rows）
+    action            safe-to-delete-after-backup / nothing-to-prune / pruned
 
-注意：
-  - 本阶段仅 dry-run。任何 --confirm / --delete / --vacuum / --execute 参数
-    会立即报错退出。
-  - 实际清理路径（P3）尚未实施。即使本地有当天的 manual 备份，也无法用本脚本
-    真正删除数据 —— 这是设计行为。
+--confirm 前置条件（双重保护）：
+  - 必须显式传 --days N（即便用默认 180 也得显式带）
+  - 必须存在当天的 manual 备份：backups/bot.db.YYYYMMDD-*.manual.bak
+    （先手工跑 ./scripts/backup.sh）
+  - --confirm 与 --dry-run 互斥
+  - 5 秒安全倒计时（可 Ctrl-C 中止）
+  - 每表 BEGIN / DELETE / COMMIT；单表失败 ROLLBACK 不影响其它表
+  - 完成后 PRAGMA integrity_check（!= ok 即 exit 2）
+  - 写入 admin_audit_logs（action='prune_confirm', admin_id=0）
+
+权益数据表永久禁止 prune（即使有人不慎扩展 WHITELIST_TABLES 也会被
+程序级交集检查阻断）：point_transactions / reimbursements /
+lottery_entries / teacher_reviews / admin_audit_logs / users /
+teachers / favorites
 EOF
 }
 
 
 # ============ 参数解析 ============
 MODE=""
-DAYS="${DEFAULT_DAYS}"
+DAYS=""
+DAYS_EXPLICIT=0          # --confirm 必须显式传 --days，记录是否被赋过值
+DRY_RUN_SEEN=0
+CONFIRM_SEEN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)
-            MODE="dry-run"
+            DRY_RUN_SEEN=1
+            ;;
+        --confirm)
+            CONFIRM_SEEN=1
             ;;
         --days)
             shift
@@ -102,6 +140,7 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             DAYS="$1"
+            DAYS_EXPLICIT=1
             ;;
         --days=*)
             v="${1#--days=}"
@@ -110,10 +149,10 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             DAYS="$v"
+            DAYS_EXPLICIT=1
             ;;
-        --confirm|--delete|--vacuum|--execute)
-            err "当前版本只支持 --dry-run，不支持真实删除。"
-            err "P3 阶段（带 --confirm 的实际清理）尚未实施。详见 docs/INFRASTRUCTURE-DESIGN.md (Part B) §十"
+        --delete|--vacuum|--execute)
+            err "无效参数：$1（仅支持 --dry-run / --confirm；详见 --help）"
             exit 1
             ;;
         -h|--help)
@@ -130,8 +169,29 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "${MODE}" != "dry-run" ]]; then
-    err "必须显式传 --dry-run。本阶段不支持真实删除。"
+# 互斥：--dry-run 与 --confirm 不能同传（防止歧义）
+if [[ ${DRY_RUN_SEEN} -eq 1 && ${CONFIRM_SEEN} -eq 1 ]]; then
+    err "--dry-run 与 --confirm 互斥，不能同时使用"
+    exit 1
+fi
+
+# 确定 MODE
+if [[ ${CONFIRM_SEEN} -eq 1 ]]; then
+    MODE="confirm"
+    # --confirm 必须显式传 --days N，强制运维重新输入而非依赖默认值
+    if [[ ${DAYS_EXPLICIT} -ne 1 ]]; then
+        err "--confirm 必须显式传 --days N（即便用默认 180，也得显式 --days 180）"
+        err "用法：./scripts/prune.sh --confirm --days 180"
+        exit 1
+    fi
+elif [[ ${DRY_RUN_SEEN} -eq 1 ]]; then
+    MODE="dry-run"
+    # dry-run 允许不传 --days，回退默认
+    if [[ ${DAYS_EXPLICIT} -ne 1 ]]; then
+        DAYS="${DEFAULT_DAYS}"
+    fi
+else
+    err "必须显式传 --dry-run 或 --confirm"
     echo
     show_help
     exit 1
@@ -143,6 +203,19 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
     err "未找到 sqlite3 命令（apt install -y sqlite3）"
     exit 1
 fi
+
+
+# ============ PERMANENT_FORBIDDEN 交集检查（编程错误防护） ============
+# 即便有人不慎把权益表加到 WHITELIST_TABLES，也在此处兜底阻断。
+for whitelisted in "${WHITELIST_TABLES[@]}"; do
+    for forbidden in "${PERMANENT_FORBIDDEN_TABLES[@]}"; do
+        if [[ "${whitelisted}" == "${forbidden}" ]]; then
+            err "编程错误：WHITELIST_TABLES 包含永久禁止表 '${whitelisted}'"
+            err "权益表永久禁止 prune，详见 ROADMAP-PLAN.md §9.2"
+            exit 1
+        fi
+    done
+done
 
 
 # ============ 读取 DATABASE_PATH（不输出 .env） ============
@@ -185,8 +258,26 @@ if [[ "${journal}" != "wal" ]]; then
 fi
 
 
-# ============ Dry-run banner ============
-info "Dry-run only. No rows will be deleted."
+# ============ Mode banner + backup 检查（仅 confirm 路径） ============
+if [[ "${MODE}" == "dry-run" ]]; then
+    info "Dry-run only. No rows will be deleted."
+else
+    info "⚠️  CONFIRM MODE: rows matching the condition WILL be deleted."
+    # 检查当天 manual 备份是否存在（§9.2 必须先 backup）
+    TODAY_TS=$(date +%Y%m%d)
+    if ! compgen -G "${BACKUP_DIR}/bot.db.${TODAY_TS}-*.manual.bak" >/dev/null 2>&1; then
+        err "未发现今日 manual 备份 ${BACKUP_DIR}/bot.db.${TODAY_TS}-*.manual.bak"
+        err "请先执行：./scripts/backup.sh"
+        exit 1
+    fi
+    # 取最新一份当天备份（同日多次备份取最新）
+    BACKUP_FILE=$(ls -1t "${BACKUP_DIR}"/bot.db.${TODAY_TS}-*.manual.bak 2>/dev/null | head -1 || true)
+    if [[ -z "${BACKUP_FILE}" || ! -s "${BACKUP_FILE}" ]]; then
+        err "当天 manual 备份不存在或为空"
+        exit 1
+    fi
+    info "today's backup: ${BACKUP_FILE}"
+fi
 info "days=${DAYS}"
 info "target tables: ${WHITELIST_TABLES[*]}"
 info "database: ${DB_PATH}"
@@ -258,13 +349,165 @@ for table in "${WHITELIST_TABLES[@]}"; do
 done
 
 
-# ============ Summary ============
+# ============ Dry-run summary（dry-run 路径在此结束） ============
+if [[ "${MODE}" == "dry-run" ]]; then
+    echo
+    echo "Prune dry-run summary:"
+    echo "- tables_checked: ${TABLES_CHECKED}"
+    echo "- tables_skipped: ${TABLES_SKIPPED}"
+    echo "- total_matched_rows: ${TOTAL_MATCHED}"
+    echo "- days: ${DAYS}"
+    echo "- mode: dry-run"
+    exit 0
+fi
+
+
+# ============ Confirm: 5 秒安全倒计时 + 真实 DELETE ============
 echo
-echo "Prune dry-run summary:"
+echo "Prune confirm pre-flight:"
 echo "- tables_checked: ${TABLES_CHECKED}"
 echo "- tables_skipped: ${TABLES_SKIPPED}"
 echo "- total_matched_rows: ${TOTAL_MATCHED}"
 echo "- days: ${DAYS}"
-echo "- mode: dry-run"
+echo "- mode: confirm"
+echo
 
+if [[ "${TOTAL_MATCHED}" -eq 0 ]]; then
+    info "没有命中任何行，无需执行 DELETE。"
+    exit 0
+fi
+
+# 5 秒安全倒计时（可 Ctrl-C 中止）
+warn "${SAFETY_DELAY_SECONDS} 秒后开始真实删除... 按 Ctrl-C 立刻中止。"
+for ((i=SAFETY_DELAY_SECONDS; i>0; i--)); do
+    printf >&2 "  ... %d\n" "${i}"
+    sleep 1
+done
+
+
+# 对每张表 BEGIN / DELETE / COMMIT；单表失败 ROLLBACK 不影响其它表
+declare -a PRUNE_RESULT_LABELS=()
+TOTAL_DELETED=0
+TABLES_FAILED=0
+
+for table in "${WHITELIST_TABLES[@]}"; do
+    # 仅对前面 dry-run 通过校验的表执行（同 dry-run 跳过逻辑）
+    if ! grep -Fxq "${table}" <<<"${existing_tables}"; then
+        continue
+    fi
+    time_col=$(table_time_col "${table}")
+    if [[ -z "${time_col}" ]]; then
+        continue
+    fi
+    table_cols=$(sqlite3 "${DB_PATH}" "PRAGMA table_info(${table});" 2>/dev/null \
+        | awk -F'|' '{print $2}' || true)
+    if ! grep -Fxq "${time_col}" <<<"${table_cols}"; then
+        continue
+    fi
+
+    condition="${time_col} < datetime('now', '-${DAYS} days')"
+
+    info "Pruning table: ${table}"
+    # 用 BEGIN / DELETE / COMMIT 包裹，单表失败 ROLLBACK
+    set +e
+    deleted=$(sqlite3 "${DB_PATH}" <<SQL 2>&1
+BEGIN TRANSACTION;
+DELETE FROM ${table} WHERE ${condition};
+SELECT changes();
+COMMIT;
+SQL
+    )
+    rc=$?
+    set -e
+
+    if [[ ${rc} -ne 0 ]]; then
+        err "  表 ${table} DELETE 失败（rc=${rc}）：${deleted}"
+        # 尝试 ROLLBACK（即便事务可能已 abort）
+        sqlite3 "${DB_PATH}" "ROLLBACK;" >/dev/null 2>&1 || true
+        TABLES_FAILED=$((TABLES_FAILED + 1))
+        PRUNE_RESULT_LABELS+=("${table}=FAILED")
+        continue
+    fi
+
+    # changes() 输出在 deleted 字符串末尾；提取最后一个非空数字行
+    deleted_count=$(echo "${deleted}" | grep -E '^[0-9]+$' | tail -1 || echo "0")
+    if [[ -z "${deleted_count}" ]]; then
+        deleted_count="0"
+    fi
+    echo "  deleted_rows: ${deleted_count}"
+    TOTAL_DELETED=$((TOTAL_DELETED + deleted_count))
+    PRUNE_RESULT_LABELS+=("${table}=${deleted_count}")
+done
+
+
+# ============ 完整性校验 ============
+echo
+info "执行 PRAGMA integrity_check..."
+integrity_after=$(sqlite3 "${DB_PATH}" "PRAGMA integrity_check;" 2>/dev/null | head -1 || true)
+if [[ "${integrity_after}" != "ok" ]]; then
+    err "PRAGMA integrity_check 异常：${integrity_after}"
+    err "数据库可能损坏！请立即从 backup 恢复：${BACKUP_FILE}"
+    exit 2
+fi
+ok "PRAGMA integrity_check = ok"
+
+
+# ============ 写入 admin_audit_logs ============
+# admin_id=0 表示运维脚本（与 cron / 系统操作惯例一致）
+# detail 用 JSON 字符串，包含 days / 各表删除数 / 总数 / backup 路径
+detail_tables=""
+for label in "${PRUNE_RESULT_LABELS[@]}"; do
+    name="${label%%=*}"
+    val="${label#*=}"
+    if [[ -n "${detail_tables}" ]]; then
+        detail_tables="${detail_tables}, "
+    fi
+    detail_tables="${detail_tables}\"${name}\": \"${val}\""
+done
+
+# JSON 转义 BACKUP_FILE 路径中的反斜杠 / 引号（安全起见）
+backup_escaped=${BACKUP_FILE//\\/\\\\}
+backup_escaped=${backup_escaped//\"/\\\"}
+
+audit_detail="{\"days\": ${DAYS}, \"tables\": {${detail_tables}}, \"total_deleted\": ${TOTAL_DELETED}, \"tables_failed\": ${TABLES_FAILED}, \"backup\": \"${backup_escaped}\"}"
+
+# SQL 字符串转义：单引号 → 两个单引号（提前在 bash 层算好，避免 heredoc 中的复杂转义）
+sql_db_path=$(printf "%s" "${DB_PATH}" | sed "s/'/''/g")
+sql_audit_detail=$(printf "%s" "${audit_detail}" | sed "s/'/''/g")
+
+# 用 INSERT ... RETURNING id 拿到 audit log id（SQLite 3.35+；Debian 12 sqlite3 满足）
+audit_id=$(sqlite3 "${DB_PATH}" <<SQL 2>/dev/null
+INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, detail, created_at)
+VALUES (0, 'prune_confirm', 'database', '${sql_db_path}',
+        '${sql_audit_detail}', CURRENT_TIMESTAMP)
+RETURNING id;
+SQL
+)
+if [[ -z "${audit_id}" ]]; then
+    warn "admin_audit_logs 写入未返回 id（可能 sqlite3 不支持 RETURNING）；继续运行"
+    audit_id="?"
+fi
+
+
+# ============ Confirm summary ============
+echo
+echo "Prune confirm summary:"
+echo "- tables_checked: ${TABLES_CHECKED}"
+echo "- tables_skipped: ${TABLES_SKIPPED}"
+echo "- tables_failed: ${TABLES_FAILED}"
+echo "- total_deleted_rows: ${TOTAL_DELETED}"
+echo "- per_table:"
+for label in "${PRUNE_RESULT_LABELS[@]}"; do
+    echo "    ${label}"
+done
+echo "- days: ${DAYS}"
+echo "- backup: ${BACKUP_FILE}"
+echo "- audit_log_id: ${audit_id}"
+echo "- mode: confirm"
+echo "- integrity_check: ok"
+
+if [[ ${TABLES_FAILED} -gt 0 ]]; then
+    warn "${TABLES_FAILED} 张表 DELETE 失败，详见上方 [ERR ] 日志"
+    exit 1
+fi
 exit 0

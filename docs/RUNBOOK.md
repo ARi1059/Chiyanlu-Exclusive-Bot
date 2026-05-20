@@ -338,30 +338,70 @@ cd /opt/Chiyanlu-Exclusive-Bot
 
 **触发场景**：`./scripts/healthcheck.sh` 输出
 `[WARN] DB size: XXX MB > 512 MB，建议执行 ./scripts/prune.sh --dry-run --days 180`
-时，按如下顺序处理（**仍然不会真删除任何数据**）：
+时，按如下顺序处理：
 
 ```bash
 cd /opt/Chiyanlu-Exclusive-Bot
 
-# 第 1 步：先做一次备份（pruning 任何阶段的前置依赖）
+# 第 1 步：先做一次备份（任何 prune 操作的前置依赖）
 ./scripts/backup.sh
 
 # 第 2 步：跑只读 dry-run，看过去 180 天可清理的日志行数
 ./scripts/prune.sh --dry-run --days 180
-
-# 第 3 步：如需真正清理，等待 P3 confirm 路径实现；
-#         绝不要手工 DELETE 任何业务表
 ```
 
 dry-run 输出会列出 `user_events` / `user_teacher_views` 两张表的命中行数、
 最早 / 最新时间戳与 `action`（`safe-to-delete-after-backup` / `nothing-to-prune`）。
 
-> ⚠️ **当前 `scripts/prune.sh` 没有 `--confirm` 能力**。任何 `--confirm` /
-> `--delete` / `--vacuum` / `--execute` 都会被脚本直接拒绝（exit 1）。
-> 即使 dry-run 显示有 100 万行可清理，**不要**手工 `sqlite3 ... "DELETE FROM ..."`
-> 替代脚本；永远不要对 `point_transactions` / `reimbursements` / `teacher_reviews`
-> / `lottery_entries` 等权益类表手工 `DELETE`。
-> 详见 [INFRASTRUCTURE-DESIGN.md Part B §六](INFRASTRUCTURE-DESIGN.md#六执行设计) 与 [Part B §十一](INFRASTRUCTURE-DESIGN.md#十一明确不做)。
+### 6.3.1 历史数据 pruning · --confirm（真实删除，2026-05 Sprint 7 §9.2）
+
+**dry-run 显示需要清理时**，按下列严格顺序操作：
+
+```bash
+cd /opt/Chiyanlu-Exclusive-Bot
+
+# 第 1 步：当天 manual 备份（必须，否则 --confirm 会拒绝执行）
+./scripts/backup.sh
+
+# 第 2 步：dry-run 看预期清理量（强烈建议，便于事后核对）
+./scripts/prune.sh --dry-run --days 180
+
+# 第 3 步：真实删除（5 秒倒计时可 Ctrl-C 中止）
+./scripts/prune.sh --confirm --days 180
+
+# 第 4 步：复检（脚本已自动校验，但运维可二次确认）
+sqlite3 data/bot.db "PRAGMA integrity_check;"          # 必须 ok
+sqlite3 data/bot.db "PRAGMA journal_mode;"             # 必须 wal
+ls -lh data/bot.db                                     # 文件大小是否如预期下降
+sqlite3 data/bot.db "SELECT * FROM admin_audit_logs WHERE action='prune_confirm' ORDER BY id DESC LIMIT 1"
+```
+
+#### 关键约束（脚本自动检查，违反即 exit 1）
+
+- `--confirm` **必须**显式带 `--days N`（即便用默认 180，也得显式 `--days 180`）
+- `--confirm` 与 `--dry-run` **互斥**
+- 当天必须存在 `backups/bot.db.YYYYMMDD-*.manual.bak`，否则脚本拒绝执行
+- 仅清理白名单 `user_events` / `user_teacher_views`；权益表（point_transactions /
+  reimbursements / lottery_entries / teacher_reviews / admin_audit_logs / users /
+  teachers / favorites）通过 `PERMANENT_FORBIDDEN_TABLES` 纵深防御
+- 单表 DELETE 用 `BEGIN / COMMIT`；失败 `ROLLBACK` 不影响其它表
+- 删除后 `PRAGMA integrity_check`，非 `ok` 立即 exit 2（要求从 backup 恢复）
+- 完成后向 `admin_audit_logs` 写入 `(admin_id=0, action='prune_confirm', detail JSON)` 记录
+
+#### 失败处理
+
+- **exit 1（参数错误 / 缺备份 / 部分表 DELETE 失败）**：检查 stderr 提示，
+  补齐前置条件后重新运行
+- **exit 2（integrity_check 异常）**：**立即停服 + 从 backup 恢复**
+  ```bash
+  sudo systemctl stop chiyanlu-bot
+  ./update.sh rollback   # 或手工用 backups/bot.db.YYYYMMDD-*.manual.bak 覆盖
+  ```
+
+⚠️ 即使 dry-run 显示有 100 万行可清理，**不要**手工 `sqlite3 ... "DELETE FROM ..."`
+替代脚本；永远不要对 `point_transactions` / `reimbursements` / `teacher_reviews`
+/ `lottery_entries` 等权益类表手工 `DELETE`。
+详见 [INFRASTRUCTURE-DESIGN.md Part B §六](INFRASTRUCTURE-DESIGN.md#六执行设计) 与 [Part B §十一](INFRASTRUCTURE-DESIGN.md#十一明确不做)。
 
 #### 6.2.x 降级方案：scripts/backup.sh 也跑不起来时
 

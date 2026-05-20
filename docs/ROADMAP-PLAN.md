@@ -598,7 +598,7 @@ bash -n scripts/prune.sh
 
 ### 9.2 `prune.sh --confirm`
 
-- **当前状态**：`prune.sh` 只支持 `--dry-run`。
+- **当前状态**：✅ 已落地（2026-05-20 Sprint 7 §9.2 commit `<本 PR>`）。
 - **目标**：引入 `--confirm` 真正执行删除，但严格限定范围。
 - **第一阶段只允许清理**：
   - `user_events`
@@ -618,6 +618,22 @@ bash -n scripts/prune.sh
   3. **必须显式传 `--confirm`** 才真正删除。
   4. 删除后必须 `PRAGMA integrity_check`，结果为 `ok` 才视为成功。
   5. 必须写入运维日志 / `admin_audit_logs`。
+
+#### 9.2.1 实现要点（2026-05）
+
+- **三重防线**：
+  1. **CLI 双确认**：`--confirm` 必须显式带 `--days N`（即便用默认 180 也得显式 `--days 180`）；与 `--dry-run` 互斥
+  2. **Backup 强制**：当天必须存在 `backups/bot.db.YYYYMMDD-*.manual.bak`，否则 exit 1
+  3. **5 秒安全倒计时**：进 DELETE 前 stderr 倒计数 5→1，可 Ctrl-C 中止
+- **PERMANENT_FORBIDDEN_TABLES** 在脚本顶部声明 8 张权益表；启动时做 WHITELIST × FORBIDDEN 双层 for 循环交集检查（编程错误防护，防止有人不慎扩展 WHITELIST）
+- **每表独立事务**：`BEGIN TRANSACTION / DELETE / COMMIT`；单表 DELETE 失败 → `ROLLBACK` 不影响其它表
+- **完整性校验**：DELETE 后 `PRAGMA integrity_check`，非 `ok` 立即 `exit 2` 提示从 backup 恢复
+- **Bash 直写 admin_audit_logs**：`INSERT INTO admin_audit_logs (admin_id=0, action='prune_confirm', target_type='database', target_id=DB_PATH, detail JSON 含 days/tables/total_deleted/backup)`，不引入 Python 依赖
+- **退出码语义**：`0` 全成功；`1` 参数错误 / 缺备份 / 部分表 DELETE 失败；`2` integrity_check 异常（要求 backup 恢复）
+- **不引入 VACUUM**：SQLite WAL 模式 VACUUM 锁库，留作后续单独维护窗口工作
+- **测试**：30 个 test 覆盖（13 个旧 dry-run 路径分支检测 + 17 个新 confirm 路径，含 11 个 A 类静态契约 / 6 个 B 类集成场景；B 类用临时 SQLite + sqlite3 .backup 真生成 backup 文件，覆盖 dry-run 不改库 / 无备份拒绝 / 完整删除 / 缺 days 拒绝 / dry-run+confirm 互斥 / 0 命中跳过删除 + 权益表 prune 前后行数 == 核心安全断言）
+- 文档：`INFRASTRUCTURE-DESIGN.md` Part B §五 / §六 / §十从「P3 未启动」改为「✅ 已完成」；`RUNBOOK.md` §6.3.1 新增「prune --confirm 操作流程」段含失败处理。
+- CI 1639 全绿（1618 → +21 测试）；零业务行为变化；零 schema 变更。
 
 ### 9.3 禁止事项
 

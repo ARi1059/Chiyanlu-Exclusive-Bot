@@ -1,15 +1,18 @@
-"""scripts/prune.sh 静态检查。
+"""scripts/prune.sh 静态检查（dry-run 路径专属）。
 
-P2 阶段 prune.sh 必须严格只读：
+P2 dry-run 路径必须严格只读：
     - 文件存在、可执行、shebang 是 bash
     - 包含 --dry-run 入口
-    - **实际对数据库执行的 SQL** 不允许包含 DELETE / UPDATE / INSERT /
-      VACUUM / DROP / ALTER / REINDEX
-    - 包含拒绝危险参数（--confirm / --delete / --vacuum / --execute）的逻辑
+    - **dry-run 路径**对数据库执行的 SQL 仅 PRAGMA / SELECT
+    - 包含拒绝 --delete / --vacuum / --execute 的逻辑
     - bash -n 语法通过
 
-我们的策略：抓出所有 ``sqlite3 ...`` 实际调用行，对这些行做关键字断言；
-脚本头部注释 / err 消息中可能合法地出现 "DELETE"、"VACUUM" 等字眼。
+P3 confirm 路径（DELETE / INSERT INTO admin_audit_logs / RETURNING 等）的
+契约由 tests/test_prune_script_confirm.py 单独覆盖；本文件只断言 dry-run
+路径不退化。
+
+策略：抓 dry-run 段（参数解析后到 confirm 段开始之前的统计 loop）做 SQL
+关键字断言。confirm 段允许出现 DELETE / INSERT 等。
 """
 
 from __future__ import annotations
@@ -55,25 +58,24 @@ def test_script_mentions_dry_run_flag():
 
 
 def test_script_rejects_dangerous_flags():
-    """拒绝 --confirm / --delete / --vacuum / --execute 的 case 分支应存在"""
+    """拒绝 --delete / --vacuum / --execute 的 case 分支应存在。
+
+    注：--confirm 在 P3 已是合法参数（不再被拒绝），故从本断言移除。
+    其它 3 个非法参数仍必须被拒绝。"""
     src = _read_script()
-    # 这四个 flag 应该都出现在脚本中（作为被拒绝的参数）
-    for flag in ("--confirm", "--delete", "--vacuum", "--execute"):
+    for flag in ("--delete", "--vacuum", "--execute"):
         assert flag in src, f"未发现对 {flag} 的处理（应该拒绝）"
-    # 拒绝消息中应有"只支持 --dry-run"或等价文案
-    assert "只支持" in src or "dry-run" in src.lower()
 
 
 def test_script_has_set_euo_pipefail():
     assert "set -euo pipefail" in _read_script()
 
 
-# ============ 严格只读断言（关键） ============
+# ============ 严格只读断言（dry-run 段） ============
 
 
-_SQLITE_CALL_PATTERNS = (
-    re.compile(r'sqlite3\b'),
-)
+_DRY_RUN_BEGIN_MARKER = "if [[ \"${MODE}\" == \"dry-run\" ]]; then"
+_DRY_RUN_END_MARKER = "# ============ Confirm: 5 秒安全倒计时"
 _DANGEROUS_KEYWORDS = (
     "DELETE",
     "UPDATE",
@@ -85,18 +87,29 @@ _DANGEROUS_KEYWORDS = (
 )
 
 
-def _extract_sqlite_call_lines(src: str) -> list[tuple[int, str]]:
-    """抽取所有真正对数据库调用 ``sqlite3 "$DB_PATH" ...`` 的命令行。
+def _split_dry_run_and_confirm(src: str) -> tuple[str, str]:
+    """把脚本分成 dry-run 段（含统计 loop）和 confirm 段。
+
+    分界线：``# ============ Confirm: 5 秒安全倒计时`` 之前是 dry-run +
+    共享段；之后是 confirm 专属段。
+    """
+    end_idx = src.find(_DRY_RUN_END_MARKER)
+    if end_idx < 0:
+        # 无 confirm 段（兼容退化 dry-run-only 版本）
+        return src, ""
+    return src[:end_idx], src[end_idx:]
+
+
+def _extract_sqlite_call_lines(text: str) -> list[tuple[int, str]]:
+    """抽取 ``sqlite3 "$DB_PATH" ...`` 命令行（含 heredoc 起始行）。
 
     跳过：
         - 以 # 开头的注释行
         - 元命令（``command -v sqlite3`` / ``which sqlite3``）—— 它们不带 DB 参数
-        - 帮助文本中提到的字符串
-
-    多行调用（用 \\ 续行）被合并成一条逻辑行后再返回。
+    多行调用（用 \\ 续行）合并成一条逻辑行。
     """
     out: list[tuple[int, str]] = []
-    lines = src.splitlines()
+    lines = text.splitlines()
     i = 0
     while i < len(lines):
         raw = lines[i]
@@ -104,7 +117,6 @@ def _extract_sqlite_call_lines(src: str) -> list[tuple[int, str]]:
         if stripped.startswith("#"):
             i += 1
             continue
-        # 必须真正以 sqlite3 起头（变量名 / cmd 名），后面紧跟带引号的路径或 $var
         if re.search(r'(?:^|[\s=$(])sqlite3\s+"', raw):
             buf = raw
             start_no = i + 1
@@ -116,37 +128,39 @@ def _extract_sqlite_call_lines(src: str) -> list[tuple[int, str]]:
     return out
 
 
-def test_sqlite3_calls_are_readonly_only():
-    """脚本中所有 sqlite3 调用语句必须只含 PRAGMA / SELECT，不含 DELETE/UPDATE/INSERT/VACUUM/DROP/ALTER/REINDEX。"""
+def test_dry_run_section_sqlite3_calls_are_readonly_only():
+    """**dry-run 段**所有 sqlite3 调用仅含 PRAGMA / SELECT，不含 DELETE/UPDATE/INSERT/VACUUM/DROP/ALTER/REINDEX。
+
+    confirm 段（包含 DELETE / INSERT INTO admin_audit_logs）由
+    test_prune_script_confirm.py 单独覆盖。"""
     src = _read_script()
-    calls = _extract_sqlite_call_lines(src)
-    assert calls, "未抓到任何 sqlite3 调用行，模式可能失效"
+    dry_run_part, _confirm_part = _split_dry_run_and_confirm(src)
+    calls = _extract_sqlite_call_lines(dry_run_part)
+    assert calls, "未在 dry-run 段抓到 sqlite3 调用行，模式可能失效"
 
     for line_no, line in calls:
         upper = line.upper()
         for kw in _DANGEROUS_KEYWORDS:
-            # 匹配单词边界，避免误判（DELETE 不会出现在 "PRAGMA integrity_check" 中）
             assert not re.search(rf"\b{kw}\b", upper), (
-                f"prune.sh:{line_no} 含危险关键字 {kw!r}: {line.strip()!r}"
+                f"prune.sh:{line_no} dry-run 段含危险关键字 {kw!r}: {line.strip()!r}"
             )
-        # 同时强制：必须出现 PRAGMA 或 SELECT 之一（否则可能是没用上的空 sqlite3 调用）
         assert ("PRAGMA" in upper) or ("SELECT" in upper), (
-            f"prune.sh:{line_no} sqlite3 调用既不是 PRAGMA 也不是 SELECT: {line.strip()!r}"
+            f"prune.sh:{line_no} dry-run 段 sqlite3 调用既不是 PRAGMA 也不是 SELECT: {line.strip()!r}"
         )
 
 
-def test_script_does_not_contain_delete_from_at_all():
-    """更严格的双保险：脚本里不允许出现 ``DELETE FROM`` 字面（哪怕在注释里也容易误导）。
+def test_dry_run_section_does_not_contain_delete_or_insert():
+    """**dry-run 段**字面文本不应出现 ``DELETE FROM`` / ``INSERT INTO`` / 完整 UPDATE 语句。
 
-    注释中可以出现 'DELETE' 等单词描述行为，但**不能出现 'DELETE FROM'** 这种
-    可疑可执行片段。
-    """
-    src = _read_script().upper()
-    assert "DELETE FROM" not in src
-    assert "INSERT INTO" not in src
-    assert "UPDATE " not in src or "UPDATE SET" not in src  # 注释里"update" 可以；但 "UPDATE ... SET" 必须没有
-    # 严格：完整 UPDATE 语句模式
-    assert not re.search(r"\bUPDATE\s+\w+\s+SET\b", src, re.IGNORECASE)
+    confirm 段允许（且必须）出现这些字面值。"""
+    src = _read_script()
+    dry_run_part, _ = _split_dry_run_and_confirm(src)
+    upper_dry_run = dry_run_part.upper()
+    assert "DELETE FROM" not in upper_dry_run, "dry-run 段不应含 DELETE FROM"
+    assert "INSERT INTO" not in upper_dry_run, "dry-run 段不应含 INSERT INTO"
+    assert not re.search(r"\bUPDATE\s+\w+\s+SET\b", upper_dry_run, re.IGNORECASE), (
+        "dry-run 段不应含完整 UPDATE 语句"
+    )
 
 
 # ============ bash -n 语法 ============
@@ -182,11 +196,12 @@ def test_prune_script_help_works():
     )
     assert proc.returncode == 0
     assert "--dry-run" in proc.stdout
+    assert "--confirm" in proc.stdout  # P3：帮助里也得列 --confirm
     assert "用法" in proc.stdout
 
 
-def test_prune_script_rejects_confirm():
-    """不带任何 dry-run 但带 --confirm 必须 exit 1（防误用 P3 路径）"""
+def test_prune_script_rejects_bare_confirm():
+    """裸传 --confirm 不带 --days 必须 exit 1（强制运维显式输入 days）"""
     bash = shutil.which("bash")
     if not bash:
         return
@@ -197,12 +212,26 @@ def test_prune_script_rejects_confirm():
         timeout=10,
     )
     assert proc.returncode == 1
-    # 错误消息应明确说明
-    assert "dry-run" in proc.stderr or "不支持" in proc.stderr
+    assert "--days" in proc.stderr
+
+
+def test_prune_script_rejects_dry_run_and_confirm_together():
+    """--dry-run 与 --confirm 互斥。"""
+    bash = shutil.which("bash")
+    if not bash:
+        return
+    proc = subprocess.run(
+        [_PRUNE, "--dry-run", "--confirm", "--days", "180"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 1
+    assert "互斥" in proc.stderr or "exclusive" in proc.stderr.lower()
 
 
 def test_prune_script_rejects_no_args():
-    """什么参数都不传 → 必须 exit 1，避免无意义 dry-run 也不规范"""
+    """什么参数都不传 → 必须 exit 1。"""
     bash = shutil.which("bash")
     if not bash:
         return
