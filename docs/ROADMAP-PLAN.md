@@ -475,7 +475,7 @@ bash -n scripts/prune.sh
 - **当前状态**：P3-A 已完成 `# deprecated` 注释标记，但**尚未删除**。
 - **候选删除清单**（P3-A `# deprecated` 注释已在代码内标出）：
   - ~~`promo_links.py`~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1 第 1 批 commit `<本 PR>`）
-  - `source_stats.py`
+  - ~~`source_stats.py`~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1 第 2 批 commit `<本 PR>`）
   - 旧 `ReviewSubmitStates`
 - **要求**：
   - 再次审查（确认调用方为 0，确认没有被新代码偷偷依赖）。
@@ -494,6 +494,27 @@ bash -n scripts/prune.sh
 - **新契约测试**：`tests/test_dead_code_annotations_static.py` 中删除旧 `test_promo_links_marked_dead_code`（文件不在了）；新增 `test_promo_links_module_deleted`（文件不存在 + 模块属性不可 import）+ `test_admin_kb_source_has_no_promo_callbacks`（callback_data 不含 admin:promo）；`test_unregistered_router_diff_unchanged` 差集期望从 `{promo_links, source_stats}` → `{source_stats}`
 - **其它测试不需要改**：5 处现有测试只断言 routers.py 源码不含 `promo_links_router` / kb 不含 `admin:promo` —— 删除后这些断言仍然成立
 - CI 1626 全绿；零业务行为变化
+
+#### 9.1.2 第 2 批：source_stats 删除（2026-05）
+
+- **审查**：handler 内已标 `DEAD CODE since 2026-05-18 Phase 4`；grep 全项目调用方为 0；未注册到 routers.py；DB 层 4 个 helper（`count_total_source_users` / `get_top_sources_by_type` / `get_user_source_summary` / `get_source_stats`）仅被本 handler 引用 —— **§9.1 纪律「每次只删 1 个文件」，本 PR 仅删 handler 层，DB helper 留待后续 PR 单独清理**
+- **删除清单**：
+  - `bot/handlers/source_stats.py`（237 行）
+  - `bot/keyboards/admin_kb.py::source_stats_menu_kb` / `source_stats_back_kb` / `source_lookup_cancel_kb`（35 行）
+  - `bot/states/teacher_states.py::UserSourceLookupStates`（3 行）
+- **保留**：`bot/database.py` 中 4 个 source DB helper（约 100 行）+ `user_event_sources` / 相关表（未触动）
+- **新契约测试**：`test_dead_code_annotations_static.py`
+  - 删 `test_source_stats_marked_dead_code`（文件不在了）
+  - 新增 `test_source_stats_module_deleted`：断言文件不存在 + `admin_kb` 无 3 个 `source_stats_*` 属性 + `teacher_states` 无 `UserSourceLookupStates`
+  - 新增 `test_admin_kb_source_has_no_source_stats_callbacks`：admin_kb 源码不含 `admin:source_stats` / `admin:user_source` callback_data
+  - `test_unregistered_router_diff_unchanged` 差集期望从 `{source_stats}` → `set()`（所有 P3-B handler 全部清理完成）
+- **其它测试不需要改**：5 处现有测试只断言 routers.py / kb 源码层面不含 `source_stats_router` / `admin:source_stats` callback —— 删除后这些断言仍然成立
+- CI 1627 全绿；零业务行为变化；零 schema 变更
+
+#### 9.1.3 后续清理
+
+- 旧 `ReviewSubmitStates` 删除（第 3 批，待启动）
+- `bot/database.py` 中 4 个 source DB helper 删除（独立 PR）
 
 ### 9.2 `prune.sh --confirm`
 

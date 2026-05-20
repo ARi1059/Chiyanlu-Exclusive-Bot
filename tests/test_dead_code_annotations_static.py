@@ -63,14 +63,43 @@ def test_admin_kb_source_has_no_promo_callbacks():
     assert "promo_links_menu_kb" not in src or "已" in src  # 仅允许注释里出现
 
 
-# ============ source_stats 下线注释（待 Sprint 7 §9.1 第 2 批清理） ============
+# ============ source_stats 模块已删除契约（Sprint 7 §9.1 第 2 批） ============
 
 
-def test_source_stats_marked_dead_code():
-    src = _read("bot/handlers/source_stats.py")
-    assert "已下线" in src
-    assert "bot/routers.py" in src
-    assert "未在" in src or "未注册" in src
+def test_source_stats_module_deleted():
+    """Sprint 7 §9.1 第 2 批 dead code 删除：
+    - bot/handlers/source_stats.py 已删
+    - bot/keyboards/admin_kb.py 中 3 个 source_stats_* / source_lookup_*
+      keyboard 已删
+    - bot/states/teacher_states.py 中 UserSourceLookupStates 已删
+
+    保留（§9.1 纪律：每次只删 1 个文件）：
+    - bot/database.py 中 4 个 source DB helper（count_total_source_users /
+      get_top_sources_by_type / get_user_source_summary / get_source_stats）
+      留待后续 PR 单独清理
+    """
+    # 文件已删
+    assert not os.path.exists(
+        os.path.join(_PROJECT_ROOT, "bot/handlers/source_stats.py")
+    )
+
+    # keyboard 不再可 import
+    from bot.keyboards import admin_kb
+    assert not hasattr(admin_kb, "source_stats_menu_kb")
+    assert not hasattr(admin_kb, "source_stats_back_kb")
+    assert not hasattr(admin_kb, "source_lookup_cancel_kb")
+
+    # FSM state 不再可 import
+    from bot.states import teacher_states
+    assert not hasattr(teacher_states, "UserSourceLookupStates")
+
+
+def test_admin_kb_source_has_no_source_stats_callbacks():
+    """admin_kb.py 源码不应再含 admin:source_stats / admin:user_source 任何
+    callback_data。"""
+    src = _read("bot/keyboards/admin_kb.py")
+    assert 'callback_data="admin:source_stats' not in src
+    assert 'callback_data="admin:user_source"' not in src
 
 
 def test_promo_links_and_source_stats_still_not_registered():
@@ -115,18 +144,21 @@ def test_teacher_daily_status_noop_references_noop_handlers():
     assert "不是重复" in src or "兼容" in src
 
 
-# ============ 反回归：仅 source_stats 仍是未注册 router ============
+# ============ 反回归：所有 dead code handler 已清理 ============
 
 
 def test_unregistered_router_diff_unchanged():
-    """全项目 handler 文件中定义 router 的数量 - routers.py 注册数 = 1 (source_stats)。
+    """全项目 handler 文件中定义 router 的数量 - routers.py 注册数 = 0。
 
-    Sprint 7 §9.1 第 1 批已删除 promo_links；第 2 批将清理 source_stats。
-    在 source_stats 删除前，该差集应稳定为 {source_stats}。
+    Sprint 7 §9.1：
+    - 第 1 批已删除 promo_links（commit 6b5c9b1，2026-05-20）
+    - 第 2 批已删除 source_stats（本 PR，2026-05-20）
 
-    差集变化的含义：
+    至此 P3-A 注释标注的 dead code handler 全部清理。差集变化的含义：
         - 有人新增了 handler 但忘记注册（差集变大）
-        - 有人重新启用了 dead code（差集变小且失误）
+        - 不应再有差集 == 0 的违反场景
+
+    旧 ReviewSubmitStates 是 FSM state（不是独立 router 文件），不影响本断言。
     """
     import re
     handlers_dir = os.path.join(_PROJECT_ROOT, "bot", "handlers")
@@ -146,6 +178,6 @@ def test_unregistered_router_diff_unchanged():
             registered.add(m.group(1))
 
     diff = defined - registered
-    assert diff == {"source_stats"}, (
-        f"未注册 router 差集变化：期望 {{source_stats}}，得到 {diff}"
+    assert diff == set(), (
+        f"未注册 router 差集应为空（dead code 全部清理）：得到 {diff}"
     )

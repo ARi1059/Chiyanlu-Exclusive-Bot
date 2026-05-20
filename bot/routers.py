@@ -80,7 +80,9 @@ def register_routers(dp: Dispatcher) -> None:
     # promo_links / source_stats（Phase 4）：2026-05-18 已下线
     # - promo_links handler / keyboard / FSM state 已于 2026-05-20 Sprint 7
     #   §9.1 第 1 批 dead code 删除
-    # - source_stats handler / keyboard 仍保留（待 Sprint 7 §9.1 第 2 批清理）
+    # - source_stats handler / keyboard / FSM state 已于 2026-05-20 Sprint 7
+    #   §9.1 第 2 批 dead code 删除
+    # - bot/database.py 中 4 个 source DB helper 留待后续 PR 单独清理
     # teacher_daily_status_router（Phase 5）：
     # 老师今日状态（设置时间/取消/已满）+ 时间选择器 + 管理员今日总览 + noop 占位
     # 注册位置：在 teacher_self / user_panel / keyword 之前，保证 teacher:*/admin:today_status

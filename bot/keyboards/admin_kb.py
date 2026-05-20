@@ -597,44 +597,14 @@ def publish_templates_list_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
-# ============ 渠道统计（Phase 4） ============
+# ============ Phase 4 dead code 历史注释 ============
 # 注：推广链接（promo_links_menu_kb / promo_cancel_kb）于 2026-05-20
-# Sprint 7 §9.1 第 1 个 dead code 删除批次中清理（handler / FSM state / keyboard
-# 一并移除）。源码原 promo_* 入口已于 2026-05-18 Phase 4 下线。
-
-
-def source_stats_menu_kb() -> InlineKeyboardMarkup:
-    """渠道统计主面板：按类型查看 + 查用户来源 + 返回"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📺 频道", callback_data="admin:source_stats:channel"),
-            InlineKeyboardButton(text="👥 群组", callback_data="admin:source_stats:group"),
-            InlineKeyboardButton(text="👤 老师", callback_data="admin:source_stats:teacher"),
-        ],
-        [
-            InlineKeyboardButton(text="🎯 活动", callback_data="admin:source_stats:campaign"),
-            InlineKeyboardButton(text="🎟️ 邀请", callback_data="admin:source_stats:invite"),
-        ],
-        [InlineKeyboardButton(text="🔍 查用户来源", callback_data="admin:user_source")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
-    ])
-
-
-def source_stats_back_kb() -> InlineKeyboardMarkup:
-    """渠道统计分类页的返回按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔙 返回渠道统计", callback_data="admin:source_stats"),
-            InlineKeyboardButton(text="🏠 主菜单", callback_data="menu:main"),
-        ],
-    ])
-
-
-def source_lookup_cancel_kb() -> InlineKeyboardMarkup:
-    """用户来源查询 FSM 取消按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:source_stats")],
-    ])
+# Sprint 7 §9.1 第 1 批 dead code 删除中清理；渠道统计（source_stats_menu_kb /
+# source_stats_back_kb / source_lookup_cancel_kb）于 2026-05-20 Sprint 7 §9.1
+# 第 2 批清理。原 admin:promo* / admin:source_stats* / admin:user_source 入口已于
+# 2026-05-18 Phase 4 下线。bot/database.py 中的 4 个 source DB helper
+# (count_total_source_users / get_top_sources_by_type / get_user_source_summary /
+# get_source_stats) 留待后续 PR 单独清理（§9.1 纪律：每次只删 1 个文件）。
 
 
 # ============ 热门推荐管理（Phase 3） ============

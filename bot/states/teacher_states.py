@@ -304,9 +304,10 @@ class HotManageStates(StatesGroup):
     waiting_remove_id = State()      # 取消推荐：等待老师 ID
 
 
-class UserSourceLookupStates(StatesGroup):
-    """管理员查用户来源状态（Phase 4）"""
-    waiting_user_id = State()
+# Phase 4 dead code 历史注释：
+# - PromoLinkStates 于 2026-05-20 Sprint 7 §9.1 第 1 批 dead code 删除中清理。
+# - UserSourceLookupStates 于 2026-05-20 Sprint 7 §9.1 第 2 批清理。
+# 原 promo_links / source_stats handler 自 2026-05-18 Phase 4 下线。
 
 
 class TeacherDailyStatusStates(StatesGroup):
