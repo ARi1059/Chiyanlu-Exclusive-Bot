@@ -1050,98 +1050,10 @@ def review_subscribe_links_kb(items: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def review_rating_kb() -> InlineKeyboardMarkup:
-    """Step 1 评级：3 个按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👍 好评", callback_data="review:rating:positive"),
-            InlineKeyboardButton(text="😐 中评", callback_data="review:rating:neutral"),
-            InlineKeyboardButton(text="👎 差评", callback_data="review:rating:negative"),
-        ],
-        [InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")],
-    ])
+# 注：5 个旧线性评价 FSM 的 keyboard（review_rating_kb / review_score_kb /
+# review_summary_skip_cancel_kb / review_reimbursement_choice_kb /
+# review_confirm_kb）+ _REVIEW_EDIT_KEYS 元数据，已于 2026-05-20
+# Sprint 7 §9.1.4 第 1 批删除。原 ReviewSubmitStates FSM 已于
+# §9.1 第 3 批清理，这些 keyboard 自此变为孤儿。当前评价路径走
+# CardReviewStates，使用 review_card.py 中独立的 keyboard 实现。
 
-
-def review_score_kb(
-    dim_key: str,
-    quick_buttons: list[float],
-    *,
-    per_row: int = 5,
-) -> InlineKeyboardMarkup:
-    """评分快捷按钮（6 维 / 综合通用）
-
-    dim_key: humanphoto/appearance/.../overall
-    quick_buttons: 数字列表（不同维度可能不同）
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    cur: list[InlineKeyboardButton] = []
-    for v in quick_buttons:
-        # 整数显示为 "8"，否则保留 1 位小数 "8.5"
-        label = f"{v:.0f}" if v == int(v) else f"{v:.1f}"
-        cur.append(InlineKeyboardButton(
-            text=label,
-            callback_data=f"review:score:{dim_key}:{v}",
-        ))
-        if len(cur) >= per_row:
-            rows.append(cur)
-            cur = []
-    if cur:
-        rows.append(cur)
-    rows.append([InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def review_summary_skip_cancel_kb() -> InlineKeyboardMarkup:
-    """Step 9 过程描述：[⏭ 跳过] [❌ 取消]"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⏭ 跳过", callback_data="review:summary_skip"),
-            InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel"),
-        ],
-    ])
-
-
-def review_reimbursement_choice_kb(amount: int) -> InlineKeyboardMarkup:
-    """报销意愿询问：[💰 是，申请 X 元] [否，不申请]"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💰 是，申请 {amount} 元",
-                              callback_data="review:reimburse_yes")],
-        [InlineKeyboardButton(text="否，不申请",
-                              callback_data="review:reimburse_no")],
-        [InlineKeyboardButton(text="❌ 取消评价",
-                              callback_data="review:cancel")],
-    ])
-
-
-_REVIEW_EDIT_KEYS: list[tuple[str, str]] = [
-    ("evidence", "证据照片"),  # 替换原 booking + gesture（合并为媒体组）
-    ("rating", "评级"),
-    ("humanphoto", "人照"),
-    ("appearance", "颜值"),
-    ("body", "身材"),
-    ("service", "服务"),
-    ("attitude", "态度"),
-    ("environment", "环境"),
-    # 综合评分由 6 维自动平均，无独立编辑项
-    ("summary", "过程"),
-]
-
-
-def review_confirm_kb() -> InlineKeyboardMarkup:
-    """确认页：[✅ 提交] + 11 个 [✏️ 修改:xxx] + [❌ 取消]"""
-    rows: list[list[InlineKeyboardButton]] = []
-    rows.append([InlineKeyboardButton(text="✅ 提交审核", callback_data="review:submit")])
-    # 每行 2 个修改按钮
-    cur: list[InlineKeyboardButton] = []
-    for key, label in _REVIEW_EDIT_KEYS:
-        cur.append(InlineKeyboardButton(
-            text=f"✏️ 修改：{label}",
-            callback_data=f"review:edit:{key}",
-        ))
-        if len(cur) >= 2:
-            rows.append(cur)
-            cur = []
-    if cur:
-        rows.append(cur)
-    rows.append([InlineKeyboardButton(text="❌ 取消", callback_data="review:cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)

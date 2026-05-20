@@ -68,6 +68,41 @@ def test_review_submit_handlers_no_longer_exist():
         assert func not in src, f"已删除的 handler {func} 仍出现在 review_submit.py"
 
 
+def test_review_orphan_keyboards_deleted():
+    """Sprint 7 §9.1.4 第 1 批：5 个旧线性评价 FSM 的 keyboard 已删除。
+
+    随 ReviewSubmitStates（§9.1 第 3 批）清理后这些 keyboard 变为孤儿；
+    当前评价路径走 CardReviewStates，使用 review_card.py 自己的 keyboard。
+    """
+    from bot.keyboards import user_kb
+    forbidden_kbs = (
+        "review_rating_kb",
+        "review_score_kb",
+        "review_summary_skip_cancel_kb",
+        "review_reimbursement_choice_kb",
+        "review_confirm_kb",
+        "_REVIEW_EDIT_KEYS",
+    )
+    for kb in forbidden_kbs:
+        assert not hasattr(user_kb, kb), f"已删除的 keyboard {kb} 仍可 import"
+
+    # 源码层面也不应再含 review:rating: / review:score: / review:edit: /
+    # review:reimburse_yes / review:summary_skip / review:submit 等已删除
+    # callback_data（防止有人删 keyboard 函数但保留字面量）
+    src = _read("bot/keyboards/user_kb.py")
+    forbidden_callbacks = (
+        '"review:rating:',
+        '"review:score:',
+        '"review:summary_skip"',
+        '"review:reimburse_yes"',
+        '"review:reimburse_no"',
+        '"review:submit"',
+        '"review:edit:',
+    )
+    for cb in forbidden_callbacks:
+        assert cb not in src, f"已删除的 callback {cb} 仍出现在 user_kb.py"
+
+
 # ============ promo_links 模块已删除契约（Sprint 7 §9.1 第 1 批） ============
 
 

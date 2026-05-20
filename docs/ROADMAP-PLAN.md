@@ -541,9 +541,22 @@ bash -n scripts/prune.sh
 
 #### 9.1.4 后续清理
 
-- `bot/keyboards/user_kb.py` 中 5 个旧评价 keyboard（独立 PR）
+- ~~`bot/keyboards/user_kb.py` 中 5 个旧评价 keyboard~~（独立 PR）✅ 已删除（2026-05-20 Sprint 7 §9.1.4 第 1 批 commit `<本 PR>`）
 - `bot/database.py` 中旧评价 DB 常量与 helper（独立 PR）
 - `bot/database.py` 中 4 个 source DB helper 删除（独立 PR）
+
+#### 9.1.4.1 第 1 批：5 个孤立评价 keyboard 删除（2026-05）
+
+- **审查**：grep 全项目，5 个 keyboard 仅由自身定义引用，无外部 caller —— 随 §9.1 第 3 批 ReviewSubmitStates 清理后已变为孤儿
+- **删除清单**（`bot/keyboards/user_kb.py`，约 100 行）：
+  - `review_rating_kb()` —— 旧 Step 1 评级
+  - `review_score_kb()` —— 旧 Step 2-7 / 综合评分快捷按钮
+  - `review_summary_skip_cancel_kb()` —— 旧 Step 9 过程描述
+  - `review_reimbursement_choice_kb()` —— 旧报销意愿询问
+  - `review_confirm_kb()` —— 旧确认页（11 个修改跳回）
+  - `_REVIEW_EDIT_KEYS` —— 仅被 review_confirm_kb 引用
+- **新契约测试**：`test_review_orphan_keyboards_deleted` —— 断言 5 个 keyboard 函数 + `_REVIEW_EDIT_KEYS` 不再可 import；同时检测源码层面不含 `"review:rating:"` / `"review:score:"` / `"review:edit:"` / `"review:submit"` / `"review:reimburse_yes"` / `"review:reimburse_no"` / `"review:summary_skip"` 等 7 个旧 callback_data 字面量（防御函数被删但字面量遗留）
+- CI 1618 全绿；零业务行为变化（这些 keyboard 在 §9.1 第 3 批后已无 caller）
 
 ### 9.2 `prune.sh --confirm`
 
