@@ -135,6 +135,23 @@ def test_review_submit_stale_db_imports_cleaned():
         assert sym not in src, f"已删除的孤儿 import {sym} 仍出现在 review_submit.py"
 
 
+def test_source_stats_db_helpers_deleted():
+    """Sprint 7 §9.1.4 第 3 批：4 个 source DB helper 已删除。
+
+    随 source_stats handler（§9.1 第 2 批）清理后这些 helper 变为孤儿。
+    user_sources 表本身保留（仍由 /start 来源追踪写入）。
+    """
+    from bot import database
+    forbidden_helpers = (
+        "get_source_stats",
+        "get_top_sources_by_type",
+        "get_user_source_summary",
+        "count_total_source_users",
+    )
+    for fn in forbidden_helpers:
+        assert not hasattr(database, fn), f"已删除的 helper {fn} 仍可 import"
+
+
 # ============ promo_links 模块已删除契约（Sprint 7 §9.1 第 1 批） ============
 
 

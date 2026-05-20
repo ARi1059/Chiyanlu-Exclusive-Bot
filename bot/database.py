@@ -3257,98 +3257,12 @@ async def record_user_source(
         pass
 
 
-async def get_source_stats(limit: int = 20) -> list[dict]:
-    """渠道统计：按用户数倒序返回 TOP 来源（Phase 4 §二）
-
-    返回每条:
-        source_type / source_id / source_name / user_count / last_seen_at
-    """
-    db = await get_db()
-    try:
-        cur = await db.execute(
-            """SELECT source_type, source_id,
-                   MAX(source_name) AS source_name,
-                   COUNT(DISTINCT user_id) AS user_count,
-                   MAX(last_seen_at) AS last_seen_at
-               FROM user_sources
-               GROUP BY source_type, source_id
-               ORDER BY user_count DESC, last_seen_at DESC
-               LIMIT ?""",
-            (limit,),
-        )
-        return [dict(r) for r in await cur.fetchall()]
-    finally:
-        await db.close()
-
-
-async def get_top_sources_by_type(source_type: str, limit: int = 10) -> list[dict]:
-    """指定 source_type 的 TOP N source_id（Phase 4 §二）"""
-    db = await get_db()
-    try:
-        cur = await db.execute(
-            """SELECT source_type, source_id,
-                   MAX(source_name) AS source_name,
-                   COUNT(DISTINCT user_id) AS user_count,
-                   MAX(last_seen_at) AS last_seen_at
-               FROM user_sources
-               WHERE source_type = ?
-               GROUP BY source_id
-               ORDER BY user_count DESC, last_seen_at DESC
-               LIMIT ?""",
-            (source_type, limit),
-        )
-        return [dict(r) for r in await cur.fetchall()]
-    finally:
-        await db.close()
-
-
-async def get_user_source_summary(user_id: int) -> Optional[dict]:
-    """某个用户的首次 / 最近来源 + 全量来源记录（Phase 4 §二）"""
-    db = await get_db()
-    try:
-        cur = await db.execute(
-            """SELECT first_source_type, first_source_id,
-                      last_source_type, last_source_id
-               FROM users WHERE user_id = ?""",
-            (user_id,),
-        )
-        row = await cur.fetchone()
-        if not row:
-            return None
-
-        cur = await db.execute(
-            """SELECT source_type, source_id, source_name,
-                      first_seen_at, last_seen_at, raw_payload
-               FROM user_sources
-               WHERE user_id = ?
-               ORDER BY first_seen_at""",
-            (user_id,),
-        )
-        sources = [dict(r) for r in await cur.fetchall()]
-
-        return {
-            "user_id": user_id,
-            "first_source_type": row["first_source_type"],
-            "first_source_id": row["first_source_id"],
-            "last_source_type": row["last_source_type"],
-            "last_source_id": row["last_source_id"],
-            "sources": sources,
-        }
-    finally:
-        await db.close()
-
-
-async def count_total_source_users() -> int:
-    """来源覆盖的去重用户数（用于渠道统计页头部）"""
-    db = await get_db()
-    try:
-        cur = await db.execute(
-            "SELECT COUNT(DISTINCT user_id) AS n FROM user_sources"
-        )
-        row = await cur.fetchone()
-        return int(row["n"] or 0) if row else 0
-    finally:
-        await db.close()
+# ============ 渠道统计 DB helper（Phase 4，已删除） ============
+# 注：get_source_stats / get_top_sources_by_type / get_user_source_summary /
+# count_total_source_users 已于 2026-05-20 Sprint 7 §9.1.4 第 3 批删除。
+# 这 4 个 helper 仅被 source_stats handler 调用，handler 自身已于 §9.1
+# 第 2 批清理（commit 0a84708），此后这些 helper 变为孤儿。
+# user_sources 表本身保留（仍由 /start 时的来源追踪写入），仅删除查询接口。
 
 
 # ============ 老师每日状态 (Phase 5) ============

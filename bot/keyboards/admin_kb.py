@@ -604,7 +604,7 @@ def publish_templates_list_back_kb() -> InlineKeyboardMarkup:
 # 第 2 批清理。原 admin:promo* / admin:source_stats* / admin:user_source 入口已于
 # 2026-05-18 Phase 4 下线。bot/database.py 中的 4 个 source DB helper
 # (count_total_source_users / get_top_sources_by_type / get_user_source_summary /
-# get_source_stats) 留待后续 PR 单独清理（§9.1 纪律：每次只删 1 个文件）。
+# get_source_stats) 已于 2026-05-20 Sprint 7 §9.1.4 第 3 批一并清理。
 
 
 # ============ 热门推荐管理（Phase 3） ============

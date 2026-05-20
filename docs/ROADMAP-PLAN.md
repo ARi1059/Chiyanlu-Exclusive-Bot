@@ -543,7 +543,9 @@ bash -n scripts/prune.sh
 
 - ~~`bot/keyboards/user_kb.py` 中 5 个旧评价 keyboard~~（独立 PR）✅ 已删除（2026-05-20 Sprint 7 §9.1.4 第 1 批 commit `<本 PR>`）
 - ~~`bot/database.py` 中旧评价 DB 常量与 helper~~ ✅ 部分已删（§9.1.4 第 2 批，2026-05-20 commit `<本 PR>`）。剩余的 `REVIEW_DIMENSIONS` / `REVIEW_SUMMARY_MIN_LEN` / `REVIEW_SUMMARY_MAX_LEN` / `parse_review_score` 等仍被 `review_card.py` 使用，**非孤儿，保留**
-- `bot/database.py` 中 4 个 source DB helper 删除（独立 PR）
+- ~~`bot/database.py` 中 4 个 source DB helper 删除~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1.4 第 3 批 commit `<本 PR>`）
+
+至此 Sprint 7 §9.1 P3-B Dead code 全部清理完成（promo_links / source_stats / ReviewSubmitStates handler / review keyboard / review DB 常量 / source DB helper），共 6 个 PR，累计净删 ~1400 行。
 
 #### 9.1.4.1 第 1 批：5 个孤立评价 keyboard 删除（2026-05）
 
@@ -581,6 +583,18 @@ bash -n scripts/prune.sh
   - `test_review_orphan_db_constants_deleted` —— 断言 3 个常量不再可从 `bot.database` import
   - `test_review_submit_stale_db_imports_cleaned` —— 检测 review_submit.py 源码不含 7 个已删除 import 名
 - CI 1620 全绿；零业务行为变化（这些常量与 import 已无 caller）
+
+#### 9.1.4.3 第 3 批：4 个 source DB helper 删除（2026-05）
+
+- **审查**：grep 全项目，确认随 §9.1 第 2 批 source_stats handler 删除（commit 0a84708）后，4 个 helper 仅由 database.py 自身定义，无外部 caller。`user_sources` 表本身保留（仍由 `/start` 时来源追踪写入），仅删除查询接口
+- **删除清单**（`bot/database.py`，约 92 行）：
+  - `get_source_stats(limit)` —— 渠道统计 TOP 来源
+  - `get_top_sources_by_type(source_type, limit)` —— 按类型 TOP source_id
+  - `get_user_source_summary(user_id)` —— 单用户首次/最近/全量来源
+  - `count_total_source_users()` —— 来源覆盖去重用户数
+- **同步更新注释**：`bot/keyboards/admin_kb.py` 中"留待后续 PR 单独清理"改为"已于 Sprint 7 §9.1.4 第 3 批一并清理"
+- **新契约测试**：`test_source_stats_db_helpers_deleted` —— 断言 4 个 helper 不再可从 `bot.database` import
+- CI 1621 全绿；零业务行为变化（这些 helper 已无 caller）；零 schema 变更（`user_sources` 表保留）
 
 ### 9.2 `prune.sh --confirm`
 
