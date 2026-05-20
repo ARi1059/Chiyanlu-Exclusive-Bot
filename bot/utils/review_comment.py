@@ -10,9 +10,11 @@
 from __future__ import annotations
 
 import logging
+from html import escape as _html_escape
 from typing import Optional
 
 from aiogram import Bot
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -27,6 +29,10 @@ from bot.database import (
 logger = logging.getLogger(__name__)
 
 MAX_BUTTON_NAME_LEN: int = 10  # spec §6.3：display_name > 20 字符时按"前 10 字…"截断
+
+# 2026-05-20：报销八折广告超链接（footer 第 2 行，HTML <a>）
+REIMBURSE_PROMO_TEXT: str = "出击报销八折"
+REIMBURSE_PROMO_URL: str = "https://t.me/ChiYanDairy/553"
 
 
 class CommentError(Exception):
@@ -91,6 +97,11 @@ def render_review_comment(
 
         ✳ Powered by @{bot_username}
 
+        <a href="{REIMBURSE_PROMO_URL}">出击报销八折</a>
+
+    2026-05-20：文本返回 HTML 格式；调用方须以 parse_mode=HTML 发送。
+    用户输入字段（display_name / summary）经 html.escape 处理防注入。
+
     按钮：3 行独占
       [🔗 联系{name前10字…}]       URL = teacher.button_url
       [{rating_emoji} {rating_label}]  callback = noop:rating
@@ -112,8 +123,9 @@ def render_review_comment(
             anon = "*" * (len(sid) - 4) + sid[-4:]
 
     summary = review.get("summary")
+    safe_name = _html_escape(name)
     lines = [
-        f"【老师】：{name}",
+        f"【老师】：{safe_name}",
         f"【留名】：{anon}",
         f"【人照】：{_format_score(review.get('score_humanphoto'))}",
         f"【颜值】：{_format_score(review.get('score_appearance'))}",
@@ -124,9 +136,13 @@ def render_review_comment(
         f"【综合】：{_format_overall(review.get('overall_score'))}",
     ]
     if summary:
-        lines.append(f"【过程】：{summary}")
+        lines.append(f"【过程】：{_html_escape(summary)}")
     lines.append("")
-    lines.append(f"✳ Powered by @{bot_username}")
+    lines.append(f"✳ Powered by @{_html_escape(bot_username)}")
+    lines.append("")
+    lines.append(
+        f'<a href="{REIMBURSE_PROMO_URL}">{REIMBURSE_PROMO_TEXT}</a>'
+    )
 
     text = "\n".join(lines)
 
@@ -196,6 +212,8 @@ async def publish_review_comment(bot: Bot, review_id: int) -> dict:
             text=text,
             reply_markup=kb,
             reply_to_message_id=anchor_id,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
     except TelegramBadRequest as e:
         msg = str(e).lower()
@@ -210,6 +228,8 @@ async def publish_review_comment(bot: Bot, review_id: int) -> dict:
                     chat_id=discussion_chat_id,
                     text=text,
                     reply_markup=kb,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
                 )
                 fallback = True
             except Exception as e2:
