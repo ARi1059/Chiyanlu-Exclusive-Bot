@@ -35,6 +35,10 @@ from bot.keyboards.admin_kb import (
     teacher_profile_album_remove_kb,
     teacher_profile_album_collect_kb,
 )
+from bot.middlewares.fsm_timeout import (
+    FSMTimeoutMiddleware,
+    LONG_FSM_TIMEOUT_SECONDS,
+)
 from bot.states.teacher_states import (
     TeacherProfileAddStates,
     TeacherProfileEditStates,
@@ -44,6 +48,16 @@ from bot.utils.permissions import admin_required
 from bot.utils.url import normalize_url
 
 router = Router(name="teacher_profile")
+
+# UX-9.2：长录入流程（9 步主路径 + 3 备用子步 + 10 张照片上传）
+# 使用 30 分钟超时；服务重启 / 长时间无操作时自动 clear FSM，避免已上传的
+# 照片 file_id 在 MemoryStorage 中卡死。
+router.message.middleware(
+    FSMTimeoutMiddleware(timeout_seconds=LONG_FSM_TIMEOUT_SECONDS),
+)
+router.callback_query.middleware(
+    FSMTimeoutMiddleware(timeout_seconds=LONG_FSM_TIMEOUT_SECONDS),
+)
 
 
 # 总步数（v2 2026-05-17：精简到 9 步主路径）

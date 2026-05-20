@@ -1,8 +1,6 @@
 import json
-import time
-from aiogram import Router, types, F, BaseMiddleware
+from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
-from typing import Callable, Dict, Any, Awaitable
 
 from bot.database import (
     add_teacher,
@@ -24,51 +22,22 @@ from bot.keyboards.admin_kb import (
     teacher_list_kb,
     edit_field_kb,
 )
+from bot.middlewares.fsm_timeout import (
+    DEFAULT_FSM_TIMEOUT_SECONDS,
+    FSMTimeoutMiddleware,
+)
 from bot.states.teacher_states import AddTeacherStates, EditTeacherStates
 from bot.utils.permissions import admin_required
 from bot.utils.url import normalize_url
 
 router = Router(name="teacher_flow")
 
-# FSM 超时时间（秒）
-FSM_TIMEOUT = 300  # 5 分钟
+# FSM 超时时间（秒），保留旧常量名供潜在外部引用，值由共享模块提供
+FSM_TIMEOUT = DEFAULT_FSM_TIMEOUT_SECONDS  # 5 分钟（UX-9.2 抽到 bot/middlewares/fsm_timeout）
 
-
-class FSMTimeoutMiddleware(BaseMiddleware):
-    """FSM 超时中间件：5 分钟无操作自动取消状态"""
-
-    async def __call__(
-        self,
-        handler: Callable[[types.TelegramObject, Dict[str, Any]], Awaitable[Any]],
-        event: types.TelegramObject,
-        data: Dict[str, Any],
-    ) -> Any:
-        state: FSMContext = data.get("state")
-        if state:
-            current_state = await state.get_state()
-            if current_state:
-                state_data = await state.get_data()
-                last_active = state_data.get("_last_active", 0)
-                now = time.time()
-
-                if last_active and (now - last_active) > FSM_TIMEOUT:
-                    await state.clear()
-                    # 通知用户超时
-                    if isinstance(event, types.Message):
-                        await event.answer("⏰ 操作超时，已自动取消。请重新开始。")
-                    elif isinstance(event, types.CallbackQuery):
-                        await event.answer("⏰ 操作超时，已自动取消", show_alert=True)
-                    return
-
-                # 更新最后活跃时间
-                await state.update_data(_last_active=now)
-
-        return await handler(event, data)
-
-
-# 注册中间件
-router.message.middleware(FSMTimeoutMiddleware())
-router.callback_query.middleware(FSMTimeoutMiddleware())
+# UX-9.2：中间件从 bot/middlewares/fsm_timeout 导入，行为完全等价
+router.message.middleware(FSMTimeoutMiddleware(timeout_seconds=FSM_TIMEOUT))
+router.callback_query.middleware(FSMTimeoutMiddleware(timeout_seconds=FSM_TIMEOUT))
 
 
 # ============ 添加老师引导流程 ============
