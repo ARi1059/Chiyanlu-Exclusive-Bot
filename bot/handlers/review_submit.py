@@ -18,21 +18,12 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 
 from bot.database import (
-    get_teacher,
     get_teacher_by_name,
-    count_recent_user_reviews,
-    count_recent_user_teacher_reviews,
-    compute_reimbursement_amount,
-    get_config,
-    get_user_total_points,
     get_user_review_stats,
     list_user_reviews_paged,
     count_user_reviews,
     get_teachers_by_ids,
     REVIEW_RATINGS,
-    REVIEW_RATE_LIMIT_PER_TEACHER_24H,
-    REVIEW_RATE_LIMIT_PER_USER_DAY,
-    REVIEW_RATE_LIMIT_PER_USER_60S,
 )
 from bot.keyboards.user_kb import (
     review_cancel_kb,

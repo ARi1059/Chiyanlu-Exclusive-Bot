@@ -542,7 +542,7 @@ bash -n scripts/prune.sh
 #### 9.1.4 后续清理
 
 - ~~`bot/keyboards/user_kb.py` 中 5 个旧评价 keyboard~~（独立 PR）✅ 已删除（2026-05-20 Sprint 7 §9.1.4 第 1 批 commit `<本 PR>`）
-- `bot/database.py` 中旧评价 DB 常量与 helper（独立 PR）
+- ~~`bot/database.py` 中旧评价 DB 常量与 helper~~ ✅ 部分已删（§9.1.4 第 2 批，2026-05-20 commit `<本 PR>`）。剩余的 `REVIEW_DIMENSIONS` / `REVIEW_SUMMARY_MIN_LEN` / `REVIEW_SUMMARY_MAX_LEN` / `parse_review_score` 等仍被 `review_card.py` 使用，**非孤儿，保留**
 - `bot/database.py` 中 4 个 source DB helper 删除（独立 PR）
 
 #### 9.1.4.1 第 1 批：5 个孤立评价 keyboard 删除（2026-05）
@@ -557,6 +557,30 @@ bash -n scripts/prune.sh
   - `_REVIEW_EDIT_KEYS` —— 仅被 review_confirm_kb 引用
 - **新契约测试**：`test_review_orphan_keyboards_deleted` —— 断言 5 个 keyboard 函数 + `_REVIEW_EDIT_KEYS` 不再可 import；同时检测源码层面不含 `"review:rating:"` / `"review:score:"` / `"review:edit:"` / `"review:submit"` / `"review:reimburse_yes"` / `"review:reimburse_no"` / `"review:summary_skip"` 等 7 个旧 callback_data 字面量（防御函数被删但字面量遗留）
 - CI 1618 全绿；零业务行为变化（这些 keyboard 在 §9.1 第 3 批后已无 caller）
+
+#### 9.1.4.2 第 2 批：3 个孤儿评价 DB 常量 + 7 个孤儿 import 删除（2026-05）
+
+- **审查**：grep 全项目，确认随 §9.1 第 3 批 ReviewSubmitStates 删除 + §9.1.4 第 1 批 keyboard 删除后，3 个常量自动变孤儿；同时 `review_submit.py` 中遗留 7 个孤立的 DB import（评价限频常量 / 报销金额 / 用户积分 / 评价计数等）也一并清理
+- **删除清单**：
+  - `bot/database.py`（3 个孤儿常量）：
+    * `REVIEW_SCORE_QUICK_BUTTONS_FOR_DIM` —— 旧 6 维评分快捷按钮
+    * `REVIEW_SCORE_QUICK_BUTTONS_FOR_OVERALL` —— 旧综合评分快捷按钮
+    * `REVIEW_SUMMARY_REQUIRED` —— 旧过程描述必填 flag（review_card 中过程始终必填，不需要 flag）
+  - `bot/handlers/review_submit.py`（7 个未用 import）：
+    * `REVIEW_RATE_LIMIT_PER_TEACHER_24H` / `REVIEW_RATE_LIMIT_PER_USER_DAY` / `REVIEW_RATE_LIMIT_PER_USER_60S` —— review_card 自有副本
+    * `compute_reimbursement_amount` / `get_config` / `get_user_total_points` —— 旧报销询问步用
+    * `count_recent_user_reviews` / `count_recent_user_teacher_reviews` —— 旧限频检查用
+    * `get_teacher` —— 旧 evidence 校验用（review_submit 现仅用 `get_teacher_by_name`）
+- **保留**（仍被 `review_card.py` 使用，非孤儿）：
+  - `REVIEW_DIMENSIONS` —— 6 维元数据
+  - `REVIEW_SUMMARY_MIN_LEN` / `REVIEW_SUMMARY_MAX_LEN` —— 字数校验
+  - `REVIEW_SCORE_MIN` / `REVIEW_SCORE_MAX` / `REVIEW_SCORE_DECIMAL_PLACES` —— `parse_review_score` 内部使用
+  - `parse_review_score` —— review_card 评分解析
+  - 3 个 `REVIEW_RATE_LIMIT_*` —— review_card 限频检查
+- **新契约测试**：
+  - `test_review_orphan_db_constants_deleted` —— 断言 3 个常量不再可从 `bot.database` import
+  - `test_review_submit_stale_db_imports_cleaned` —— 检测 review_submit.py 源码不含 7 个已删除 import 名
+- CI 1620 全绿；零业务行为变化（这些常量与 import 已无 caller）
 
 ### 9.2 `prune.sh --confirm`
 

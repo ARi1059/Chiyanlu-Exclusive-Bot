@@ -103,6 +103,38 @@ def test_review_orphan_keyboards_deleted():
         assert cb not in src, f"已删除的 callback {cb} 仍出现在 user_kb.py"
 
 
+def test_review_orphan_db_constants_deleted():
+    """Sprint 7 §9.1.4 第 2 批：3 个孤儿评价 DB 常量已删除。
+
+    随 ReviewSubmitStates（§9.1 第 3 批）+ review keyboard（§9.1.4 第 1 批）
+    清理后这些常量无 caller。当前评价路径用 review_card.py 中独立的逻辑。
+    """
+    from bot import database
+    forbidden_constants = (
+        "REVIEW_SCORE_QUICK_BUTTONS_FOR_DIM",
+        "REVIEW_SCORE_QUICK_BUTTONS_FOR_OVERALL",
+        "REVIEW_SUMMARY_REQUIRED",
+    )
+    for sym in forbidden_constants:
+        assert not hasattr(database, sym), f"已删除的常量 {sym} 仍可 import"
+
+
+def test_review_submit_stale_db_imports_cleaned():
+    """review_submit.py 中随 §9.1 第 3 批清理后变孤儿的 6 个 DB import 已删除。"""
+    src = _read("bot/handlers/review_submit.py")
+    forbidden_imports = (
+        "REVIEW_RATE_LIMIT_PER_TEACHER_24H",
+        "REVIEW_RATE_LIMIT_PER_USER_DAY",
+        "REVIEW_RATE_LIMIT_PER_USER_60S",
+        "compute_reimbursement_amount",
+        "count_recent_user_reviews",
+        "count_recent_user_teacher_reviews",
+        "get_user_total_points",
+    )
+    for sym in forbidden_imports:
+        assert sym not in src, f"已删除的孤儿 import {sym} 仍出现在 review_submit.py"
+
+
 # ============ promo_links 模块已删除契约（Sprint 7 §9.1 第 1 批） ============
 
 
