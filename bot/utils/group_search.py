@@ -67,19 +67,50 @@ _keyword_in_group_last: dict[tuple[int, str], float] = {}
 # 群组总冷却：同一 group_id 5s 内最多回复一次
 _group_total_last: dict[int, float] = {}
 
+# UX-10.2：默认值（无 config 覆盖时使用，与历史值一致）
 USER_GROUP_COOLDOWN_SECONDS: int = 15
 KEYWORD_GROUP_COOLDOWN_SECONDS: int = 30
 GROUP_TOTAL_COOLDOWN_SECONDS: int = 5
 
+# config key 前缀（UX-10.2）；超管可在 KV config 表里写：
+#   keyword.cooldown.user      （默认 15 秒）
+#   keyword.cooldown.keyword   （默认 30 秒）
+#   keyword.cooldown.group     （默认 5 秒）
+_COOLDOWN_CONFIG_KEYS = {
+    "user":    ("keyword.cooldown.user",    USER_GROUP_COOLDOWN_SECONDS),
+    "keyword": ("keyword.cooldown.keyword", KEYWORD_GROUP_COOLDOWN_SECONDS),
+    "group":   ("keyword.cooldown.group",   GROUP_TOTAL_COOLDOWN_SECONDS),
+}
 
-def check_group_cooldown(
+
+async def _read_cooldown_seconds(layer: str) -> int:
+    """读取指定层的冷却秒数；config 缺失 / 非法 → 回退到默认值（UX-10.2）。"""
+    config_key, default = _COOLDOWN_CONFIG_KEYS[layer]
+    try:
+        from bot.database import get_config
+        raw = await get_config(config_key)
+    except Exception:
+        return default
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        n = int(str(raw).strip())
+    except (ValueError, TypeError):
+        return default
+    # 防御：负数视为无效；超长（>3600 秒）也视为配置失误回退
+    if n < 0 or n > 3600:
+        return default
+    return n
+
+
+async def check_group_cooldown(
     group_id: int,
     user_id: int,
     normalized_query: str,
     *,
     skip_user_layer: bool = False,
 ) -> tuple[bool, str]:
-    """检查 3 层冷却
+    """检查 3 层冷却（UX-10.2：每层秒数从 config 读取，缺失回退默认）
 
     Args:
         group_id / user_id / normalized_query: 必填
@@ -89,27 +120,30 @@ def check_group_cooldown(
         (allowed, reason)
             allowed=True: 没有任何一层在冷却，可以发送
             allowed=False: 至少一层冷却中，调用方应静默不回复
-            reason: 仅 debug 用，标识被哪层挡住
+            reason: 仅 debug 用，标识被哪层挡住，caller 可附加到 silenced 埋点
     """
     now = time.time()
 
     # Layer 3 (cheapest): 群组总冷却
+    group_cd = await _read_cooldown_seconds("group")
     last = _group_total_last.get(group_id, 0.0)
-    if now - last < GROUP_TOTAL_COOLDOWN_SECONDS:
+    if now - last < group_cd:
         return False, "group_total"
 
     # Layer 2: 同关键词冷却
     if normalized_query:
+        kw_cd = await _read_cooldown_seconds("keyword")
         key_kw = (group_id, normalized_query)
         last = _keyword_in_group_last.get(key_kw, 0.0)
-        if now - last < KEYWORD_GROUP_COOLDOWN_SECONDS:
+        if now - last < kw_cd:
             return False, "same_keyword"
 
     # Layer 1: 单用户冷却（部分场景可跳过）
     if not skip_user_layer:
+        user_cd = await _read_cooldown_seconds("user")
         key_user = (group_id, user_id)
         last = _user_in_group_last.get(key_user, 0.0)
-        if now - last < USER_GROUP_COOLDOWN_SECONDS:
+        if now - last < user_cd:
             return False, "user_per_group"
 
     return True, ""

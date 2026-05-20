@@ -644,11 +644,18 @@ Week 12+:  UX-9 单项独立 Sprint；UX-10.2 任意空档
 - [x] UX-6.2 已实现 commit:99d6344（2026-05-20）
 - [x] UX-6.3 已实现 commit:a998ed5（2026-05-20，仅 keyboard 布局重排；price_detail 编辑留待后续）
 - [x] UX-6.4 已实现 commit:aa6d643（2026-05-20）
-- [ ] UX-7.1
+- [x] UX-7.1 已实现 commit:fc965d8（2026-05-20，5 分钟内存 TTL + 强制接管 + audit）
 - [x] UX-7.4 已实现 commit:0784c05（2026-05-20，含 admin_id=0 placeholder 修复）
-- [ ] UX-8.1 / 8.2 / 8.3 / 8.4
-- [ ] UX-9.1 / 9.2 / 9.3 / 9.5 / 9.6
-- [ ] UX-10.2
+- [x] UX-8.1 已实现 commit:09dcedc（2026-05-20）
+- [x] UX-8.2 已实现 commit:2097e97（2026-05-20）
+- [x] UX-8.3 已实现 commit:f9aedc8（2026-05-20，方案 A：评价空状态 CTA）
+- [x] UX-8.4 已实现 commit:675115f（2026-05-20，默认 off + active 改 cost 公告）
+- [ ] UX-9.1（最后一个，留作 Sprint UX-9 收尾）
+- [x] UX-9.2 已实现 commit:c4f9227（2026-05-20，FSM 超时中间件 30 分钟）
+- [x] UX-9.3 已实现 commit:df08453（2026-05-20，引入首条 Migration baseline）
+- [x] UX-9.5 已实现 commit:cc32db0（2026-05-20，entry_cost 升主线 Step 8/11）
+- [x] UX-9.6 已实现 commit:c170698（2026-05-20，管理员审计分页 + action 筛选）
+- [x] UX-10.2 已实现（2026-05-20，3 层冷却 config 化 + keyword_silenced 埋点）
 - ~~UX-7.2~~（**暂不开放**，2026-05-20 与用户对齐补充：涉及资金流动，见 11.2 重评估条件）
 - ~~UX-7.3~~（暂不开放，见 11.2 重评估条件）
 - ~~UX-9.4~~（暂不开放，见 11.2 重评估条件）

@@ -537,11 +537,21 @@ async def on_keyword_message(message: types.Message):
 
     if teacher:
         # spec §九：老师精准命中走"群组总+同关键词"冷却，跳过单用户冷却
-        allowed, _ = check_group_cooldown(
+        allowed, reason = await check_group_cooldown(
             group_id, user_id, normalized,
             skip_user_layer=True,
         )
         if not allowed:
+            await _safe_log_event(
+                user_id,
+                "keyword_silenced",
+                {
+                    "reason": reason,
+                    "group_id": group_id,
+                    "keyword": keyword,
+                    "route": "teacher_exact",
+                },
+            )
             return  # 静默
         await _send_teacher_group_card_v2(message, teacher)
         record_group_cooldown(
@@ -561,8 +571,18 @@ async def on_keyword_message(message: types.Message):
 
     # ============ 优先级 1.5：个人 / 系统查询关键词 ============
     if keyword in _PERSONAL_QUERY_POINTS or keyword in _PERSONAL_QUERY_REIMBURSE_POOL:
-        allowed, _ = check_group_cooldown(group_id, user_id, normalized)
+        allowed, reason = await check_group_cooldown(group_id, user_id, normalized)
         if not allowed:
+            await _safe_log_event(
+                user_id,
+                "keyword_silenced",
+                {
+                    "reason": reason,
+                    "group_id": group_id,
+                    "keyword": keyword,
+                    "route": "personal_query",
+                },
+            )
             return
         if keyword in _PERSONAL_QUERY_POINTS:
             sent = await _handle_personal_points(message)
@@ -582,8 +602,18 @@ async def on_keyword_message(message: types.Message):
 
     # ============ 优先级 2：群组快捷词 ============
     if keyword in _QUICK_ENTRY_CONFIG:
-        allowed, _ = check_group_cooldown(group_id, user_id, normalized)
+        allowed, reason = await check_group_cooldown(group_id, user_id, normalized)
         if not allowed:
+            await _safe_log_event(
+                user_id,
+                "keyword_silenced",
+                {
+                    "reason": reason,
+                    "group_id": group_id,
+                    "keyword": keyword,
+                    "route": "quick_entry",
+                },
+            )
             return
         sent = await _send_quick_entry(message, keyword)
         if not sent:
@@ -606,8 +636,18 @@ async def on_keyword_message(message: types.Message):
         return
 
     # 先 cooldown 后再做较重的 DB 查询；命中后再消费 cooldown 配额
-    allowed, _ = check_group_cooldown(group_id, user_id, normalized)
+    allowed, reason = await check_group_cooldown(group_id, user_id, normalized)
     if not allowed:
+        await _safe_log_event(
+            user_id,
+            "keyword_silenced",
+            {
+                "reason": reason,
+                "group_id": group_id,
+                "keyword": keyword,
+                "route": "combo_search",
+            },
+        )
         return
 
     sent, matched_count = await _handle_combo_search(message, keyword, tokens)
