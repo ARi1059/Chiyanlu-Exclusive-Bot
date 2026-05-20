@@ -78,7 +78,9 @@ def register_routers(dp: Dispatcher) -> None:
     # 与 admin_panel / teacher_self / user_search / keyword 的 message handler 不冲突
     dp.include_router(hot_teachers_router)
     # promo_links / source_stats（Phase 4）：2026-05-18 已下线
-    # 入口按钮 + router 注册都已移除；handler 文件 + DB 表保留作 dead code 兼容
+    # - promo_links handler / keyboard / FSM state 已于 2026-05-20 Sprint 7
+    #   §9.1 第 1 批 dead code 删除
+    # - source_stats handler / keyboard 仍保留（待 Sprint 7 §9.1 第 2 批清理）
     # teacher_daily_status_router（Phase 5）：
     # 老师今日状态（设置时间/取消/已满）+ 时间选择器 + 管理员今日总览 + noop 占位
     # 注册位置：在 teacher_self / user_panel / keyword 之前，保证 teacher:*/admin:today_status

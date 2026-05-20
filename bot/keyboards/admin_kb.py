@@ -597,26 +597,10 @@ def publish_templates_list_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
-# ============ 推广链接 / 渠道统计（Phase 4） ============
-
-
-def promo_links_menu_kb() -> InlineKeyboardMarkup:
-    """推广链接生成器主面板"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📺 频道来源", callback_data="admin:promo:channel")],
-        [InlineKeyboardButton(text="👥 群组来源", callback_data="admin:promo:group")],
-        [InlineKeyboardButton(text="👤 老师来源", callback_data="admin:promo:teacher")],
-        [InlineKeyboardButton(text="🎯 活动来源", callback_data="admin:promo:campaign")],
-        [InlineKeyboardButton(text="🎟️ 邀请来源", callback_data="admin:promo:invite")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
-    ])
-
-
-def promo_cancel_kb() -> InlineKeyboardMarkup:
-    """推广链接 FSM 输入页的取消按钮（回 promo 主菜单）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:promo_links")],
-    ])
+# ============ 渠道统计（Phase 4） ============
+# 注：推广链接（promo_links_menu_kb / promo_cancel_kb）于 2026-05-20
+# Sprint 7 §9.1 第 1 个 dead code 删除批次中清理（handler / FSM state / keyboard
+# 一并移除）。源码原 promo_* 入口已于 2026-05-18 Phase 4 下线。
 
 
 def source_stats_menu_kb() -> InlineKeyboardMarkup:

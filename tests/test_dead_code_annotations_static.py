@@ -31,15 +31,39 @@ def test_review_submit_has_deprecated_annotation():
     assert "旧线性评价 FSM" in src or "线性" in src
 
 
-# ============ promo_links / source_stats 下线注释 ============
+# ============ promo_links 模块已删除契约（Sprint 7 §9.1 第 1 批） ============
 
 
-def test_promo_links_marked_dead_code():
-    src = _read("bot/handlers/promo_links.py")
-    assert "已下线" in src
-    # 必须显式说明未注册到 routers.py
-    assert "bot/routers.py" in src
-    assert "未在" in src or "未注册" in src
+def test_promo_links_module_deleted():
+    """Sprint 7 §9.1 第 1 批 dead code 删除：
+    - bot/handlers/promo_links.py 已删
+    - bot/keyboards/admin_kb.py 中 promo_links_menu_kb / promo_cancel_kb 已删
+    - bot/states/teacher_states.py 中 PromoLinkStates 已删
+    """
+    # 文件已删
+    assert not os.path.exists(
+        os.path.join(_PROJECT_ROOT, "bot/handlers/promo_links.py")
+    )
+
+    # keyboard 不再可 import
+    from bot.keyboards import admin_kb
+    assert not hasattr(admin_kb, "promo_links_menu_kb")
+    assert not hasattr(admin_kb, "promo_cancel_kb")
+
+    # FSM state 不再可 import
+    from bot.states import teacher_states
+    assert not hasattr(teacher_states, "PromoLinkStates")
+
+
+def test_admin_kb_source_has_no_promo_callbacks():
+    """admin_kb.py 源码不应再含 admin:promo 任何 callback_data。"""
+    src = _read("bot/keyboards/admin_kb.py")
+    # 仅允许在注释中提及（说明删除历史）；不允许 callback_data="admin:promo*"
+    assert 'callback_data="admin:promo' not in src
+    assert "promo_links_menu_kb" not in src or "已" in src  # 仅允许注释里出现
+
+
+# ============ source_stats 下线注释（待 Sprint 7 §9.1 第 2 批清理） ============
 
 
 def test_source_stats_marked_dead_code():
@@ -91,15 +115,18 @@ def test_teacher_daily_status_noop_references_noop_handlers():
     assert "不是重复" in src or "兼容" in src
 
 
-# ============ 反回归：仍只在审查报告中列出的 2 个未注册 router ============
+# ============ 反回归：仅 source_stats 仍是未注册 router ============
 
 
 def test_unregistered_router_diff_unchanged():
-    """全项目 handler 文件中定义 router 的数量 - routers.py 注册数 = 2 (promo_links + source_stats)。
+    """全项目 handler 文件中定义 router 的数量 - routers.py 注册数 = 1 (source_stats)。
 
-    这是 dead code audit 的基本假设；如果该差集变化，说明：
+    Sprint 7 §9.1 第 1 批已删除 promo_links；第 2 批将清理 source_stats。
+    在 source_stats 删除前，该差集应稳定为 {source_stats}。
+
+    差集变化的含义：
         - 有人新增了 handler 但忘记注册（差集变大）
-        - 有人重新启用了 dead code 之一（差集变小且失误）
+        - 有人重新启用了 dead code（差集变小且失误）
     """
     import re
     handlers_dir = os.path.join(_PROJECT_ROOT, "bot", "handlers")
@@ -119,6 +146,6 @@ def test_unregistered_router_diff_unchanged():
             registered.add(m.group(1))
 
     diff = defined - registered
-    assert diff == {"promo_links", "source_stats"}, (
-        f"未注册 router 差集变化：期望 {{promo_links, source_stats}}，得到 {diff}"
+    assert diff == {"source_stats"}, (
+        f"未注册 router 差集变化：期望 {{source_stats}}，得到 {diff}"
     )

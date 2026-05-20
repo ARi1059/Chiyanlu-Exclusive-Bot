@@ -474,7 +474,7 @@ bash -n scripts/prune.sh
 
 - **当前状态**：P3-A 已完成 `# deprecated` 注释标记，但**尚未删除**。
 - **候选删除清单**（P3-A `# deprecated` 注释已在代码内标出）：
-  - `promo_links.py`
+  - ~~`promo_links.py`~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1 第 1 批 commit `<本 PR>`）
   - `source_stats.py`
   - 旧 `ReviewSubmitStates`
 - **要求**：
@@ -482,6 +482,18 @@ bash -n scripts/prune.sh
   - **分阶段删除**：每次只删 1 个文件 / 1 个类，单独 PR。
   - **每次删前补测试**：先确认现有测试覆盖到对应路径的「替代实现」。
   - **不一次性全删**。
+
+#### 9.1.1 第 1 批：promo_links 删除（2026-05）
+
+- **审查**：[docs/TEACHER-PANEL-AUDIT-2026-05.md] 模式同款审查（grep 全项目调用方为 0；未注册到 routers.py；handler 自身明确标 dead code since 2026-05-18）
+- **删除清单**：
+  - `bot/handlers/promo_links.py`（286 行）
+  - `bot/keyboards/admin_kb.py::promo_links_menu_kb` + `promo_cancel_kb`
+  - `bot/states/teacher_states.py::PromoLinkStates`
+- **保留**：`bot/routers.py` 中的注释（从"已下线 dead code 兼容"改为"已删除"+ 指向 source_stats 待清理）
+- **新契约测试**：`tests/test_dead_code_annotations_static.py` 中删除旧 `test_promo_links_marked_dead_code`（文件不在了）；新增 `test_promo_links_module_deleted`（文件不存在 + 模块属性不可 import）+ `test_admin_kb_source_has_no_promo_callbacks`（callback_data 不含 admin:promo）；`test_unregistered_router_diff_unchanged` 差集期望从 `{promo_links, source_stats}` → `{source_stats}`
+- **其它测试不需要改**：5 处现有测试只断言 routers.py 源码不含 `promo_links_router` / kb 不含 `admin:promo` —— 删除后这些断言仍然成立
+- CI 1626 全绿；零业务行为变化
 
 ### 9.2 `prune.sh --confirm`
 
