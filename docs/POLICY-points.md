@@ -256,4 +256,3 @@
 - 报销规则（积分门槛、月池、周限额）：[`POLICY-reimbursement.md`](POLICY-reimbursement.md)
 - 抽奖规则（积分门票、退款）：[`POLICY-lottery.md`](POLICY-lottery.md)
 - 部署与备份：[`DEPLOYMENT.md`](DEPLOYMENT.md)
-- 稳定化审查：[`STABILITY-AUDIT-2026-05-18.md`](STABILITY-AUDIT-2026-05-18.md)

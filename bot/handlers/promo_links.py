@@ -4,7 +4,7 @@
    - 当前**未在 bot/routers.py 注册**（routers.py L76 注释明确说明）
    - 管理员后台对应的入口按钮已从 admin_kb 中移除
    - 文件与其内部 router 仍保留作为历史参考，**不应**新增任何入口调用本模块
-   - 删除前请先参考 docs/DEAD-CODE-AUDIT-2026-05-18.md §五
+   - 删除前请补充静态测试覆盖 router 未注册 + admin_kb 无入口
 
 Callbacks:
     admin:promo_links           推广链接主菜单

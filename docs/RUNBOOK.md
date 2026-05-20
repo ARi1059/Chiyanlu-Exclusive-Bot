@@ -741,4 +741,3 @@ ls -l ~/.ssh/
 - [POLICY-points.md](POLICY-points.md) — 积分获取 / 消耗规则
 - [POLICY-reimbursement.md](POLICY-reimbursement.md) — 报销规则、池模型、每周上限
 - [POLICY-lottery.md](POLICY-lottery.md) — 抽奖发布、参与、开奖规则
-- [STABILITY-AUDIT-2026-05-18.md](STABILITY-AUDIT-2026-05-18.md) — 稳定性审计结论与已知风险

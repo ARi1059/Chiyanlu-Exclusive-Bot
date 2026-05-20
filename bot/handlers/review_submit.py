@@ -66,9 +66,7 @@ from bot.keyboards.user_kb import (
 #    调用都封闭在本文件的 ``_enter_*`` 私有函数中，外部 0 引用。
 #
 #    本 import 与对应的 10+ 个 handler / 私有函数暂时保留作为历史 fallback 与对照，
-#    禁止新增任何路径继续使用 ReviewSubmitStates。
-#
-#    删除前必须参考 docs/DEAD-CODE-AUDIT-2026-05-18.md §四并补静态测试。
+#    禁止新增任何路径继续使用 ReviewSubmitStates。删除前请补充静态测试覆盖。
 from bot.states.teacher_states import (
     ReviewSubmitStates,
     UserReviewsHomeStates,

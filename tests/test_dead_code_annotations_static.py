@@ -29,8 +29,6 @@ def test_review_submit_has_deprecated_annotation():
     assert "Deprecated" in src or "deprecated" in src or "已无外部入口" in src
     # 必须指向旧线性评价 FSM 的概念
     assert "旧线性评价 FSM" in src or "线性" in src
-    # 必须引用审查报告，便于维护者查
-    assert "DEAD-CODE-AUDIT-2026-05-18" in src
 
 
 # ============ promo_links / source_stats 下线注释 ============

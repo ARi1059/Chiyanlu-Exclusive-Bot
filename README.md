@@ -4,7 +4,7 @@
 
 项目从 v1 的「老师签到 + 每日发布 + 关键词查询」起步，已逐步扩展为覆盖**老师档案、用户私聊菜单、评价/报告、积分、报销、抽奖、必关订阅、推广追踪、发布模板、日报/周报**的运营平台。所有子系统共用一套 SQLite 后台、一套 systemd 单进程部署。
 
-> 本 README 反映截至 2026-05-18 的实际代码能力。早期版本的产品需求与设计见 [`docs/DESIGN.md`](docs/DESIGN.md)（v1）和 [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量）。运维稳定化路线见 [`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md)。
+> 本 README 反映截至 2026-05-20 的实际代码能力。早期版本的产品需求与设计见 [`docs/DESIGN.md`](docs/DESIGN.md)（v1）和 [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量）。
 
 ---
 
@@ -524,8 +524,6 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 
 ## 当前稳定化状态
 
-> 详细审查报告见 [`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md)。
-
 ### ✅ 已完成（截至 2026-05-18）
 
 #### 代码层稳定化
@@ -548,7 +546,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | 数据库备份脚本 | [`scripts/backup.sh`](scripts/backup.sh) 独立 WAL-safe 备份 + `integrity_check`，产物 `*.manual.bak`；不影响 `update.sh` 的 `*.bak` | `6680e83` |
 | Pruning dry-run | [`scripts/prune.sh`](scripts/prune.sh) `--dry-run` 只读统计 `user_events` / `user_teacher_views`；任何 `--confirm/--delete/--vacuum/--execute` 立即 exit 1，权益类表永不进入白名单 | (本次) |
 | `bot/main.py` 拆分 | 拆为 4 个文件，行为零变更：[`bot/app_factory.py`](bot/app_factory.py)（Bot/Dispatcher/Scheduler 构造）+ [`bot/routers.py`](bot/routers.py)（33 个 router 注册，顺序完全等价于拆分前 L109-213）+ [`bot/lifecycle.py`](bot/lifecycle.py)（startup/shutdown 钩子）+ [`bot/main.py`](bot/main.py)（41 行薄入口）；20 个静态测试保证顺序与契约 | (本次) |
-| Dead code 审查 + P3-A 注释 | [`docs/DEAD-CODE-AUDIT-2026-05-18.md`](docs/DEAD-CODE-AUDIT-2026-05-18.md) 审查报告；P3-A 给 ReviewSubmitStates / promo_links / source_stats / noop 双 handler 加 deprecated/交叉注释（0 行删除）；7 个静态测试保护注释 + 未注册 router 差集 | (本次) |
+| Dead code 审查 + P3-A 注释 | 给 ReviewSubmitStates / promo_links / source_stats / noop 双 handler 加 deprecated/交叉注释（0 行删除）；7 个静态测试保护注释 + 未注册 router 差集 | (本次) |
 | pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |
 | 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
 | 迁移注册器 P2 baseline | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 落地 [bot/database.py](bot/database.py)；接入 `init_db()`；9 个 `_migrate_*` **顺序未改、行为未改**；[scripts/healthcheck.sh](scripts/healthcheck.sh) 新增 `success=0` 行的 hard/soft 分级检查；13 个 pytest 用例 | (本次) |
@@ -664,8 +662,6 @@ scripts/backup.sh / scripts/prune.sh` 四类检查。workflow 定义见
 ### 运维与部署
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — 部署 / `update.sh` / WAL / 备份 / 验收 Checklist
 - [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — 值守手册（14 节，事故处理流程）
-- [`docs/STABILITY-AUDIT-2026-05-18.md`](docs/STABILITY-AUDIT-2026-05-18.md) — 稳定化起点审查
-- [`docs/STABILIZATION-SUMMARY-2026-05-18.md`](docs/STABILIZATION-SUMMARY-2026-05-18.md) — 稳定化轮次总结
 
 ### 运营规则
 - [`docs/POLICY-points.md`](docs/POLICY-points.md) — 积分获取 / 消耗规则
@@ -675,7 +671,6 @@ scripts/backup.sh / scripts/prune.sh` 四类检查。workflow 定义见
 ### 数据库与维护设计
 - [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) — 迁移注册器（P2 baseline 已落地）
 - [`docs/PRUNING-DESIGN.md`](docs/PRUNING-DESIGN.md) — 历史数据清理策略（P2 dry-run 已落地）
-- [`docs/DEAD-CODE-AUDIT-2026-05-18.md`](docs/DEAD-CODE-AUDIT-2026-05-18.md) — 死代码审查（P3-A 注释已落地）
 
 ### 历史设计
 - [`docs/DESIGN.md`](docs/DESIGN.md) — v1 原始产品设计

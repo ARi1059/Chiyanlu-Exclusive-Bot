@@ -809,4 +809,3 @@ DB 层提供 **`get_reimbursement_monthly_pool_usage(month_key) -> dict`**：
 - 积分规则（积分门槛 / 审计）：[`POLICY-points.md`](POLICY-points.md)
 - 抽奖规则：[`POLICY-lottery.md`](POLICY-lottery.md)
 - 部署与备份：[`DEPLOYMENT.md`](DEPLOYMENT.md)
-- 稳定化审查：[`STABILITY-AUDIT-2026-05-18.md`](STABILITY-AUDIT-2026-05-18.md)

@@ -78,7 +78,6 @@
   - `DESIGN.md`、`FEATURES-v2.md`、`DEPLOYMENT.md`、`RUNBOOK.md`
   - `POLICY-lottery.md`、`POLICY-points.md`、`POLICY-reimbursement.md`
   - `MIGRATION-REGISTRY-DESIGN.md`、`PRUNING-DESIGN.md`
-  - `DEAD-CODE-AUDIT-2026-05-18.md`、`STABILITY-AUDIT-2026-05-18.md`、`STABILIZATION-SUMMARY-2026-05-18.md`
 - 任何涉及业务策略的 Sprint，必须**同步更新对应 POLICY 文档**，不允许只改代码不更新策略。
 
 ---
@@ -440,7 +439,7 @@ bash -n scripts/prune.sh
 ### 9.1 Dead code P3-B
 
 - **当前状态**：P3-A 已完成 `# deprecated` 注释标记，但**尚未删除**。
-- **候选删除清单**（参见 `DEAD-CODE-AUDIT-2026-05-18.md`）：
+- **候选删除清单**（P3-A `# deprecated` 注释已在代码内标出）：
   - `promo_links.py`
   - `source_stats.py`
   - 旧 `ReviewSubmitStates`

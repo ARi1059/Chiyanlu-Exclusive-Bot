@@ -3,7 +3,7 @@
 讨论群评价评论的中间按钮 [{rating_emoji} {rating_label}] 是纯视觉徽章，
 用 callback_data = "noop:rating" 表示无动作；点击仅 callback.answer() 消除转圈。
 
-⚠️ noop 双 handler 分工（详见 docs/DEAD-CODE-AUDIT-2026-05-18.md §六）：
+⚠️ noop 双 handler 分工：
    - 本文件 (noop_handlers.py)：处理**带冒号**的 ``noop:*`` 占位 callback
      （例如 ``noop:rating`` / ``noop:page``）—— routers.py 第 2 条注册，优先匹配
    - bot/handlers/teacher_daily_status.py 中另有一处 ``F.data.startswith("noop")``

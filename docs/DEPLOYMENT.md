@@ -829,6 +829,4 @@ ls -lh /opt/Chiyanlu-Exclusive-Bot/backups/
 ## 相关文档
 
 - 项目总览：[README.md](../README.md)
-- 稳定化审查报告：[STABILITY-AUDIT-2026-05-18.md](STABILITY-AUDIT-2026-05-18.md)
 - 设计文档：[DESIGN.md](DESIGN.md)（v1） / [FEATURES-v2.md](FEATURES-v2.md)（v2 增量）
-- 阶段实施记录：`docs/PHASE-*-IMPL.md`

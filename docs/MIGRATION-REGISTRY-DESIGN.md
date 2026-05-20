@@ -501,5 +501,4 @@ P3 之后**不要**再把现有 `_migrate_*` 改写——它们已通过 baselin
 - [DEPLOYMENT.md](DEPLOYMENT.md) §14 备份与恢复、§16 验收 Checklist
 - [RUNBOOK.md](RUNBOOK.md) §四 更新失败怎么办、§五 数据库异常怎么办
 - [POLICY-reimbursement.md](POLICY-reimbursement.md) `reimbursements_new` 残留表的历史背景
-- [STABILITY-AUDIT-2026-05-18.md](STABILITY-AUDIT-2026-05-18.md) 当前稳定化状态
 - 实现入口：[bot/database.py](../bot/database.py) `init_db()` 与 `_migrate_*`
