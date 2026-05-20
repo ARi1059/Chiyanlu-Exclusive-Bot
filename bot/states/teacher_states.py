@@ -218,15 +218,18 @@ class UserReviewsHomeStates(StatesGroup):
 
 
 class WriteReviewLookupStates(StatesGroup):
-    """主菜单 [📝 写评价] → 等待用户输入艺名 → 查到老师后转 ReviewSubmitStates"""
+    """主菜单 [📝 写评价] → 等待用户输入艺名 → 查到老师后转 CardReviewStates"""
     waiting_teacher_name = State()
 
 
 class CardReviewStates(StatesGroup):
     """卡片驱动评价 FSM（2026-05-18 Phase 2）
 
-    与线性 ReviewSubmitStates 不同：用户在「评价卡片」状态下可任意点击 8 个字段
-    按钮进入对应 editing_X 状态填写，填完返回卡片视图。无强制顺序。
+    用户在「评价卡片」状态下可任意点击 8 个字段按钮进入对应 editing_X
+    状态填写，填完返回卡片视图。无强制顺序。
+
+    旧线性 ReviewSubmitStates FSM 已于 2026-05-20 Sprint 7 §9.1 第 3 批
+    dead code 删除中清理。
 
     state.data 累加：
         teacher_id /
@@ -251,39 +254,6 @@ class CardReviewStates(StatesGroup):
     editing_environment = State()
     editing_summary    = State()
     waiting_reimbursement_choice = State()  # 报销询问步（可选）
-
-
-class ReviewSubmitStates(StatesGroup):
-    """用户提交评价 FSM（v2 2026-05-18：10 步精简版 + 1 条件步）
-
-    主要变化：
-        - 约课截图 + 手势照片合并为 1 步（支持媒体组）
-        - 评级 + 6 维评分要求用户**自行输入文本**（无快捷按钮）
-        - 综合评分**自动**取 6 维平均（不再让用户单独打分）
-        - 过程描述改为**必填**（不再可跳过）
-
-    state.data 累加：
-        teacher_id /
-        booking_screenshot_file_id / gesture_photo_file_id /  ← 来自媒体组首 2 张
-        rating /
-        score_humanphoto / score_appearance / score_body /
-        score_service / score_attitude / score_environment /
-        overall_score（自动 = avg）/
-        summary（必填）/
-        request_reimbursement /
-        jump_back（确认页跳回时为 True）
-    """
-    waiting_evidence_media     = State()  # Step 1：约课截图 + 手势照片（媒体组）
-    waiting_rating             = State()  # Step 2：评级
-    waiting_score_humanphoto   = State()  # Step 3
-    waiting_score_appearance   = State()  # Step 4
-    waiting_score_body         = State()  # Step 5
-    waiting_score_service      = State()  # Step 6
-    waiting_score_attitude     = State()  # Step 7
-    waiting_score_environment  = State()  # Step 8
-    waiting_summary            = State()  # Step 9
-    waiting_reimbursement_choice = State()  # Step 10（条件可见）
-    waiting_confirm            = State()
 
 
 class SetGroupStates(StatesGroup):

@@ -191,19 +191,11 @@ def test_disabled_item_not_enforced(temp_db):
 # ============ 16-17. recheck / back callbacks 已注册 ============
 
 
-def test_recheck_submit_callback_registered_in_review_submit():
-    """review_submit.py 注册 reimburse:subreq:recheck:submit handler。"""
-    import bot.handlers.review_submit as mod
-    src = inspect.getsource(mod)
-    assert '"reimburse:subreq:recheck:submit"' in src
-    assert "cb_reimburse_subreq_recheck_submit" in src
-
-
-def test_back_submit_callback_registered_in_review_submit():
-    import bot.handlers.review_submit as mod
-    src = inspect.getsource(mod)
-    assert '"reimburse:subreq:back:submit"' in src
-    assert "cb_reimburse_subreq_back_submit" in src
+# 注：旧 reimburse:subreq:recheck:submit / reimburse:subreq:back:submit
+# 测试已于 Sprint 7 §9.1 第 3 批 ReviewSubmitStates 删除中清理
+# （review_submit.py 不再含报销 gate 逻辑）。等价契约由
+# test_recheck_card_callback_registered_in_review_card +
+# test_back_card_callback_registered_in_review_card 覆盖。
 
 
 def test_recheck_card_callback_registered_in_review_card():
@@ -258,14 +250,10 @@ def test_user_gate_kb_renders_join_url_button_per_missing_item():
 # ============ Submit FSM 路径：cb_review_reimburse_yes 调 gate ============
 
 
-def test_review_submit_handler_calls_check_user_subscribed_for_reimburse():
-    """cb_review_reimburse_yes 内调用 check_user_subscribed_for_reimburse。"""
-    import bot.handlers.review_submit as mod
-    src = inspect.getsource(mod)
-    idx = src.find("async def cb_review_reimburse_yes(")
-    assert idx > 0
-    body = src[idx:idx + 1500]
-    assert "check_user_subscribed_for_reimburse" in body
+# 注：旧 cb_review_reimburse_yes / cb_review_reimburse_no 测试已于
+# Sprint 7 §9.1 第 3 批 ReviewSubmitStates 删除中清理。等价契约由
+# test_card_review_handler_calls_check_user_subscribed_for_reimburse +
+# test_card_review_no_handler_does_not_call_gate 覆盖。
 
 
 def test_card_review_handler_calls_check_user_subscribed_for_reimburse():
@@ -276,18 +264,6 @@ def test_card_review_handler_calls_check_user_subscribed_for_reimburse():
     assert idx > 0
     body = src[idx:idx + 1500]
     assert "check_user_subscribed_for_reimburse" in body
-
-
-def test_review_submit_no_handler_does_not_call_gate():
-    """cb_review_reimburse_no（用户选不申请）不应触发 gate（spec §22）。"""
-    import bot.handlers.review_submit as mod
-    src = inspect.getsource(mod)
-    idx = src.find("async def cb_review_reimburse_no(")
-    assert idx > 0
-    # 在下一个 async def 之前提取本函数体
-    end = src.find("async def ", idx + 1)
-    body = src[idx:end if end > 0 else idx + 1000]
-    assert "check_user_subscribed_for_reimburse" not in body
 
 
 def test_card_review_no_handler_does_not_call_gate():

@@ -184,18 +184,6 @@ def test_system_menu_kb_contains_min_points_entry():
 # ============================================================
 
 
-def test_review_submit_uses_get_reimbursement_min_points_helper():
-    """review_submit.py 应使用 helper（不再 hardcode 5 fallback）。"""
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    assert "get_reimbursement_min_points" in src
-    # 旧硬编码 fallback 已替换：搜不到 "min_pts = 5" 在 review_submit 函数体内
-    # （但 5 可能作为 "门槛 {min_pts}" 文案出现，不影响）
-    # 关键：3 行 try/except fallback 已删除
-    assert "min_pts_raw = await get_config" not in src
-    assert "min_pts = int(min_pts_raw) if min_pts_raw else 5" not in src
-
-
 def test_review_card_uses_get_reimbursement_min_points_helper():
     import bot.handlers.review_card as mod
     src = _src(mod)
@@ -210,12 +198,10 @@ def test_rreview_admin_uses_get_reimbursement_min_points_helper():
     assert "min_pts_raw = await get_config" not in src
 
 
-def test_review_submit_gates_zero_threshold_passes():
-    """min_pts == 0 时无积分门槛——逻辑分支静态扫描。"""
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    # 必须有 min_pts == 0 不拦截的语义（采用 `min_pts > 0 and points < min_pts` 形式）
-    assert "min_pts > 0" in src
+# 注：旧 test_review_submit_uses_get_reimbursement_min_points_helper +
+# test_review_submit_gates_zero_threshold_passes 已于 Sprint 7 §9.1
+# 第 3 批 ReviewSubmitStates 删除中清理（review_submit.py 不再含报销
+# gate 逻辑）。等价契约由 review_card / rreview_admin 路径覆盖。
 
 
 def test_review_card_gates_zero_threshold_passes():

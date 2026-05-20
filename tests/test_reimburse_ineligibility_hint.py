@@ -83,52 +83,12 @@ def test_hint_amount_zero_takes_priority_over_points():
 
 
 # ============================================================
-# 2. review_submit.py gate 分支静态契约
+# 2. review_submit.py gate 分支静态契约（已于 Sprint 7 §9.1 第 3 批删除）
+#
+# 旧 _enter_reimbursement_step 在 review_submit.py 中的实现已随
+# ReviewSubmitStates 一并清理。当前生产路径在 review_card.py
+# _enter_reimburse_or_submit，对应测试在下面 §3。
 # ============================================================
-
-
-def test_review_submit_gate_calls_hint_when_feature_enabled():
-    """_enter_reimbursement_step 资格不满足分支内必须出现 hint 发送代码。"""
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    idx = src.find("async def _enter_reimbursement_step(")
-    assert idx > 0
-    end = src.find("\nasync def ", idx + 1)
-    body = src[idx:end if end > 0 else idx + 4000]
-    # 必须 import / 调用 helper
-    assert "format_reimburse_ineligibility_hint" in body
-    # 必须在 feature_enabled 守卫之内（OFF 时静默）
-    feature_pos = body.find("if feature_enabled:")
-    hint_pos = body.find("format_reimburse_ineligibility_hint")
-    assert 0 < feature_pos < hint_pos, (
-        "hint 调用必须放在 if feature_enabled: 块内，避免功能 OFF 时仍提示"
-    )
-
-
-def test_review_submit_gate_off_feature_stays_silent():
-    """feature OFF 路径不应包含任何 hint 文字（保持静默约束）。"""
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    idx = src.find("async def _enter_reimbursement_step(")
-    end = src.find("\nasync def ", idx + 1)
-    body = src[idx:end if end > 0 else idx + 4000]
-    # "if not feature_enabled:" 分支内不应有 hint 调用
-    off_idx = body.find("if not feature_enabled:")
-    if off_idx > 0:
-        next_block = body[off_idx:off_idx + 800]
-        assert "format_reimburse_ineligibility_hint" not in next_block
-
-
-def test_review_submit_gate_failure_state_writes_unchanged():
-    """资格不满足分支仍写 request_reimbursement=0 / _reimburse_amount=0（业务保护）。"""
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    idx = src.find("async def _enter_reimbursement_step(")
-    end = src.find("\nasync def ", idx + 1)
-    body = src[idx:end if end > 0 else idx + 4000]
-    assert "request_reimbursement=0" in body
-    assert "_reimburse_amount=0" in body
-    assert "_enter_confirm" in body
 
 
 # ============================================================
@@ -175,21 +135,6 @@ def test_review_card_gate_failure_state_writes_unchanged():
 # ============================================================
 # 4. hint 发送失败容错
 # ============================================================
-
-
-def test_review_submit_gate_hint_wrapped_in_try():
-    """hint 发送应在 try/except 内，避免 send_message 失败阻塞 _enter_confirm。"""
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    idx = src.find("async def _enter_reimbursement_step(")
-    end = src.find("\nasync def ", idx + 1)
-    body = src[idx:end if end > 0 else idx + 4000]
-    hint_pos = body.find("format_reimburse_ineligibility_hint")
-    # 向上找最近的 try:
-    try_pos = body.rfind("try:", 0, hint_pos)
-    feature_pos = body.find("if feature_enabled:")
-    # try 应在 hint 之前 且 在 feature 守卫之内
-    assert feature_pos < try_pos < hint_pos
 
 
 def test_review_card_gate_hint_wrapped_in_try():

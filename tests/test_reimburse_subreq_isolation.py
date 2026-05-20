@@ -133,31 +133,11 @@ def test_admin_lottery_does_not_call_reimburse_subreq():
 # ============ 22. 评价提交主体（除 yes/recheck 外）不触发 ============
 
 
-def test_review_submit_main_steps_do_not_call_reimburse_subreq():
-    """评价 FSM 各步骤主流程不调用 gate；只有用户勾选 yes / 重新检查时调用。
-
-    用静态扫描确认 gate 只出现在两个特定函数内：cb_review_reimburse_yes
-    + cb_reimburse_subreq_recheck_submit。每个函数体内出现 2 次（1 局部 import
-    行 + 1 真正 await 调用）。
-    """
-    import bot.handlers.review_submit as mod
-    src = _src(mod)
-    yes_idx = src.find("async def cb_review_reimburse_yes(")
-    yes_end = src.find("async def ", yes_idx + 1)
-    yes_body = src[yes_idx:yes_end]
-    recheck_idx = src.find("async def cb_reimburse_subreq_recheck_submit(")
-    recheck_end = src.find("async def ", recheck_idx + 1)
-    recheck_body = src[recheck_idx:recheck_end if recheck_end > 0 else recheck_idx + 2000]
-    # 两个函数体内都必须出现
-    assert "check_user_subscribed_for_reimburse" in yes_body
-    assert "check_user_subscribed_for_reimburse" in recheck_body
-    # 全文出现次数应 = 4（每个函数体 import + call 两处）
-    total = src.count("check_user_subscribed_for_reimburse")
-    in_two_funcs = (yes_body + recheck_body).count("check_user_subscribed_for_reimburse")
-    assert total == in_two_funcs, (
-        f"check_user_subscribed_for_reimburse 不应在 yes / recheck 之外出现；"
-        f"total={total} 来自两个函数={in_two_funcs}"
-    )
+# 注：review_submit.py 中的旧 cb_review_reimburse_yes /
+# cb_reimburse_subreq_recheck_submit 已于 Sprint 7 §9.1 第 3 批
+# ReviewSubmitStates 删除中清理。当前生产路径在 review_card.py，
+# 等价契约由下面 test_review_card_main_steps_do_not_call_reimburse_subreq
+# 覆盖。
 
 
 def test_review_card_main_steps_do_not_call_reimburse_subreq():
@@ -241,9 +221,13 @@ def test_migrations_list_still_empty():
 
 
 def test_new_callbacks_present_in_correct_modules():
-    """关键 callback 字面量在对应模块源码中存在。"""
+    """关键 callback 字面量在对应模块源码中存在。
+
+    旧 reimburse:subreq:recheck:submit / reimburse:subreq:back:submit 已随
+    review_submit.py 中 ReviewSubmitStates 一并清理（Sprint 7 §9.1 第 3 批）。
+    当前生产路径仅 review_card.py 的 :card 后缀变体。
+    """
     import bot.handlers.reimburse_subreq_admin as adm
-    import bot.handlers.review_submit as rs
     import bot.handlers.review_card as rc
     import bot.keyboards.admin_kb as akb
 
@@ -254,10 +238,6 @@ def test_new_callbacks_present_in_correct_modules():
         '"system:reimburse_subreq:add_confirm"',
     ):
         assert cb in adm_src
-
-    rs_src = _src(rs)
-    assert '"reimburse:subreq:recheck:submit"' in rs_src
-    assert '"reimburse:subreq:back:submit"' in rs_src
 
     rc_src = _src(rc)
     assert '"reimburse:subreq:recheck:card"' in rc_src

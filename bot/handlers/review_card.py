@@ -3,14 +3,13 @@
 中心「评价卡片」展示老师 + 已填 / 未填字段；用户任选字段按钮进入填写子状态，
 填完返回卡片。无强制顺序。
 
-主要差异 vs ReviewSubmitStates 线性 FSM：
+主要差异 vs 旧线性 FSM（已于 2026-05-20 Sprint 7 §9.1 第 3 批清理）：
 - 状态机：CardReviewStates.card (idle) + 9 个 editing_X 子状态
 - 任意点 [✓ 字段] 进入对应 editing_X；填完返回卡片
 - 提交时 2 选 1：[😟 匿名提交] / [😎 默认提交]
 - 提交后走现有报销询问逻辑 → 落库 → 通知超管
 
 主要复用：
-- bot.handlers.review_submit._check_rate_limit / _compute_overall_avg
 - bot.utils.required_channels.check_user_subscribed
 - bot.database.compute_reimbursement_amount / get_config / get_user_total_points
 """

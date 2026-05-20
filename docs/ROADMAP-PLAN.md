@@ -476,7 +476,7 @@ bash -n scripts/prune.sh
 - **候选删除清单**（P3-A `# deprecated` 注释已在代码内标出）：
   - ~~`promo_links.py`~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1 第 1 批 commit `<本 PR>`）
   - ~~`source_stats.py`~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1 第 2 批 commit `<本 PR>`）
-  - 旧 `ReviewSubmitStates`
+  - ~~旧 `ReviewSubmitStates`~~ ✅ 已删除（2026-05-20 Sprint 7 §9.1 第 3 批 commit `<本 PR>`）
 - **要求**：
   - 再次审查（确认调用方为 0，确认没有被新代码偷偷依赖）。
   - **分阶段删除**：每次只删 1 个文件 / 1 个类，单独 PR。
@@ -511,9 +511,38 @@ bash -n scripts/prune.sh
 - **其它测试不需要改**：5 处现有测试只断言 routers.py / kb 源码层面不含 `source_stats_router` / `admin:source_stats` callback —— 删除后这些断言仍然成立
 - CI 1627 全绿；零业务行为变化；零 schema 变更
 
-#### 9.1.3 后续清理
+#### 9.1.3 第 3 批：ReviewSubmitStates 删除（2026-05）
 
-- 旧 `ReviewSubmitStates` 删除（第 3 批，待启动）
+- **审查**：旧线性评价 FSM `ReviewSubmitStates` 自 2026-05-18 Phase 2 卡片化重构起已无外部入口；全项目 `set_state(ReviewSubmitStates.*)` 调用都封闭在 `review_submit.py` 私有 `_enter_*` 函数中，外部 0 引用。新评价路径走 `CardReviewStates`（`review_card.py`），有自己的 cb_card_submit / cb_card_reimburse_yes / 限频 / gate 等等价实现。
+- **删除清单**：
+  - `bot/states/teacher_states.py::ReviewSubmitStates` 类（11 个 State）
+  - `bot/handlers/review_submit.py` 中 16 个 ReviewSubmitStates handler / `_enter_*` / `_record_score` / `_compute_overall_avg` / `_check_rate_limit` / `_ack` / `_show`（共约 681 行）
+  - 顶部 `_SCORE_FLOW` / `_STEP_BY_KEY` 元数据（仅被删除路径用过）
+  - 顶部 deprecated 注释 + 5 个孤立 keyboard import + 6 个孤立 DB helper import + `re` / `StateFilter` 孤立 import
+- **保留**：`review_submit.py` 主体（404 行减肥到 ~445 行 → 实际约 517 行）保留以下职责：
+  - `start_review_flow()`：[📝 写评价] 入口，重定向到 `review_card.start_card_review`
+  - `cb_review_start`：teacher_detail [📝 写评价] callback 入口
+  - 个人评价主页相关 handler（`user:write_review` / `user:reviews:*`）
+  - `WriteReviewLookupStates` FSM（艺名查老师 → 进卡片）
+  - 通用取消 `cb_review_cancel`
+- **跨文件清理**：
+  - `bot/routers.py`：注释从 `ReviewSubmitStates FSM 状态过滤` 改为 `已于 §9.1 第 3 批清理`
+  - `bot/handlers/review_card.py`：docstring 中 `vs ReviewSubmitStates 线性 FSM` 改为 `vs 旧线性 FSM (已清理)`，并去掉 `bot.handlers.review_submit._check_rate_limit / _compute_overall_avg` 的「主要复用」表述（review_card 已有自己的副本）
+  - `bot/states/teacher_states.py::WriteReviewLookupStates` docstring 把 `转 ReviewSubmitStates` 改为 `转 CardReviewStates`
+- **保留（§9.1 纪律：每次只删 1 个文件）**：
+  - `bot/keyboards/user_kb.py` 中 5 个孤立 keyboard 函数（`review_rating_kb` / `review_score_kb` / `review_summary_skip_cancel_kb` / `review_confirm_kb` / `review_reimbursement_choice_kb`）—— 留待**独立 PR** 单独清理
+  - `bot/database.py` 中 6 个 review DB 常量 / helper（`REVIEW_DIMENSIONS` / `REVIEW_SCORE_QUICK_BUTTONS_FOR_DIM` 等）—— 同上
+  - `bot/database.py` 中 `parse_review_score` —— 同上
+- **测试更新**：
+  - 新增 `test_review_submit_states_class_deleted` + `test_review_submit_handlers_no_longer_exist`（断言不再 import / set_state / state filter，且 16 个 handler 函数名都不存在）
+  - 删 `test_review_submit_has_deprecated_annotation`（旧契约：源码必须含「deprecated」字样 + 旧线性 FSM 概念）—— 文件已不再含旧 FSM
+  - 在 4 个 review-submit 相关测试文件（`test_reimburse_ineligibility_hint.py` / `test_reimburse_settings.py` / `test_reimburse_subreq_isolation.py` / `test_reimburse_subreq_user_gate.py`）中删除断言旧 review_submit handler 存在的 9 个测试。所有等价契约已由 review_card 路径上的对称测试覆盖。
+- CI 1617 全绿；零业务行为变化（旧 FSM 已无入口）；零 schema 变更
+
+#### 9.1.4 后续清理
+
+- `bot/keyboards/user_kb.py` 中 5 个旧评价 keyboard（独立 PR）
+- `bot/database.py` 中旧评价 DB 常量与 helper（独立 PR）
 - `bot/database.py` 中 4 个 source DB helper 删除（独立 PR）
 
 ### 9.2 `prune.sh --confirm`

@@ -19,16 +19,53 @@ def _read(path: str) -> str:
         return f.read()
 
 
-# ============ ReviewSubmitStates 旧线性 FSM 注释 ============
+# ============ ReviewSubmitStates 已删除契约（Sprint 7 §9.1 第 3 批） ============
 
 
-def test_review_submit_has_deprecated_annotation():
+def test_review_submit_states_class_deleted():
+    """Sprint 7 §9.1 第 3 批：ReviewSubmitStates 类已删除。"""
+    from bot.states import teacher_states
+    assert not hasattr(teacher_states, "ReviewSubmitStates")
+
+
+def test_review_submit_handlers_no_longer_exist():
+    """review_submit.py 中所有依赖 ReviewSubmitStates 的 handler 已删除。
+
+    文件 docstring 中可保留对历史 ReviewSubmitStates 的引用（说明清理历史），
+    但不应有任何 import / set_state / state filter 等代码层面引用。
+    """
     src = _read("bot/handlers/review_submit.py")
-    assert "ReviewSubmitStates" in src
-    # 必须明确标注已无外部入口与 deprecated 语义之一
-    assert "Deprecated" in src or "deprecated" in src or "已无外部入口" in src
-    # 必须指向旧线性评价 FSM 的概念
-    assert "旧线性评价 FSM" in src or "线性" in src
+
+    # 不应再 import ReviewSubmitStates（关键防御）
+    assert "ReviewSubmitStates," not in src
+    assert "import ReviewSubmitStates" not in src
+    # 不应再 set_state(ReviewSubmitStates.*)
+    assert "ReviewSubmitStates." not in src
+    # 不应作为 state filter 出现
+    assert "ReviewSubmitStates(" not in src
+
+    # 旧线性 FSM 的 handler 函数名也不应再出现
+    forbidden_funcs = (
+        "step_evidence_media",
+        "step_evidence_invalid",
+        "_enter_rating",
+        "_enter_score_step",
+        "_enter_summary",
+        "_enter_reimbursement_step",
+        "_enter_confirm",
+        "cb_rating",
+        "msg_rating",
+        "msg_dim_score",
+        "msg_summary",
+        "cb_review_edit",
+        "cb_review_submit",
+        "cb_review_reimburse_yes",
+        "cb_review_reimburse_no",
+        "cb_reimburse_subreq_recheck_submit",
+        "cb_reimburse_subreq_back_submit",
+    )
+    for func in forbidden_funcs:
+        assert func not in src, f"已删除的 handler {func} 仍出现在 review_submit.py"
 
 
 # ============ promo_links 模块已删除契约（Sprint 7 §9.1 第 1 批） ============

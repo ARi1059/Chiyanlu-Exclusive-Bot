@@ -164,9 +164,10 @@ def register_routers(dp: Dispatcher) -> None:
     #   - user:search_history / user:continue_last / user:reminders
     #   - SearchHistoryStates 仅在自身 FSM 状态下截获 /cancel
     dp.include_router(user_history_router)
-    # Phase 9.3：review_submit_router 在 user_search 之前
-    # - review:start:<id> / review:rating:* / review:score:* / review:submit / review:cancel
-    # - ReviewSubmitStates FSM 状态过滤保证文字消息只在评价 FSM 中被截获
+    # review_submit_router：[📝 写评价] 入口 + 个人评价主页
+    # - review:start:<id> 入口经 start_review_flow 直接重定向到 CardReviewStates
+    # - 旧线性 ReviewSubmitStates FSM 已于 2026-05-20 Sprint 7 §9.1 第 3 批
+    #   dead code 删除中清理（commit <本 PR>）
     # review_card_router (2026-05-18 Phase 2)：卡片驱动评价 FSM
     # - 命名空间 card:* 与 review:* 独立；CardReviewStates 状态过滤防误截
     # - 注册位置在 review_submit_router 之前（即更早注册），保证 card:* 优先匹配；
