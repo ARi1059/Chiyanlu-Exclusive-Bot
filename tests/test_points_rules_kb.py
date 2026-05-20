@@ -40,10 +40,10 @@ def test_admin_points_menu_kb_rules_is_first_row():
     assert "积分规则" in first_row[0].text or "规则一览" in first_row[0].text
 
 
-def test_admin_points_menu_kb_button_count_now_five():
-    """规则一览 + 查询 + 加分 + 总览 + 返回 = 5 按钮。"""
+def test_admin_points_menu_kb_button_count_now_six():
+    """规则一览 + 对账 + 查询 + 加分 + 总览 + 返回 = 6 按钮（Sprint 4 §6.2.3 加入对账入口）。"""
     kb = admin_points_menu_kb()
-    assert len(_flatten(kb)) == 5
+    assert len(_flatten(kb)) == 6
 
 
 # ============ admin_points_rules_kb ============

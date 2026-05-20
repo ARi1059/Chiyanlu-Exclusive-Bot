@@ -1460,11 +1460,72 @@ def admin_points_menu_kb() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📜 积分规则一览（只读）", callback_data="admin:points_rules")],
+        [InlineKeyboardButton(text="📊 积分对账（只读）",     callback_data="admin:points_reconcile")],
         [InlineKeyboardButton(text="🔍 查询用户积分", callback_data="admin:points:query")],
         [InlineKeyboardButton(text="➕ 手动加分",     callback_data="admin:points:grant")],
         [InlineKeyboardButton(text="📊 积分总览",     callback_data="admin:points:overview")],
         [InlineKeyboardButton(text="⬅️ 返回活动运营", callback_data="admin:operations")],
     ])
+
+
+def admin_points_reconcile_overview_kb(anomaly_users: int = 0) -> InlineKeyboardMarkup:
+    """积分对账概览 keyboard（Sprint 4 §6.2.3）。
+
+    无任何修正按钮（§6.3 禁止）；anomaly_users > 0 时含「📋 异常用户列表」入口。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if anomaly_users > 0:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"📋 异常用户列表 ({anomaly_users})",
+                callback_data="admin:points_reconcile:anomaly:1",
+            ),
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 刷新",
+            callback_data="admin:points_reconcile:refresh",
+        ),
+        InlineKeyboardButton(
+            text="⬅️ 返回积分管理",
+            callback_data="admin:points",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_points_reconcile_anomaly_kb(
+    page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    """积分异常用户列表分页 keyboard（Sprint 4 §6.2.3）。
+
+    无修正按钮（§6.3 禁止）；分页 + 返回对账概览。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    nav: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页",
+            callback_data=f"admin:points_reconcile:anomaly:{page - 1}",
+        ))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="下一页 ➡️",
+            callback_data=f"admin:points_reconcile:anomaly:{page + 1}",
+        ))
+    if nav:
+        rows.append(nav)
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 刷新当前页",
+            callback_data=f"admin:points_reconcile:anomaly:{page}",
+        ),
+        InlineKeyboardButton(
+            text="⬅️ 返回对账概览",
+            callback_data="admin:points_reconcile",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_points_rules_kb() -> InlineKeyboardMarkup:

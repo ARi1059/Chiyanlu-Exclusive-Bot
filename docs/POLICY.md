@@ -280,11 +280,57 @@
 ### 9.5 后续计划
 
 - §6.2.2 积分规则配置化：**下一个 Sprint**（编辑能力 + audit log + 必要时走 `MIGRATIONS`），不在本页范围
-- §6.2.3 积分异常对账：`users.total_points` vs `SUM(point_transactions.delta)` 差异用户列表，独立 PR
+- §6.2.3 积分异常对账：见 §十一「积分异常对账」（已落地）
 
 ---
 
-## 十、用户申诉建议
+## 十、积分异常对账（2026-05 新增，Sprint 4 §6.2.3）
+
+### 11.1 用途
+
+为超管提供**只读**的积分一致性自动审计能力，无需 SQL 手工跑。对账核心约束（POLICY §7.2）：
+
+```
+users.total_points == COALESCE(SUM(point_transactions.delta), 0)
+```
+
+任何打破等式的用户即「积分异常」。
+
+### 11.2 异常分类
+
+| 分类 | 含义 | 常见原因 |
+| --- | --- | --- |
+| `BALANCE_HIGHER` | `total_points > tx_sum` | 历史迁移后未回填（POLICY §7.4） / DB 直接 UPDATE users.total_points |
+| `BALANCE_LOWER` | `total_points < tx_sum` | 流水写入后 total_points 同步失败（POLICY §7.1 非原子） |
+
+孤儿流水（point_transactions 有 user_id 但 users 表无）单独统计，**不出现在异常列表**（理论上 user_id 是 PK 不应缺，仅做防御性观察）。
+
+### 11.3 后台入口
+
+| 路径 | callback | 权限 |
+| --- | --- | --- |
+| `/admin` → 🎲 活动运营 → 💰 积分管理 → 📊 积分对账（只读） | `admin:points_reconcile` | **仅超管** |
+
+子动作：
+- `admin:points_reconcile` — 概览页（用户数 / 异常数 / 余额合计 / 流水合计 / 差额）
+- `admin:points_reconcile:refresh` — 刷新概览
+- `admin:points_reconcile:anomaly:<page>` — 异常用户列表分页（每页 20，按 |diff| 降序）
+
+### 11.4 边界
+
+- **严格只读**：不修正积分；修正仍走既有 `admin:points:grant` FSM
+- **不写表 / 不写 audit log**：纯统计与展示
+- **不导出文件**（§6.3）
+- **跨页引用**：异常用户列表展示 uid + balance + tx_sum + diff，运营拿到 uid 后可在 `admin:points:query` 查明细，再走 `admin:points:grant` 决定补加 / 补扣
+- **分页约定**：与 Sprint 2 §4.2.2 抽奖异常用户列表同 `ANOMALY_PAGE_SIZE = 20` 模式
+
+### 11.5 后续计划
+
+修正动作（在异常用户列表直接发起补加 / 补扣）放在**更后续的 Sprint**：必须二次确认 + audit log（POLICY §6.5）+ 与 FSM 共用 `add_point_transaction` 路径，不绕开权限边界。本页**永久不**直接提供该能力。
+
+---
+
+## 十一、用户申诉建议
 
 用户对积分有异议时，应在群组 / 私聊中**提供以下材料**，便于运营核对：
 

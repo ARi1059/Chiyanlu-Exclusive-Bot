@@ -44,6 +44,8 @@ from bot.keyboards.admin_kb import (
     admin_points_grant_reason_kb,
     admin_points_grant_value_kb,
     admin_points_menu_kb,
+    admin_points_reconcile_anomaly_kb,
+    admin_points_reconcile_overview_kb,
     admin_points_rules_kb,
 )
 from bot.states.teacher_states import (
@@ -148,6 +150,94 @@ async def cb_admin_points_rules_refresh(
         # 文本未变 → message is not modified
         pass
     await callback.answer("已刷新")
+
+
+# ============ 积分对账（Sprint 4 §6.2.3，admin:points_reconcile） ============
+# 仅超管可见。读 users × point_transactions 比对一致性。
+# 严格只读（§6.3 禁止）：不放任何"修正"按钮；修正仍走既有 admin:points:grant FSM。
+
+
+@router.callback_query(F.data == "admin:points_reconcile")
+@_super_admin_required
+async def cb_admin_points_reconcile(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """积分对账概览页。"""
+    from bot.services.points_reconcile import (
+        get_points_reconcile_overview,
+        render_points_reconcile_overview,
+    )
+    await state.clear()
+    stats = await get_points_reconcile_overview()
+    anomaly = stats.anomaly_users or 0
+    try:
+        await callback.message.edit_text(
+            render_points_reconcile_overview(stats),
+            reply_markup=admin_points_reconcile_overview_kb(anomaly_users=anomaly),
+        )
+    except Exception:
+        await callback.message.answer(
+            render_points_reconcile_overview(stats),
+            reply_markup=admin_points_reconcile_overview_kb(anomaly_users=anomaly),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:points_reconcile:refresh")
+@_super_admin_required
+async def cb_admin_points_reconcile_refresh(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """积分对账概览刷新。"""
+    from bot.services.points_reconcile import (
+        get_points_reconcile_overview,
+        render_points_reconcile_overview,
+    )
+    stats = await get_points_reconcile_overview()
+    anomaly = stats.anomaly_users or 0
+    try:
+        await callback.message.edit_text(
+            render_points_reconcile_overview(stats),
+            reply_markup=admin_points_reconcile_overview_kb(anomaly_users=anomaly),
+        )
+    except Exception:
+        pass
+    await callback.answer("已刷新")
+
+
+@router.callback_query(F.data.startswith("admin:points_reconcile:anomaly:"))
+@_super_admin_required
+async def cb_admin_points_reconcile_anomaly(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """积分异常用户列表分页页（§6.2.3）。
+
+    callback 形式：admin:points_reconcile:anomaly:<page>
+    """
+    from bot.services.points_reconcile import (
+        list_points_anomalies,
+        render_points_anomaly_list,
+    )
+    data = callback.data or ""
+    parts = data.split(":")
+    try:
+        page = int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer("⚠️ 参数错误", show_alert=True)
+        return
+
+    al = await list_points_anomalies(page=page)
+    try:
+        await callback.message.edit_text(
+            render_points_anomaly_list(al),
+            reply_markup=admin_points_reconcile_anomaly_kb(
+                page=al.page, total_pages=al.total_pages,
+            ),
+        )
+    except Exception:
+        # 文本未变 → 吞 message is not modified
+        pass
+    await callback.answer()
 
 
 # ============ 查询用户积分 ============
