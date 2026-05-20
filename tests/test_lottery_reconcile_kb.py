@@ -18,6 +18,7 @@ from bot.keyboards.admin_kb import (
     admin_dashboard_kb,
     admin_lottery_reconcile_kb,
     admin_lottery_reconcile_detail_kb,
+    admin_lottery_reconcile_anomaly_kb,
 )
 from bot.services.lottery_reconcile import LotteryReconcileItem
 
@@ -151,23 +152,33 @@ def test_reconcile_list_long_name_truncated_with_ellipsis():
 # ============ admin_lottery_reconcile_detail_kb：详情 ============
 
 
-def test_reconcile_detail_kb_only_refresh_and_back():
+def test_reconcile_detail_kb_balanced_only_refresh_and_back():
+    """平账活动（anomaly_users=0）→ 详情页仅有刷新 + 返回。"""
     item = _balanced_item(lid=42)
     kb = admin_lottery_reconcile_detail_kb(item)
     cbs = _callbacks(kb)
     assert "admin:lottery_reconcile:item:42:refresh" in cbs
     assert "admin:lottery_reconcile" in cbs
+    # 平账时不显示异常用户列表入口
+    assert not any(
+        (c or "").startswith("admin:lottery_reconcile:anomaly:")
+        for c in cbs
+    )
     assert len(_flatten(kb)) == 2
 
 
-def test_reconcile_detail_kb_no_anomaly_users_button_yet():
-    """§4.2.2 异常用户列表是下一个 PR；本 PR 不应提前出现。"""
-    item = _diverging_item(lid=99)
+def test_reconcile_detail_kb_has_anomaly_button_when_users_gt_zero():
+    """§4.2.2：当 anomaly_users > 0 时，详情页应有「📋 异常用户列表 (N)」按钮。"""
+    item = _diverging_item(lid=99)  # anomaly_users=1
     kb = admin_lottery_reconcile_detail_kb(item)
     cbs = _callbacks(kb)
-    # 没有任何 anomaly / users / copy 类按钮
-    assert not any("anomaly" in (c or "") for c in cbs)
-    assert not any("copy" in (c or "") for c in cbs)
+    assert "admin:lottery_reconcile:anomaly:99:1" in cbs
+    # 同时仍有刷新 + 返回
+    assert "admin:lottery_reconcile:item:99:refresh" in cbs
+    assert "admin:lottery_reconcile" in cbs
+    # 文案带计数
+    texts = [b.text for b in _flatten(kb)]
+    assert any("异常用户列表" in t and "(1)" in t for t in texts)
 
 
 def test_reconcile_detail_kb_no_repair_buttons():
@@ -192,6 +203,9 @@ def test_all_callbacks_within_telegram_limit():
         admin_dashboard_kb(is_super=True),
         admin_lottery_reconcile_kb(items),
         admin_lottery_reconcile_detail_kb(items[0]),
+        admin_lottery_reconcile_detail_kb(items[1]),
+        admin_lottery_reconcile_anomaly_kb(999999999, page=1, total_pages=1),
+        admin_lottery_reconcile_anomaly_kb(999999999, page=5, total_pages=10),
     ]
     for kb in targets:
         for b in _flatten(kb):
@@ -199,3 +213,60 @@ def test_all_callbacks_within_telegram_limit():
             assert len(b.callback_data.encode("utf-8")) <= 64, (
                 f"callback_data 超 64B: {b.callback_data!r}"
             )
+
+
+# ============ admin_lottery_reconcile_anomaly_kb（§4.2.2 异常用户列表分页） ============
+
+
+def test_anomaly_kb_single_page_no_prev_no_next():
+    kb = admin_lottery_reconcile_anomaly_kb(42, page=1, total_pages=1)
+    cbs = _callbacks(kb)
+    texts = [b.text for b in _flatten(kb)]
+    # 只有刷新当前 + 返回详情，无上下页
+    assert "admin:lottery_reconcile:anomaly:42:1" in cbs  # 刷新
+    assert "admin:lottery_reconcile:item:42" in cbs       # 返回详情
+    assert not any("上一页" in t for t in texts)
+    assert not any("下一页" in t for t in texts)
+
+
+def test_anomaly_kb_first_page_has_next_no_prev():
+    kb = admin_lottery_reconcile_anomaly_kb(42, page=1, total_pages=3)
+    cbs = _callbacks(kb)
+    texts = [b.text for b in _flatten(kb)]
+    assert "admin:lottery_reconcile:anomaly:42:2" in cbs  # 下一页
+    assert any("下一页" in t for t in texts)
+    assert not any("上一页" in t for t in texts)
+
+
+def test_anomaly_kb_middle_page_has_both():
+    kb = admin_lottery_reconcile_anomaly_kb(42, page=2, total_pages=3)
+    cbs = _callbacks(kb)
+    texts = [b.text for b in _flatten(kb)]
+    assert "admin:lottery_reconcile:anomaly:42:1" in cbs  # 上一页
+    assert "admin:lottery_reconcile:anomaly:42:3" in cbs  # 下一页（也是刷新当前 page=2 重复）
+    assert any("上一页" in t for t in texts)
+    assert any("下一页" in t for t in texts)
+
+
+def test_anomaly_kb_last_page_has_prev_no_next():
+    kb = admin_lottery_reconcile_anomaly_kb(42, page=3, total_pages=3)
+    cbs = _callbacks(kb)
+    texts = [b.text for b in _flatten(kb)]
+    assert "admin:lottery_reconcile:anomaly:42:2" in cbs  # 上一页
+    assert any("上一页" in t for t in texts)
+    assert not any("下一页" in t for t in texts)
+
+
+def test_anomaly_kb_back_button_targets_detail():
+    """返回按钮应回到对账详情页（不是列表页）。"""
+    kb = admin_lottery_reconcile_anomaly_kb(42, page=1, total_pages=1)
+    cbs = _callbacks(kb)
+    assert "admin:lottery_reconcile:item:42" in cbs
+
+
+def test_anomaly_kb_no_repair_buttons():
+    """§4.3 禁止：异常列表也不允许任何修复 / 补偿按钮。"""
+    kb = admin_lottery_reconcile_anomaly_kb(42, page=1, total_pages=3)
+    texts = " ".join(b.text for b in _flatten(kb))
+    for forbidden in ("修复", "补偿", "修正", "一键", "退分", "导出"):
+        assert forbidden not in texts

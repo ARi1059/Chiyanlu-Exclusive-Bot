@@ -1438,11 +1438,14 @@ winners = rng.sample(entries, min(prize_count, len(entries)))
 `📊 运营看板 → 📊 抽奖对账`（callback `admin:lottery_reconcile`）：
 
 - **列表页**：展示积分门票活动数 / 有差异活动数 / 最近活动对账概览（每条带 ✅ 平账 或 ⚠️ 差异/异常 标记）
-- **单活动详情页**：8 项完整指标（期望 / 实际 / 退款 / 净扣 / 差异 / A / B / D / 异常人数）
+- **单活动详情页**：8 项完整指标（期望 / 实际 / 退款 / 净扣 / 差异 / A / B / D / 异常人数）。**当 anomaly_users > 0 时**，详情页含「📋 异常用户列表 (N)」按钮（§4.2.2）。
+- **异常用户列表页**（§4.2.2，callback `admin:lottery_reconcile:anomaly:<lid>:<page>`）：按 D → B → A 顺序分组展示，每 20 人一页；含上/下页 + 刷新 + 返回详情。每条异常带具体引用：A 类显示 `entry_id`；B 类显示 `tx_id` + 扣分；D 类显示 `entry_id`（或「无 entry」）+ `tx_ids` 列表 + 共扣金额。
 
-**第一版严格只读**：不导出文件、不提供"一键补偿/修复"按钮。异常用户明细（§4.2.2）与汇总文本复制（§4.2.3）留待后续 PR。
+**严格只读**：不导出文件、不提供"一键补偿/修复"按钮。汇总文本复制（§4.2.3）留待后续 PR。
 
-实现：`bot/services/lottery_reconcile.py` / `bot/keyboards/admin_kb.py::admin_lottery_reconcile_kb` / `bot/handlers/admin_panel.py::cb_admin_lottery_reconcile`。
+**异常归类去重**：同 uid 在多类时按 **D > B > A** 优先级归到最高一类。A 与 D / B 必然不相交（A 要求 0 条 tx）；B ∩ D（无 entry 且 ≥2 条 tx）归 D，渲染时显式标注「无 entry」以与 D∩A 区分。
+
+实现：`bot/services/lottery_reconcile.py` / `bot/keyboards/admin_kb.py` / `bot/handlers/admin_panel.py`。
 
 ### 10.3 用户未满足必关频道
 

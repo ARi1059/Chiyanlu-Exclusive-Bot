@@ -55,6 +55,39 @@ logger = logging.getLogger(__name__)
 
 
 RECONCILE_LIST_LIMIT = 20
+ANOMALY_PAGE_SIZE = 20
+
+# 异常类别优先级（高 → 低）；同 uid 跨类时归到优先级最高的那一类
+ANOMALY_CATEGORY_PRIORITY = ("D", "B", "A")
+
+
+@dataclass
+class LotteryAnomalyUser:
+    """异常用户单条记录（§4.2.2）。
+
+    分类规则（D > B > A 优先级，同 uid 归最高优先级）：
+        D 重复扣分：point_transactions 中 (uid, lottery_entry, lid) ≥ 2 条
+        B 有扣分无 entry：lottery_entry 流水存在但 lottery_entries 无 entry
+        A 有 entry 无扣分：lottery_entries 有 entry 但无 lottery_entry 流水
+    """
+
+    user_id: int
+    category: str           # 'A' | 'B' | 'D'
+    entry_id: Optional[int] = None        # A / D 类有；B 类 None
+    tx_ids: list[int] = field(default_factory=list)  # B / D 类有；A 类空
+    tx_total_delta: int = 0  # 涉及流水的总额（D / B 类为负）
+
+
+@dataclass
+class LotteryAnomalyList:
+    """异常用户列表（含分页元信息）。"""
+
+    lid: int
+    items: list[LotteryAnomalyUser] = field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = ANOMALY_PAGE_SIZE
+    total_pages: int = 1
 
 
 @dataclass
@@ -419,4 +452,238 @@ def render_lottery_reconcile_detail(item: LotteryReconcileItem) -> str:
         "",
         _item_status_label(item),
     ]
+    return "\n".join(lines)
+
+
+# ============ 异常用户列表（§4.2.2） ============
+
+
+async def _list_anomaly_d(
+    db: aiosqlite.Connection, lid: int,
+) -> list[LotteryAnomalyUser]:
+    """D 类：同 (uid, lid) 在 lottery_entry 流水 ≥ 2 条。
+
+    GROUP_CONCAT 拿到 tx_ids；同时关联 lottery_entries 取 entry_id（可能为
+    None：D ∩ B，即重复扣分但无 entry）。
+    """
+    items: list[LotteryAnomalyUser] = []
+    try:
+        cur = await db.execute(
+            "SELECT p.user_id, GROUP_CONCAT(p.id) AS tx_ids, "
+            "       SUM(p.delta) AS total_delta "
+            "FROM point_transactions p "
+            "WHERE p.reason = 'lottery_entry' AND p.related_id = ? "
+            "GROUP BY p.user_id HAVING COUNT(*) >= 2 "
+            "ORDER BY p.user_id",
+            (lid,),
+        )
+        rows = await cur.fetchall()
+    except Exception as e:
+        logger.warning("list_anomaly_d 失败 lid=%s: %s", lid, e)
+        return []
+
+    for row in rows:
+        uid = int(row["user_id"])
+        tx_id_str = row["tx_ids"] or ""
+        tx_ids = [int(s) for s in tx_id_str.split(",") if s.strip()]
+        total_delta = int(row["total_delta"] or 0)
+        # 关联 entry_id（容错：D∩B 时无 entry）
+        try:
+            cur = await db.execute(
+                "SELECT id FROM lottery_entries WHERE lottery_id = ? AND user_id = ?",
+                (lid, uid),
+            )
+            erow = await cur.fetchone()
+            entry_id = int(erow["id"]) if erow else None
+        except Exception:
+            entry_id = None
+        items.append(LotteryAnomalyUser(
+            user_id=uid, category="D",
+            entry_id=entry_id, tx_ids=tx_ids,
+            tx_total_delta=total_delta,
+        ))
+    return items
+
+
+async def _list_anomaly_b(
+    db: aiosqlite.Connection, lid: int, exclude_uids: set[int],
+) -> list[LotteryAnomalyUser]:
+    """B 类：有 lottery_entry 流水但无 entry。
+
+    exclude_uids：已经在 D 中归类的 uid，避免重复（D > B 优先级）。
+    """
+    items: list[LotteryAnomalyUser] = []
+    try:
+        cur = await db.execute(
+            "SELECT p.user_id, p.id AS tx_id, p.delta "
+            "FROM point_transactions p "
+            "WHERE p.reason = 'lottery_entry' AND p.related_id = ? "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM lottery_entries e "
+            "  WHERE e.lottery_id = p.related_id "
+            "  AND e.user_id = p.user_id"
+            ") "
+            "ORDER BY p.user_id, p.id",
+            (lid,),
+        )
+        rows = await cur.fetchall()
+    except Exception as e:
+        logger.warning("list_anomaly_b 失败 lid=%s: %s", lid, e)
+        return []
+
+    # B ∩ D 已被 D 吸收（exclude_uids）；本函数只取真 B（uid 唯一一条 tx）
+    seen: set[int] = set()
+    for row in rows:
+        uid = int(row["user_id"])
+        if uid in exclude_uids or uid in seen:
+            continue
+        seen.add(uid)
+        items.append(LotteryAnomalyUser(
+            user_id=uid, category="B",
+            entry_id=None,
+            tx_ids=[int(row["tx_id"])],
+            tx_total_delta=int(row["delta"] or 0),
+        ))
+    return items
+
+
+async def _list_anomaly_a(
+    db: aiosqlite.Connection, lid: int,
+) -> list[LotteryAnomalyUser]:
+    """A 类：有 entry 但无 lottery_entry 流水。
+
+    A 与 D/B 必然不相交（A 要求 0 条 tx），无需 exclude_uids。
+    """
+    items: list[LotteryAnomalyUser] = []
+    try:
+        cur = await db.execute(
+            "SELECT e.id AS entry_id, e.user_id "
+            "FROM lottery_entries e "
+            "WHERE e.lottery_id = ? "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM point_transactions p "
+            "  WHERE p.reason = 'lottery_entry' "
+            "  AND p.related_id = e.lottery_id "
+            "  AND p.user_id = e.user_id"
+            ") "
+            "ORDER BY e.user_id",
+            (lid,),
+        )
+        rows = await cur.fetchall()
+    except Exception as e:
+        logger.warning("list_anomaly_a 失败 lid=%s: %s", lid, e)
+        return []
+
+    for row in rows:
+        items.append(LotteryAnomalyUser(
+            user_id=int(row["user_id"]),
+            category="A",
+            entry_id=int(row["entry_id"]),
+            tx_ids=[],
+            tx_total_delta=0,
+        ))
+    return items
+
+
+async def list_lottery_anomalies(
+    lid: int, *, page: int = 1, page_size: int = ANOMALY_PAGE_SIZE,
+) -> LotteryAnomalyList:
+    """单活动异常用户列表（分页）。
+
+    分类与优先级（D > B > A）：每个 uid 只归一类。
+    排序：先 D，后 B，最后 A；类内按 user_id ASC。
+    """
+    page = max(1, int(page))
+    page_size = max(1, int(page_size))
+
+    db = await get_db()
+    try:
+        d_items = await _list_anomaly_d(db, lid)
+        d_uids = {it.user_id for it in d_items}
+        b_items = await _list_anomaly_b(db, lid, d_uids)
+        a_items = await _list_anomaly_a(db, lid)
+    finally:
+        await db.close()
+
+    full = d_items + b_items + a_items
+    total = len(full)
+    if total == 0:
+        return LotteryAnomalyList(
+            lid=int(lid), items=[], total=0, page=1,
+            page_size=page_size, total_pages=1,
+        )
+
+    total_pages = (total + page_size - 1) // page_size
+    if page > total_pages:
+        page = total_pages
+    start = (page - 1) * page_size
+    items_page = full[start:start + page_size]
+
+    return LotteryAnomalyList(
+        lid=int(lid), items=items_page, total=total,
+        page=page, page_size=page_size, total_pages=total_pages,
+    )
+
+
+def _format_anomaly_user_line(au: LotteryAnomalyUser) -> str:
+    """单个异常用户的展示行（纯函数）。"""
+    if au.category == "A":
+        suffix = f"entry_id={au.entry_id}"
+    elif au.category == "B":
+        tx_id = au.tx_ids[0] if au.tx_ids else "?"
+        suffix = f"tx_id={tx_id} 扣 {au.tx_total_delta}"
+    else:  # D
+        tx_str = ",".join(str(t) for t in au.tx_ids)
+        entry_str = (
+            f"entry_id={au.entry_id} "
+            if au.entry_id is not None else "无 entry "
+        )
+        suffix = f"{entry_str}tx_ids=[{tx_str}] 共扣 {au.tx_total_delta}"
+    return f"• uid={au.user_id}  {suffix}"
+
+
+def render_lottery_anomaly_list(data: LotteryAnomalyList) -> str:
+    """异常用户列表页文本。"""
+    if data.total == 0:
+        return "\n".join([
+            f"📋 异常用户 · 抽奖 #{data.lid}",
+            "",
+            "暂无异常用户 ✅",
+            "",
+            "（与对账详情口径一致：A∪B∪D 去重后为 0 人）",
+        ])
+
+    # 按类别分组
+    d_users = [it for it in data.items if it.category == "D"]
+    b_users = [it for it in data.items if it.category == "B"]
+    a_users = [it for it in data.items if it.category == "A"]
+
+    lines: list[str] = [
+        f"📋 异常用户 · 抽奖 #{data.lid}",
+        "",
+        f"共 {data.total} 人，第 {data.page}/{data.total_pages} 页"
+        f"（每页 {data.page_size}）",
+        "",
+    ]
+
+    if d_users:
+        lines.append(f"D 重复扣分（{len(d_users)} 人）")
+        for au in d_users:
+            lines.append(_format_anomaly_user_line(au))
+        lines.append("")
+    if b_users:
+        lines.append(f"B 有扣分无 entry（{len(b_users)} 人）")
+        for au in b_users:
+            lines.append(_format_anomaly_user_line(au))
+        lines.append("")
+    if a_users:
+        lines.append(f"A 有 entry 无扣分（{len(a_users)} 人）")
+        for au in a_users:
+            lines.append(_format_anomaly_user_line(au))
+        lines.append("")
+
+    # 去掉最后一个空行
+    if lines and lines[-1] == "":
+        lines.pop()
+
     return "\n".join(lines)

@@ -48,6 +48,7 @@ from bot.keyboards.admin_kb import (
     admin_lottery_status_kb,
     admin_lottery_reconcile_kb,
     admin_lottery_reconcile_detail_kb,
+    admin_lottery_reconcile_anomaly_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -1735,6 +1736,42 @@ async def cb_admin_lottery_reconcile_item(callback: types.CallbackQuery):
         if not is_refresh:
             raise
     await callback.answer("已刷新" if is_refresh else None)
+
+
+@router.callback_query(F.data.startswith("admin:lottery_reconcile:anomaly:"))
+@super_admin_required
+async def cb_admin_lottery_reconcile_anomaly(callback: types.CallbackQuery):
+    """异常用户列表分页页（§4.2.2）。
+
+    callback 形式：
+        admin:lottery_reconcile:anomaly:<lid>:<page>
+    """
+    from bot.services.lottery_reconcile import (
+        list_lottery_anomalies,
+        render_lottery_anomaly_list,
+    )
+    data = callback.data or ""
+    parts = data.split(":")
+    # ['admin','lottery_reconcile','anomaly','<lid>','<page>']
+    try:
+        lid = int(parts[3])
+        page = int(parts[4])
+    except (IndexError, ValueError):
+        await callback.answer("⚠️ 参数错误", show_alert=True)
+        return
+
+    al = await list_lottery_anomalies(lid, page=page)
+    try:
+        await callback.message.edit_text(
+            render_lottery_anomaly_list(al),
+            reply_markup=admin_lottery_reconcile_anomaly_kb(
+                lid, page=al.page, total_pages=al.total_pages,
+            ),
+        )
+    except Exception:
+        # 文本未变 → 吞 message is not modified
+        pass
+    await callback.answer()
 
 
 # ============ 通用取消 ============

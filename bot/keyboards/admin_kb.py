@@ -2338,20 +2338,62 @@ def admin_lottery_reconcile_kb(
 def admin_lottery_reconcile_detail_kb(
     item: "LotteryReconcileItem",
 ) -> InlineKeyboardMarkup:
-    """单活动对账详情 keyboard：仅刷新 + 返回列表。
+    """单活动对账详情 keyboard：刷新 + 返回列表；异常用户列表（§4.2.2，
+    仅当 anomaly_users > 0 时渲染）。
 
-    Sprint 2 §4.2.1：本 PR 不放"异常用户列表"按钮（留给 §4.2.2 PR）；
-    也不放任何"修复"按钮（§4.3 禁止）。
+    Sprint 2 §4.2.2：详情页加「📋 异常用户列表 (N)」入口。
+    不放任何"修复"按钮（§4.3 禁止）。
     """
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
+    rows: list[list[InlineKeyboardButton]] = []
+    if item.anomaly_users > 0:
+        rows.append([
             InlineKeyboardButton(
-                text="🔄 刷新当前",
-                callback_data=f"admin:lottery_reconcile:item:{item.id}:refresh",
+                text=f"📋 异常用户列表 ({item.anomaly_users})",
+                callback_data=f"admin:lottery_reconcile:anomaly:{item.id}:1",
             ),
-            InlineKeyboardButton(
-                text="⬅️ 返回对账列表",
-                callback_data="admin:lottery_reconcile",
-            ),
-        ],
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 刷新当前",
+            callback_data=f"admin:lottery_reconcile:item:{item.id}:refresh",
+        ),
+        InlineKeyboardButton(
+            text="⬅️ 返回对账列表",
+            callback_data="admin:lottery_reconcile",
+        ),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_lottery_reconcile_anomaly_kb(
+    lid: int, page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    """异常用户列表 keyboard：分页 + 返回详情。
+
+    Sprint 2 §4.2.2：仅超管入口。无"修复 / 导出"按钮。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    nav: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(
+            text="⬅️ 上一页",
+            callback_data=f"admin:lottery_reconcile:anomaly:{lid}:{page - 1}",
+        ))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton(
+            text="下一页 ➡️",
+            callback_data=f"admin:lottery_reconcile:anomaly:{lid}:{page + 1}",
+        ))
+    if nav:
+        rows.append(nav)
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 刷新当前页",
+            callback_data=f"admin:lottery_reconcile:anomaly:{lid}:{page}",
+        ),
+        InlineKeyboardButton(
+            text=f"⬅️ 返回 #{lid}",
+            callback_data=f"admin:lottery_reconcile:item:{lid}",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

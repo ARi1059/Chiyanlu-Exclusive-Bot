@@ -33,10 +33,15 @@ import aiosqlite
 
 from bot.services import lottery_reconcile as svc_mod
 from bot.services.lottery_reconcile import (
+    ANOMALY_PAGE_SIZE,
+    LotteryAnomalyList,
+    LotteryAnomalyUser,
     LotteryReconcileItem,
     LotteryReconcileStats,
     RECONCILE_LIST_LIMIT,
     _compute_item,
+    list_lottery_anomalies,
+    render_lottery_anomaly_list,
     render_lottery_reconcile_detail,
     render_lottery_reconcile_overview,
     get_lottery_reconcile_overview,
@@ -569,3 +574,270 @@ def test_diff_format_negative():
     )
     text = render_lottery_reconcile_detail(item)
     assert "差异：-20" in text
+
+
+# ============ §4.2.2 异常用户列表 ============
+
+
+def test_anomaly_page_size_constant():
+    assert ANOMALY_PAGE_SIZE == 20
+
+
+def test_anomaly_user_dataclass_defaults():
+    au = LotteryAnomalyUser(user_id=1, category="A")
+    assert au.entry_id is None
+    assert au.tx_ids == []
+    assert au.tx_total_delta == 0
+
+
+def test_anomaly_list_dataclass_defaults():
+    al = LotteryAnomalyList(lid=42)
+    assert al.items == []
+    assert al.total == 0
+    assert al.page == 1
+    assert al.page_size == ANOMALY_PAGE_SIZE
+    assert al.total_pages == 1
+
+
+async def _setup_anomaly_scenario():
+    """构造 1 个活动，含 A / B / D 三类异常 + 1 个正常用户。
+
+    布局：
+        uid=100 正常：有 entry + 1 条扣分 → 不在异常列表
+        uid=201 A 类：有 entry，无扣分流水
+        uid=202 A 类：有 entry，无扣分流水
+        uid=301 B 类：1 条扣分流水，无 entry
+        uid=401 D 类：有 entry + 2 条扣分流水
+        uid=402 D∩B 类：2 条扣分流水，无 entry → 归 D（按 D > B 优先级）
+    """
+    db = await _fresh_db()
+    lid = await _create_lottery(db, cost=10)
+
+    # 正常
+    await _add_entry(db, lid, 100)
+    await _add_tx(db, 100, -10, "lottery_entry", lid)
+
+    # A 类
+    await _add_entry(db, lid, 201)
+    await _add_entry(db, lid, 202)
+
+    # B 类
+    await _add_tx(db, 301, -10, "lottery_entry", lid)
+
+    # D 类（有 entry）
+    await _add_entry(db, lid, 401)
+    await _add_tx(db, 401, -10, "lottery_entry", lid)
+    await _add_tx(db, 401, -10, "lottery_entry", lid)
+
+    # D∩B（无 entry，但流水 2 条）→ 归 D
+    await _add_tx(db, 402, -10, "lottery_entry", lid)
+    await _add_tx(db, 402, -10, "lottery_entry", lid)
+
+    return db, lid
+
+
+def test_list_anomalies_categorizes_a_b_d(monkeypatch):
+    db, lid = _run(_setup_anomaly_scenario())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    al = _run(list_lottery_anomalies(lid))
+    assert al.lid == lid
+    assert al.total == 5  # A×2 + B×1 + D×2（不含正常 uid=100）
+
+    cats = {it.user_id: it.category for it in al.items}
+    assert cats[201] == "A"
+    assert cats[202] == "A"
+    assert cats[301] == "B"
+    assert cats[401] == "D"
+    assert cats[402] == "D"  # D > B 优先级
+    assert 100 not in cats
+
+    _run(_restore())
+
+
+def test_list_anomalies_order_d_before_b_before_a(monkeypatch):
+    db, lid = _run(_setup_anomaly_scenario())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    al = _run(list_lottery_anomalies(lid))
+    cats_in_order = [it.category for it in al.items]
+    # 应为：D D B A A
+    assert cats_in_order == ["D", "D", "B", "A", "A"]
+
+    _run(_restore())
+
+
+def test_list_anomalies_d_includes_tx_ids_and_total_delta(monkeypatch):
+    db, lid = _run(_setup_anomaly_scenario())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    al = _run(list_lottery_anomalies(lid))
+    d_401 = next(it for it in al.items if it.user_id == 401)
+    assert d_401.category == "D"
+    assert d_401.entry_id is not None  # 有 entry
+    assert len(d_401.tx_ids) == 2
+    assert d_401.tx_total_delta == -20
+
+    d_402 = next(it for it in al.items if it.user_id == 402)
+    assert d_402.category == "D"
+    assert d_402.entry_id is None  # D∩B：无 entry
+    assert len(d_402.tx_ids) == 2
+    assert d_402.tx_total_delta == -20
+
+    _run(_restore())
+
+
+def test_list_anomalies_b_has_single_tx_no_entry(monkeypatch):
+    db, lid = _run(_setup_anomaly_scenario())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    al = _run(list_lottery_anomalies(lid))
+    b_301 = next(it for it in al.items if it.user_id == 301)
+    assert b_301.category == "B"
+    assert b_301.entry_id is None
+    assert len(b_301.tx_ids) == 1
+    assert b_301.tx_total_delta == -10
+
+    _run(_restore())
+
+
+def test_list_anomalies_a_has_entry_id_no_tx(monkeypatch):
+    db, lid = _run(_setup_anomaly_scenario())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    al = _run(list_lottery_anomalies(lid))
+    a_201 = next(it for it in al.items if it.user_id == 201)
+    assert a_201.category == "A"
+    assert a_201.entry_id is not None
+    assert a_201.tx_ids == []
+    assert a_201.tx_total_delta == 0
+
+    _run(_restore())
+
+
+def test_list_anomalies_empty_when_balanced(monkeypatch):
+    """5 entries × 10 全部扣分，应为 0 异常用户。"""
+    async def _setup():
+        db = await _fresh_db()
+        lid = await _create_lottery(db, cost=10)
+        for uid in range(101, 106):
+            await _add_entry(db, lid, uid)
+            await _add_tx(db, uid, -10, "lottery_entry", lid)
+        return db, lid
+    db, lid = _run(_setup())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    al = _run(list_lottery_anomalies(lid))
+    assert al.total == 0
+    assert al.items == []
+    assert al.total_pages == 1
+
+    _run(_restore())
+
+
+def test_list_anomalies_pagination(monkeypatch):
+    """构造 25 个 A 类异常，验证 page=1/2 切分。"""
+    async def _setup():
+        db = await _fresh_db()
+        lid = await _create_lottery(db, cost=10)
+        for uid in range(1000, 1025):  # 25 个 A 类
+            await _add_entry(db, lid, uid)
+        return db, lid
+    db, lid = _run(_setup())
+    fake_get_db, _restore = _make_get_db_stub(db)
+    monkeypatch.setattr(svc_mod, "get_db", fake_get_db)
+
+    p1 = _run(list_lottery_anomalies(lid, page=1))
+    assert p1.total == 25
+    assert p1.total_pages == 2
+    assert len(p1.items) == 20  # ANOMALY_PAGE_SIZE
+    assert p1.page == 1
+
+    p2 = _run(list_lottery_anomalies(lid, page=2))
+    assert p2.total == 25
+    assert p2.total_pages == 2
+    assert len(p2.items) == 5
+    assert p2.page == 2
+
+    # 越界 page 自动夹紧
+    p99 = _run(list_lottery_anomalies(lid, page=99))
+    assert p99.page == 2
+    assert len(p99.items) == 5
+
+    _run(_restore())
+
+
+# ============ 异常列表渲染 ============
+
+
+def test_render_anomaly_list_empty():
+    al = LotteryAnomalyList(lid=7)
+    text = render_lottery_anomaly_list(al)
+    assert "📋 异常用户 · 抽奖 #7" in text
+    assert "暂无异常用户" in text
+
+
+def test_render_anomaly_list_grouped_by_category():
+    al = LotteryAnomalyList(
+        lid=8, total=3, page=1, page_size=20, total_pages=1,
+        items=[
+            LotteryAnomalyUser(
+                user_id=100, category="D", entry_id=10,
+                tx_ids=[1, 2], tx_total_delta=-20,
+            ),
+            LotteryAnomalyUser(
+                user_id=200, category="B", entry_id=None,
+                tx_ids=[5], tx_total_delta=-10,
+            ),
+            LotteryAnomalyUser(
+                user_id=300, category="A", entry_id=20,
+            ),
+        ],
+    )
+    text = render_lottery_anomaly_list(al)
+    assert "D 重复扣分（1 人）" in text
+    assert "B 有扣分无 entry（1 人）" in text
+    assert "A 有 entry 无扣分（1 人）" in text
+    # 三种格式
+    assert "uid=100" in text
+    assert "tx_ids=[1,2]" in text
+    assert "uid=200" in text
+    assert "tx_id=5" in text
+    assert "uid=300" in text
+    assert "entry_id=20" in text
+
+
+def test_render_anomaly_list_page_header():
+    al = LotteryAnomalyList(
+        lid=9, total=42, page=2, page_size=20, total_pages=3,
+        items=[
+            LotteryAnomalyUser(user_id=i, category="A", entry_id=i)
+            for i in range(100, 120)
+        ],
+    )
+    text = render_lottery_anomaly_list(al)
+    assert "共 42 人" in text
+    assert "第 2/3 页" in text
+
+
+def test_render_anomaly_d_no_entry_shows_marker():
+    """D∩B（无 entry）应显式渲染「无 entry」标识，避免误读为 D∩A。"""
+    al = LotteryAnomalyList(
+        lid=10, total=1, page=1, total_pages=1,
+        items=[
+            LotteryAnomalyUser(
+                user_id=999, category="D",
+                entry_id=None, tx_ids=[7, 8],
+                tx_total_delta=-20,
+            ),
+        ],
+    )
+    text = render_lottery_anomaly_list(al)
+    assert "无 entry" in text
+    assert "tx_ids=[7,8]" in text
