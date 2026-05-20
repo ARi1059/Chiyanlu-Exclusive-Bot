@@ -21,12 +21,27 @@ def _callbacks(kb):
     return [b.callback_data for b in _flatten(kb)]
 
 
-def test_rules_kb_only_refresh_and_back():
+def test_rules_kb_contains_refresh_and_back():
+    """规则页必含刷新 + 返回报销配置。"""
     kb = admin_reimburse_rules_kb()
     cbs = _callbacks(kb)
     assert "admin:reimburse_rules:refresh" in cbs
     assert "admin:reimburse_config" in cbs
-    assert len(_flatten(kb)) == 2
+
+
+def test_rules_kb_contains_announce_button():
+    """§5.2.3：规则页必含「📢 复制公告草稿」按钮。"""
+    kb = admin_reimburse_rules_kb()
+    cbs = _callbacks(kb)
+    assert "admin:reimburse_announce" in cbs
+    texts = [b.text for b in _flatten(kb)]
+    assert any("公告草稿" in t for t in texts)
+
+
+def test_rules_kb_button_total_count():
+    """规则页共 3 按钮：1 公告草稿 + 1 刷新 + 1 返回。"""
+    kb = admin_reimburse_rules_kb()
+    assert len(_flatten(kb)) == 3
 
 
 def test_rules_kb_no_edit_buttons():

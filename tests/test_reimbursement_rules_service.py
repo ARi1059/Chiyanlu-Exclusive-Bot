@@ -23,6 +23,9 @@ from bot.services.reimbursement_rules import (
     REIMBURSE_MIN_POINTS_MAX,
     ReimbursementRulesSnapshot,
     WEEKLY_APPROVED_LIMIT,
+    _announce_min_points_line,
+    _announce_pool_line,
+    _announce_required_chats_line,
     _fmt_feature,
     _fmt_min_points,
     _fmt_pool,
@@ -30,7 +33,9 @@ from bot.services.reimbursement_rules import (
     _fmt_required_chats,
     _parse_monthly_pool,
     get_reimbursement_rules_snapshot,
+    render_reimbursement_announcement_draft,
     render_reimbursement_rules,
+    wrap_announcement_html,
 )
 
 
@@ -391,3 +396,168 @@ def test_get_snapshot_handles_no_baseline_for_current_month(monkeypatch):
     snap = _run(get_reimbursement_rules_snapshot())
     # 本月没有 baseline → None
     assert snap.current_month_reset_baseline is None
+
+
+# ============ §5.2.3 公告草稿生成 ============
+
+
+def _announce_snap(**overrides) -> ReimbursementRulesSnapshot:
+    base = ReimbursementRulesSnapshot(
+        feature_enabled=True,
+        monthly_pool=3000,
+        current_month_key="2026-05",
+        min_points=10,
+        queued_count=4,
+        current_week_key="2026-W21",
+        required_chats_total=2,
+        required_chats_enabled=2,
+        generated_at=datetime(2026, 5, 20, 14, 30, 0),
+    )
+    for k, v in overrides.items():
+        setattr(base, k, v)
+    return base
+
+
+# ---- _announce_*_line helpers ----
+
+
+def test_announce_pool_line_branches():
+    assert "配置未设置" in _announce_pool_line(_announce_snap(monthly_pool=None))
+    assert "不限额度" in _announce_pool_line(_announce_snap(monthly_pool=0))
+    assert "3000 元" in _announce_pool_line(_announce_snap(monthly_pool=3000))
+
+
+def test_announce_min_points_line_branches():
+    assert "配置未设置" in _announce_min_points_line(
+        _announce_snap(min_points=None),
+    )
+    assert "无门槛" in _announce_min_points_line(_announce_snap(min_points=0))
+    assert "10 分" in _announce_min_points_line(_announce_snap(min_points=10))
+
+
+def test_announce_required_chats_line_branches():
+    s_none = _announce_snap(required_chats_total=None, required_chats_enabled=None)
+    assert "配置未设置" in _announce_required_chats_line(s_none)
+
+    s_zero = _announce_snap(required_chats_total=0, required_chats_enabled=0)
+    assert "无" in _announce_required_chats_line(s_zero)
+    assert "不拦截" in _announce_required_chats_line(s_zero)
+
+    # total > 0 但 enabled = 0 应视为"无"（不会拦截）
+    s_disabled = _announce_snap(required_chats_total=3, required_chats_enabled=0)
+    assert "无" in _announce_required_chats_line(s_disabled)
+
+    s_some = _announce_snap(required_chats_total=5, required_chats_enabled=3)
+    line = _announce_required_chats_line(s_some)
+    assert "3 个" in line
+    assert "请确保已加入" in line
+
+
+# ---- 公告标题与首段：feature_enabled 三态 ----
+
+
+def test_announce_feature_on_title_and_opening():
+    text = render_reimbursement_announcement_draft(_announce_snap(feature_enabled=True))
+    assert "【报销规则公告】2026-05-20" in text
+    assert "已开放" in text
+    # 不应误用关闭态的措辞
+    assert "暂未开放" not in text
+
+
+def test_announce_feature_off_title_and_opening():
+    text = render_reimbursement_announcement_draft(_announce_snap(feature_enabled=False))
+    assert "【报销暂未开放】2026-05-20" in text
+    assert "queued" in text  # 名单留底说明
+    assert "由超管激活" in text
+
+
+def test_announce_feature_none_marks_internal_only():
+    text = render_reimbursement_announcement_draft(_announce_snap(feature_enabled=None))
+    assert "配置异常" in text
+    assert "不应直接发布给用户" in text
+
+
+# ---- 公告内容：全部规则要点出现 ----
+
+
+def test_announce_contains_all_rule_bullets():
+    text = render_reimbursement_announcement_draft(_announce_snap())
+    assert "3000 元" in text
+    assert "10 分" in text
+    assert "每用户每周最多 1 次" in text
+    assert "2 个" in text
+
+
+def test_announce_weekly_limit_uses_constant():
+    """公告中的"每周最多 N 次"必须读自 snap，不应硬编码 1。"""
+    snap = _announce_snap()
+    snap.weekly_approved_limit = 2  # 假设未来 config 化
+    text = render_reimbursement_announcement_draft(snap)
+    assert "每用户每周最多 2 次" in text
+
+
+def test_announce_no_emoji_decoration():
+    """公告应无 emoji 装饰，便于粘贴到群里复制。"""
+    text = render_reimbursement_announcement_draft(_announce_snap())
+    for emoji in ("📜", "📊", "🎲", "💰", "✅", "⚠️", "📋"):
+        assert emoji not in text
+
+
+def test_announce_no_technical_fields():
+    """公告面向用户，不应包含 month_key / week_key / baseline 等技术字段。"""
+    text = render_reimbursement_announcement_draft(_announce_snap(
+        current_month_reset_baseline=500,
+    ))
+    assert "month_key" not in text
+    assert "week_key" not in text
+    assert "baseline" not in text
+    assert "2026-W21" not in text
+
+
+def test_announce_includes_timestamp_for_version_tracking():
+    """公告底部应带生成时间戳，提示是某一时间点的快照。"""
+    text = render_reimbursement_announcement_draft(_announce_snap())
+    assert "2026-05-20 14:30:00" in text
+    assert "重新生成" in text
+
+
+def test_announce_explains_reset_voucher_in_user_friendly_terms():
+    """reset voucher 在用户公告中应有简单解释，不直接用'voucher'裸词。"""
+    text = render_reimbursement_announcement_draft(_announce_snap())
+    assert "额外审批名额" in text or "reset voucher" in text
+
+
+def test_announce_text_within_telegram_limit():
+    """公告纯文本应远低于 4096 字节限制（Telegram 消息上限）。"""
+    text = render_reimbursement_announcement_draft(_announce_snap())
+    assert len(text.encode("utf-8")) < 2000
+
+
+# ---- wrap_announcement_html: HTML escape + <pre> 包裹 ----
+
+
+def test_wrap_announcement_html_pre_block():
+    wrapped = wrap_announcement_html("hello")
+    assert wrapped.startswith("<pre>")
+    assert wrapped.endswith("</pre>")
+    assert "hello" in wrapped
+
+
+def test_wrap_announcement_html_escapes_special_chars():
+    wrapped = wrap_announcement_html("a < b & c > d")
+    assert "&lt;" in wrapped
+    assert "&gt;" in wrapped
+    assert "&amp;" in wrapped
+    # 内层不含原始 < / > / & 字符
+    inner = wrapped[len("<pre>"):-len("</pre>")]
+    assert "<" not in inner
+    assert ">" not in inner
+
+
+def test_wrap_announcement_html_safe_with_full_draft():
+    """完整公告草稿包装后应是合法 HTML（无未转义的 < / >）。"""
+    text = render_reimbursement_announcement_draft(_announce_snap())
+    wrapped = wrap_announcement_html(text)
+    inner = wrapped[len("<pre>"):-len("</pre>")]
+    assert "<" not in inner
+    assert ">" not in inner

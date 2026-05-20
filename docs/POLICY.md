@@ -1097,7 +1097,21 @@ DB 层提供 **`get_reimbursement_monthly_pool_usage(month_key) -> dict`**：
 - **严格只读**：本页**不**提供任何编辑入口；编辑请用 `admin:reimburse_config` 聚合页里的 5 个 `system:reimburse_*` 入口
 - **不写表 / 不写 audit log**：纯展示
 - **N/A 容错**：任一字段查询失败 → 显式 N/A，不影响其它字段
-- 公告草稿生成（§5.2.3）作为后续 PR 单独加入，本页不含
+
+### 17.5 公告草稿生成（Sprint 3 §5.2.3）
+
+只读规则页含「📢 复制公告草稿」按钮，callback `admin:reimburse_announce`：
+
+- **生成**：基于当前 `ReimbursementRulesSnapshot` 渲染面向**用户**的纯文本公告（无技术字段如 `month_key` / `week_key`）
+- **三态标题**：
+  - `feature_enabled=True` → 「【报销规则公告】YYYY-MM-DD」+ 开放语气
+  - `feature_enabled=False` → 「【报销暂未开放】YYYY-MM-DD」+ 队列说明
+  - `feature_enabled=None` → 「【报销规则公告 · 配置异常】」+ "不应直接发布" 警告
+- **送达方式**：Bot 发**新消息**含 `<pre>` HTML 包裹（与 Sprint 2 §4.2.3 抽奖对账复制汇总同模式），Telegram 客户端长按消息体可全文复制
+- **不自动发布**：纯文本生成在 Bot 与超管私聊；运营手动复制后自行决定发往何处
+- **不调用 broadcast / 不写磁盘 / 不导出文件**
+
+实现：`services/reimbursement_rules.py::render_reimbursement_announcement_draft` + `wrap_announcement_html`；`handlers/admin_panel.py::cb_admin_reimburse_announce`。
 
 ---
 

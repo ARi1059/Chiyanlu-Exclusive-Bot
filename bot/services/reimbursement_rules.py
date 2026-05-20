@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -293,3 +294,105 @@ def render_reimbursement_rules(snap: ReimbursementRulesSnapshot) -> str:
         f"快照时间：{ts_str}",
     ]
     return "\n".join(lines)
+
+
+# ============ 公告草稿生成（§5.2.3） ============
+
+
+def _announce_pool_line(snap: ReimbursementRulesSnapshot) -> str:
+    """月度池公告行：用户向措辞，避免"N/A"裸出。"""
+    if snap.monthly_pool is None:
+        return "月度报销池：配置未设置"
+    if snap.monthly_pool == 0:
+        return "月度报销池：不限额度"
+    return f"月度报销池：{snap.monthly_pool} 元"
+
+
+def _announce_min_points_line(snap: ReimbursementRulesSnapshot) -> str:
+    if snap.min_points is None:
+        return "最低积分门槛：配置未设置"
+    if snap.min_points == 0:
+        return "最低积分门槛：无门槛"
+    return f"最低积分门槛：{snap.min_points} 分"
+
+
+def _announce_required_chats_line(snap: ReimbursementRulesSnapshot) -> str:
+    if snap.required_chats_total is None:
+        return "必关频道 / 群组：配置未设置"
+    if snap.required_chats_total == 0 or (snap.required_chats_enabled or 0) == 0:
+        return "必关频道 / 群组：无（不拦截）"
+    return f"必关频道 / 群组：{snap.required_chats_enabled} 个（提交前请确保已加入）"
+
+
+def render_reimbursement_announcement_draft(
+    snap: ReimbursementRulesSnapshot,
+) -> str:
+    """生成可粘贴到群里的报销公告草稿（§5.2.3）。
+
+    设计要点：
+        - 面向**用户**的语气，不含 month_key / week_key 这类技术字段
+        - 无 emoji 装饰，pipe / 段落分隔，便于粘贴到运营群转发
+        - 根据 feature_enabled 三态给不同标题与首段
+        - 末尾带生成时间戳与版本提示，避免被误认为"永久规则"
+        - 调用方应包在 <pre> 内通过 parse_mode=HTML 发送
+        - HTML escape 由 caller 在套 <pre> 前执行（与 §4.2.3 同模式）
+
+    返回纯文本（不含 HTML 标签）。
+    """
+    if snap.generated_at is not None:
+        try:
+            date_str = snap.generated_at.strftime("%Y-%m-%d")
+            ts_str = snap.generated_at.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            date_str = "N/A"
+            ts_str = "N/A"
+    else:
+        date_str = "N/A"
+        ts_str = "N/A"
+
+    # 根据 feature_enabled 决定标题与首段语气
+    if snap.feature_enabled is True:
+        title = f"【报销规则公告】{date_str}"
+        opening = "本期报销功能已开放，欢迎符合条件的用户提交。"
+    elif snap.feature_enabled is False:
+        title = f"【报销暂未开放】{date_str}"
+        opening = (
+            "本期报销功能暂未开放。符合条件的用户名单会自动留底（queued），"
+            "待开放后由超管激活进入审批队列。"
+        )
+    else:
+        title = f"【报销规则公告 · 配置异常】{date_str}"
+        opening = (
+            "报销功能开关配置未设置，当前状态待运营核实。"
+            "本公告仅供内部对账参考，不应直接发布给用户。"
+        )
+
+    lines = [
+        title,
+        "",
+        opening,
+        "",
+        "规则要点：",
+        f"• {_announce_pool_line(snap)}",
+        f"• {_announce_min_points_line(snap)}",
+        f"• 每周审批上限：每用户每周最多 "
+        f"{snap.weekly_approved_limit} 次通过",
+        f"• {_announce_required_chats_line(snap)}",
+        "",
+        "说明：",
+        "• 报销资格在评价审核通过时自动判定，无需用户手动申请",
+        "• 月度池不足时本月剩余申请将转为 pending，待下月或额度补充后处理",
+        "• 如有特殊情况联系超管，可一次性发放额外审批名额（reset voucher）",
+        "",
+        f"（本公告基于 {ts_str} 当前后台配置生成；运营调整规则后请重新生成）",
+    ]
+    return "\n".join(lines)
+
+
+def wrap_announcement_html(plain_text: str) -> str:
+    """把纯文本公告包成 <pre> HTML 块（Telegram 长按复制语法）。
+
+    HTML escape 在此处统一执行；caller 用 parse_mode='HTML' 发送即可。
+    与 lottery_reconcile.wrap_copy_text_html 同模式。
+    """
+    return f"<pre>{html.escape(plain_text)}</pre>"

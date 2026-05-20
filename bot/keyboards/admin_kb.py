@@ -188,11 +188,18 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
 
 
 def admin_reimburse_rules_kb() -> InlineKeyboardMarkup:
-    """报销规则只读页 keyboard（Sprint 3 §5.2.1）。
+    """报销规则只读页 keyboard（Sprint 3 §5.2.1 / §5.2.3）。
 
-    无任何编辑按钮（§5.3 禁止）；仅刷新 + 返回报销配置。
+    无任何编辑按钮（§5.3 禁止）；含「📢 复制公告草稿」基于当前规则生成
+    可粘贴文本（§5.2.3）+ 刷新 + 返回报销配置。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📢 复制公告草稿",
+                callback_data="admin:reimburse_announce",
+            ),
+        ],
         [
             InlineKeyboardButton(
                 text="🔄 刷新",

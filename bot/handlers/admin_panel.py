@@ -1446,6 +1446,30 @@ async def cb_admin_reimburse_rules_refresh(callback: types.CallbackQuery):
     await callback.answer("已刷新")
 
 
+@router.callback_query(F.data == "admin:reimburse_announce")
+@super_admin_required
+async def cb_admin_reimburse_announce(callback: types.CallbackQuery):
+    """复制报销规则公告草稿（Sprint 3 §5.2.3）。
+
+    基于当前 snapshot 生成可粘贴的公告文案，**发新消息**含 <pre> HTML 块；
+    Telegram 客户端长按消息体即可全文复制。原规则页不修改。
+
+    不自动发布、不调用 broadcast、不写磁盘文件。
+    """
+    from bot.services.reimbursement_rules import (
+        get_reimbursement_rules_snapshot,
+        render_reimbursement_announcement_draft,
+        wrap_announcement_html,
+    )
+    snap = await get_reimbursement_rules_snapshot()
+    plain = render_reimbursement_announcement_draft(snap)
+    await callback.message.answer(
+        wrap_announcement_html(plain),
+        parse_mode="HTML",
+    )
+    await callback.answer("已生成公告草稿，长按消息可复制")
+
+
 # ============ 活动运营二级菜单（admin:operations） ============
 
 
