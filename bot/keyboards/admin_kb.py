@@ -2338,13 +2338,20 @@ def admin_lottery_reconcile_kb(
 def admin_lottery_reconcile_detail_kb(
     item: "LotteryReconcileItem",
 ) -> InlineKeyboardMarkup:
-    """单活动对账详情 keyboard：刷新 + 返回列表；异常用户列表（§4.2.2，
-    仅当 anomaly_users > 0 时渲染）。
+    """单活动对账详情 keyboard：复制汇总 + 异常用户列表（条件）+ 刷新 + 返回。
 
-    Sprint 2 §4.2.2：详情页加「📋 异常用户列表 (N)」入口。
+    Sprint 2 §4.2.2 / §4.2.3：
+        - 复制汇总：所有详情页都显示
+        - 异常用户列表：仅当 anomaly_users > 0 时显示，带计数角标
     不放任何"修复"按钮（§4.3 禁止）。
     """
     rows: list[list[InlineKeyboardButton]] = []
+    rows.append([
+        InlineKeyboardButton(
+            text="📋 复制汇总",
+            callback_data=f"admin:lottery_reconcile:copy:{item.id}",
+        ),
+    ])
     if item.anomaly_users > 0:
         rows.append([
             InlineKeyboardButton(

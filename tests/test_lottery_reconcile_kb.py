@@ -152,11 +152,12 @@ def test_reconcile_list_long_name_truncated_with_ellipsis():
 # ============ admin_lottery_reconcile_detail_kb：详情 ============
 
 
-def test_reconcile_detail_kb_balanced_only_refresh_and_back():
-    """平账活动（anomaly_users=0）→ 详情页仅有刷新 + 返回。"""
+def test_reconcile_detail_kb_balanced_has_copy_refresh_back():
+    """平账活动（anomaly_users=0）→ 详情页有复制汇总 + 刷新 + 返回（共 3 按钮）。"""
     item = _balanced_item(lid=42)
     kb = admin_lottery_reconcile_detail_kb(item)
     cbs = _callbacks(kb)
+    assert "admin:lottery_reconcile:copy:42" in cbs
     assert "admin:lottery_reconcile:item:42:refresh" in cbs
     assert "admin:lottery_reconcile" in cbs
     # 平账时不显示异常用户列表入口
@@ -164,7 +165,7 @@ def test_reconcile_detail_kb_balanced_only_refresh_and_back():
         (c or "").startswith("admin:lottery_reconcile:anomaly:")
         for c in cbs
     )
-    assert len(_flatten(kb)) == 2
+    assert len(_flatten(kb)) == 3
 
 
 def test_reconcile_detail_kb_has_anomaly_button_when_users_gt_zero():
@@ -173,12 +174,25 @@ def test_reconcile_detail_kb_has_anomaly_button_when_users_gt_zero():
     kb = admin_lottery_reconcile_detail_kb(item)
     cbs = _callbacks(kb)
     assert "admin:lottery_reconcile:anomaly:99:1" in cbs
-    # 同时仍有刷新 + 返回
+    # 同时仍有复制汇总 + 刷新 + 返回
+    assert "admin:lottery_reconcile:copy:99" in cbs
     assert "admin:lottery_reconcile:item:99:refresh" in cbs
     assert "admin:lottery_reconcile" in cbs
     # 文案带计数
     texts = [b.text for b in _flatten(kb)]
     assert any("异常用户列表" in t and "(1)" in t for t in texts)
+    # 异常活动详情页共 4 按钮
+    assert len(_flatten(kb)) == 4
+
+
+def test_reconcile_detail_kb_copy_button_always_present():
+    """§4.2.3：复制汇总按钮在平账 / 异常详情页都应存在。"""
+    for item in (_balanced_item(lid=1), _diverging_item(lid=2)):
+        kb = admin_lottery_reconcile_detail_kb(item)
+        cbs = _callbacks(kb)
+        assert f"admin:lottery_reconcile:copy:{item.id}" in cbs
+        texts = [b.text for b in _flatten(kb)]
+        assert any("复制汇总" in t for t in texts)
 
 
 def test_reconcile_detail_kb_no_repair_buttons():

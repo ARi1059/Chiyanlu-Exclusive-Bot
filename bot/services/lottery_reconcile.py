@@ -40,6 +40,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -687,3 +688,58 @@ def render_lottery_anomaly_list(data: LotteryAnomalyList) -> str:
         lines.pop()
 
     return "\n".join(lines)
+
+
+# ============ 汇总文本复制（§4.2.3） ============
+
+
+def render_lottery_reconcile_copy_text(item: LotteryReconcileItem) -> str:
+    """生成可粘贴到群里的纯文本对账汇总（§4.2.3）。
+
+    设计要点：
+        - 无 emoji 装饰，方便粘贴到运营群
+        - 单行 key:value，pipe 分隔的紧凑结构
+        - 末尾带状态标签（平账 / 差异详情），便于一眼判断
+        - 调用方应包在 <pre> HTML 标签内通过 parse_mode=HTML 发送，
+          Telegram 客户端长按消息体即可全文复制
+
+    返回的纯文本本身**不含** HTML 标签；HTML escape 由 caller 在套 <pre> 前完成。
+    """
+    if item.diff == 0 and item.anomaly_users == 0:
+        status_tag = "BALANCED"
+    else:
+        bits: list[str] = []
+        if item.diff != 0:
+            bits.append(f"diff={_fmt_diff(item.diff)}")
+        if item.anomaly_users > 0:
+            bits.append(f"anomaly_users={item.anomaly_users}")
+        status_tag = "DIVERGENT(" + ",".join(bits) + ")"
+
+    lines = [
+        f"抽奖对账 #{item.id} | {item.name}",
+        f"状态: {item.status or 'N/A'} | "
+        f"开奖: {_fmt_dt(item.draw_at)} | "
+        f"门票: {item.entry_cost_points} 分",
+        f"参与人数: {item.entry_count} | 中奖人数: {item.winner_count}",
+        f"期望扣分: {item.expected_deduct} = "
+        f"{item.entry_count} x {item.entry_cost_points}",
+        f"实际扣分: {item.actual_deduct} | "
+        f"退款: {item.refunded} | "
+        f"净扣: {item.net_deduct}",
+        f"差异: {_fmt_diff(item.diff)} "
+        f"(期望 {item.expected_deduct} - 净扣 {item.net_deduct})",
+        f"异常: A={item.anomaly_count_a} "
+        f"B={item.anomaly_count_b} "
+        f"D={item.anomaly_count_d} | "
+        f"去重 {item.anomaly_users} 人",
+        f"结论: {status_tag}",
+    ]
+    return "\n".join(lines)
+
+
+def wrap_copy_text_html(plain_text: str) -> str:
+    """把纯文本汇总包成 <pre> HTML 块（Telegram 长按复制语法）。
+
+    HTML escape 已在此处统一执行；caller 用 parse_mode='HTML' 发送即可。
+    """
+    return f"<pre>{html.escape(plain_text)}</pre>"

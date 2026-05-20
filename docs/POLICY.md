@@ -1438,10 +1438,11 @@ winners = rng.sample(entries, min(prize_count, len(entries)))
 `📊 运营看板 → 📊 抽奖对账`（callback `admin:lottery_reconcile`）：
 
 - **列表页**：展示积分门票活动数 / 有差异活动数 / 最近活动对账概览（每条带 ✅ 平账 或 ⚠️ 差异/异常 标记）
-- **单活动详情页**：8 项完整指标（期望 / 实际 / 退款 / 净扣 / 差异 / A / B / D / 异常人数）。**当 anomaly_users > 0 时**，详情页含「📋 异常用户列表 (N)」按钮（§4.2.2）。
+- **单活动详情页**：8 项完整指标（期望 / 实际 / 退款 / 净扣 / 差异 / A / B / D / 异常人数）。每个详情页都含「📋 复制汇总」按钮（§4.2.3）；**当 anomaly_users > 0 时**额外含「📋 异常用户列表 (N)」按钮（§4.2.2）。
 - **异常用户列表页**（§4.2.2，callback `admin:lottery_reconcile:anomaly:<lid>:<page>`）：按 D → B → A 顺序分组展示，每 20 人一页；含上/下页 + 刷新 + 返回详情。每条异常带具体引用：A 类显示 `entry_id`；B 类显示 `tx_id` + 扣分；D 类显示 `entry_id`（或「无 entry」）+ `tx_ids` 列表 + 共扣金额。
+- **复制汇总**（§4.2.3，callback `admin:lottery_reconcile:copy:<lid>`）：点击后 Bot 发**新消息**，内容是 `<pre>` 包裹的纯文本对账汇总（无 emoji，pipe 分隔的紧凑结构，含结论标签 BALANCED / DIVERGENT(...)），Telegram 客户端长按消息体即可全文复制。**不导出文件**：不生成 csv / xlsx / 不写入磁盘，只发 Telegram 消息。
 
-**严格只读**：不导出文件、不提供"一键补偿/修复"按钮。汇总文本复制（§4.2.3）留待后续 PR。
+**严格只读**：不导出文件、不提供"一键补偿/修复"按钮。Sprint 2 §4.2 共三项全部落地。
 
 **异常归类去重**：同 uid 在多类时按 **D > B > A** 优先级归到最高一类。A 与 D / B 必然不相交（A 要求 0 条 tx）；B ∩ D（无 entry 且 ≥2 条 tx）归 D，渲染时显式标注「无 entry」以与 D∩A 区分。
 

@@ -1774,6 +1774,45 @@ async def cb_admin_lottery_reconcile_anomaly(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("admin:lottery_reconcile:copy:"))
+@super_admin_required
+async def cb_admin_lottery_reconcile_copy(callback: types.CallbackQuery):
+    """复制对账汇总（§4.2.3）：发新消息含 <pre> 包裹的纯文本汇总。
+
+    用户在 Telegram 客户端长按消息体即可全文复制。原详情页不修改。
+
+    callback 形式：
+        admin:lottery_reconcile:copy:<lid>
+    """
+    from bot.services.lottery_reconcile import (
+        get_lottery_reconcile_detail,
+        render_lottery_reconcile_copy_text,
+        wrap_copy_text_html,
+    )
+    data = callback.data or ""
+    parts = data.split(":")
+    try:
+        lid = int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer("⚠️ 参数错误", show_alert=True)
+        return
+
+    item = await get_lottery_reconcile_detail(lid)
+    if item is None:
+        await callback.answer(
+            "⚠️ 活动不存在或非积分门票活动（无需对账）",
+            show_alert=True,
+        )
+        return
+
+    plain = render_lottery_reconcile_copy_text(item)
+    await callback.message.answer(
+        wrap_copy_text_html(plain),
+        parse_mode="HTML",
+    )
+    await callback.answer("已生成，长按消息可复制")
+
+
 # ============ 通用取消 ============
 
 

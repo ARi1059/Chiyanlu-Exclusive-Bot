@@ -42,10 +42,12 @@ from bot.services.lottery_reconcile import (
     _compute_item,
     list_lottery_anomalies,
     render_lottery_anomaly_list,
+    render_lottery_reconcile_copy_text,
     render_lottery_reconcile_detail,
     render_lottery_reconcile_overview,
     get_lottery_reconcile_overview,
     get_lottery_reconcile_detail,
+    wrap_copy_text_html,
 )
 
 
@@ -841,3 +843,122 @@ def test_render_anomaly_d_no_entry_shows_marker():
     text = render_lottery_anomaly_list(al)
     assert "无 entry" in text
     assert "tx_ids=[7,8]" in text
+
+
+# ============ §4.2.3 汇总文本复制 ============
+
+
+def test_copy_text_balanced_shows_balanced_tag():
+    """平账活动 → 结论 BALANCED。"""
+    item = _balanced_item()
+    text = render_lottery_reconcile_copy_text(item)
+    assert "BALANCED" in text
+    assert "DIVERGENT" not in text
+
+
+def test_copy_text_divergent_includes_diff_and_anomaly():
+    """差异活动 → DIVERGENT(diff=...,anomaly_users=...)。"""
+    item = _diverging_item()  # diff=10, anomaly_users=1
+    text = render_lottery_reconcile_copy_text(item)
+    assert "DIVERGENT" in text
+    assert "diff=+10" in text
+    assert "anomaly_users=1" in text
+
+
+def test_copy_text_diff_only_no_anomaly():
+    """只差异不异常 → 结论标签只含 diff。"""
+    item = LotteryReconcileItem(
+        id=1, name="只差异", status="drawn", entry_cost_points=10,
+        entry_count=5, winner_count=1,
+        expected_deduct=50, actual_deduct=60, refunded=0, net_deduct=60,
+        diff=-10,
+        anomaly_count_a=0, anomaly_count_b=0, anomaly_count_d=0,
+        anomaly_users=0,
+    )
+    text = render_lottery_reconcile_copy_text(item)
+    assert "diff=-10" in text
+    assert "anomaly_users" not in text
+
+
+def test_copy_text_no_emoji_decoration():
+    """汇总文本不含 ✅/⚠️/📋 等 emoji，方便粘贴到群里。"""
+    item = _diverging_item()
+    text = render_lottery_reconcile_copy_text(item)
+    for emoji in ("✅", "⚠️", "📋", "📊", "🎲"):
+        assert emoji not in text
+
+
+def test_copy_text_contains_all_core_fields():
+    """汇总应含 ID / 名称 / 期望 / 实际 / 退款 / 净扣 / 差异 / 异常分类。"""
+    item = _diverging_item()
+    text = render_lottery_reconcile_copy_text(item)
+    assert "#2" in text
+    assert "差异活动" in text
+    assert "期望扣分: 30" in text
+    assert "实际扣分: 20" in text
+    assert "退款: 0" in text
+    assert "净扣: 20" in text
+    assert "A=1" in text
+    assert "B=0" in text
+    assert "D=0" in text
+
+
+def test_copy_text_handles_zero_winner():
+    item = _diverging_item()  # winner_count=0
+    text = render_lottery_reconcile_copy_text(item)
+    assert "中奖人数: 0" in text
+
+
+def test_copy_text_handles_missing_draw_at():
+    """draw_at=None 时应回退到 N/A。"""
+    item = _diverging_item()  # draw_at=None
+    text = render_lottery_reconcile_copy_text(item)
+    assert "开奖: N/A" in text
+
+
+def test_wrap_copy_text_html_pre_block():
+    """wrap_copy_text_html 把纯文本包成 <pre>...</pre>。"""
+    wrapped = wrap_copy_text_html("hello world")
+    assert wrapped == "<pre>hello world</pre>"
+
+
+def test_wrap_copy_text_html_escapes_special_chars():
+    """HTML escape：< / > / & 必须被转义防止 parse_mode=HTML 解析失败。"""
+    raw = "a < b > c & d"
+    wrapped = wrap_copy_text_html(raw)
+    assert "&lt;" in wrapped
+    assert "&gt;" in wrapped
+    assert "&amp;" in wrapped
+    assert "<pre>" in wrapped
+    assert "</pre>" in wrapped
+    # 原始 < / > / & 不应出现在 pre 内容中（除了 pre 标签本身）
+    inner = wrapped[len("<pre>"):-len("</pre>")]
+    assert "<" not in inner
+    assert ">" not in inner
+    assert "&" not in inner or inner.count("&") == inner.count("&amp;") + inner.count("&lt;") + inner.count("&gt;")
+
+
+def test_wrap_copy_text_html_escapes_activity_name_in_full_summary():
+    """活动名含 HTML 危险字符时，完整汇总包装后必须安全。"""
+    item = LotteryReconcileItem(
+        id=5, name="<script>alert('x')</script>", status="active",
+        entry_cost_points=10, entry_count=1, winner_count=0,
+        expected_deduct=10, actual_deduct=10, refunded=0, net_deduct=10,
+        diff=0,
+        anomaly_count_a=0, anomaly_count_b=0, anomaly_count_d=0,
+        anomaly_users=0,
+    )
+    plain = render_lottery_reconcile_copy_text(item)
+    wrapped = wrap_copy_text_html(plain)
+    # 不再含原始 <script>
+    assert "<script>" not in wrapped
+    assert "&lt;script&gt;" in wrapped
+
+
+def test_copy_text_format_pasteable_multiline():
+    """汇总应是多行（≥6 行），方便阅读但不超过 Telegram 单消息限制。"""
+    item = _balanced_item()
+    text = render_lottery_reconcile_copy_text(item)
+    lines = text.split("\n")
+    assert len(lines) >= 6
+    assert len(text) < 1024  # 远小于 4096 限制
