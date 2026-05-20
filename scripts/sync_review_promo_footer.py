@@ -55,7 +55,11 @@ from aiogram.exceptions import (
 
 from bot.config import config
 from bot.database import get_db, get_teacher, get_teacher_review
-from bot.utils.review_comment import render_review_comment
+from bot.utils.review_comment import (
+    REIMBURSE_PROMO_TEXT,
+    REIMBURSE_PROMO_URL,
+    render_review_comment,
+)
 
 
 # ============ 日志 ============
@@ -117,7 +121,14 @@ async def _build_new_text_and_kb(bot_username: str, review_id: int):
     msg_id = review.get("discussion_msg_id")
     if not chat_id or not msg_id:
         return None, "no_msg_ref"
-    text, kb = render_review_comment(review, teacher, bot_username=bot_username)
+    # 一次性同步脚本：使用 2026-05-20 的默认 footer 文案 / URL（与脚本目的
+    # 一致，回填旧评价至引入 footer 时的格式）。如运营已 config 化 footer
+    # 且想用最新值，可在脚本运行前先 sqlite3 SET 对应 config，再用此脚本回填。
+    text, kb = render_review_comment(
+        review, teacher, bot_username=bot_username,
+        promo_text=REIMBURSE_PROMO_TEXT,
+        promo_url=REIMBURSE_PROMO_URL,
+    )
     return (chat_id, msg_id, text, kb), None
 
 

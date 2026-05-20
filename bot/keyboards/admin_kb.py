@@ -176,6 +176,8 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points")],
         [InlineKeyboardButton(text="🗓 每周报销上限", callback_data="system:reimburse_weekly_limit")],
         [InlineKeyboardButton(text="📋 报销必关设置", callback_data="system:reimburse_subreq")],
+        [InlineKeyboardButton(text="📢 评价 footer 文本", callback_data="system:reimburse_promo_text")],
+        [InlineKeyboardButton(text="🔗 评价 footer 链接", callback_data="system:reimburse_promo_url")],
         [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
 
@@ -2204,6 +2206,97 @@ def reimburse_weekly_limit_confirm_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="❌ 取消",
                 callback_data="system:reimburse_weekly_limit",
+            ),
+        ],
+    ])
+
+
+# ============ 评价 footer 推广（2026-05 新增） ============
+
+
+def reimburse_promo_text_menu_kb() -> InlineKeyboardMarkup:
+    """📢 footer 文本主面板：修改 + 清空 + 返回报销配置。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✏️ 修改文本",
+            callback_data="system:reimburse_promo_text:edit",
+        )],
+        [InlineKeyboardButton(
+            text="🗑 清空（禁用 footer）",
+            callback_data="system:reimburse_promo_text:clear",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回报销配置",
+            callback_data="admin:reimburse_config",
+        )],
+    ])
+
+
+def reimburse_promo_text_cancel_kb() -> InlineKeyboardMarkup:
+    """footer 文本 FSM 通用取消按钮（回主面板）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data="system:reimburse_promo_text",
+        )],
+    ])
+
+
+def reimburse_promo_text_confirm_kb() -> InlineKeyboardMarkup:
+    """确认修改 footer 文本：确认 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认修改",
+                callback_data="system:reimburse_promo_text:confirm",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data="system:reimburse_promo_text",
+            ),
+        ],
+    ])
+
+
+def reimburse_promo_url_menu_kb() -> InlineKeyboardMarkup:
+    """🔗 footer 链接主面板：修改 + 清空 + 返回报销配置。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✏️ 修改链接",
+            callback_data="system:reimburse_promo_url:edit",
+        )],
+        [InlineKeyboardButton(
+            text="🗑 清空（禁用 footer）",
+            callback_data="system:reimburse_promo_url:clear",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回报销配置",
+            callback_data="admin:reimburse_config",
+        )],
+    ])
+
+
+def reimburse_promo_url_cancel_kb() -> InlineKeyboardMarkup:
+    """footer 链接 FSM 通用取消按钮（回主面板）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data="system:reimburse_promo_url",
+        )],
+    ])
+
+
+def reimburse_promo_url_confirm_kb() -> InlineKeyboardMarkup:
+    """确认修改 footer 链接：确认 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认修改",
+                callback_data="system:reimburse_promo_url:confirm",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data="system:reimburse_promo_url",
             ),
         ],
     ])

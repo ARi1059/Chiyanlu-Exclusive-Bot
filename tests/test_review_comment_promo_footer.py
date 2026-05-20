@@ -61,7 +61,12 @@ def _fake_teacher(**overrides):
 # ============================================================
 
 
+_DEFAULT_PROMO_TEXT = "出击报销八折"
+_DEFAULT_PROMO_URL = "https://t.me/ChiYanDairy/553"
+
+
 def test_footer_keeps_powered_by_line():
+    """Powered by 行无关 footer 配置，永远渲染。"""
     from bot.utils.review_comment import render_review_comment
     text, _ = render_review_comment(
         _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
@@ -69,8 +74,12 @@ def test_footer_keeps_powered_by_line():
     assert "✳ Powered by @ChiYanBookBot" in text
 
 
-def test_footer_appends_promo_hyperlink():
-    """footer 末尾应有 HTML <a> 形式的"出击报销八折"超链接。"""
+def test_footer_appends_promo_hyperlink_when_both_args_present():
+    """footer 末尾应有 HTML <a> 超链接（当 promo_text / promo_url 同传时）。
+
+    2026-05 config 化：render_review_comment 需要 caller 注入 promo_text /
+    promo_url；不再读模块常量。
+    """
     from bot.utils.review_comment import (
         render_review_comment,
         REIMBURSE_PROMO_TEXT,
@@ -78,6 +87,8 @@ def test_footer_appends_promo_hyperlink():
     )
     text, _ = render_review_comment(
         _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text=REIMBURSE_PROMO_TEXT,
+        promo_url=REIMBURSE_PROMO_URL,
     )
     assert REIMBURSE_PROMO_TEXT == "出击报销八折"
     assert REIMBURSE_PROMO_URL == "https://t.me/ChiYanDairy/553"
@@ -86,11 +97,53 @@ def test_footer_appends_promo_hyperlink():
     )
 
 
-def test_promo_line_appears_after_powered_by():
-    """渲染顺序：评价主体 → "Powered by" → "出击报销八折" 超链接。"""
+def test_footer_omits_promo_when_text_empty():
+    """promo_text 空 → footer 整行不渲染。"""
     from bot.utils.review_comment import render_review_comment
     text, _ = render_review_comment(
         _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text="", promo_url=_DEFAULT_PROMO_URL,
+    )
+    assert "<a href=" not in text
+    assert "出击报销八折" not in text
+
+
+def test_footer_omits_promo_when_url_empty():
+    """promo_url 空 → footer 整行不渲染。"""
+    from bot.utils.review_comment import render_review_comment
+    text, _ = render_review_comment(
+        _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text=_DEFAULT_PROMO_TEXT, promo_url="",
+    )
+    assert "<a href=" not in text
+
+
+def test_footer_omits_promo_when_both_args_unset():
+    """promo_text / promo_url 都不传 → footer 不渲染（向后兼容旧 caller）。"""
+    from bot.utils.review_comment import render_review_comment
+    text, _ = render_review_comment(
+        _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+    )
+    assert "<a href=" not in text
+
+
+def test_footer_promo_url_is_html_escaped():
+    """promo_url 若含特殊字符也必须 escape（防御性）。"""
+    from bot.utils.review_comment import render_review_comment
+    text, _ = render_review_comment(
+        _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text="link", promo_url="https://example.com/?a=1&b=2",
+    )
+    # & 必须被转义
+    assert "a=1&amp;b=2" in text or "a=1&b=2" not in text  # 至少不是裸 &
+
+
+def test_promo_line_appears_after_powered_by():
+    """渲染顺序：评价主体 → "Powered by" → promo 超链接。"""
+    from bot.utils.review_comment import render_review_comment
+    text, _ = render_review_comment(
+        _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text=_DEFAULT_PROMO_TEXT, promo_url=_DEFAULT_PROMO_URL,
     )
     pos_powered = text.find("Powered by")
     pos_promo = text.find("出击报销八折")
@@ -103,8 +156,8 @@ def test_blank_line_separates_powered_by_from_promo():
     from bot.utils.review_comment import render_review_comment
     text, _ = render_review_comment(
         _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text=_DEFAULT_PROMO_TEXT, promo_url=_DEFAULT_PROMO_URL,
     )
-    # 找到 "Powered by" 行，下一行应为空，再下一行才是 promo
     lines = text.split("\n")
     idx_powered = next(
         i for i, line in enumerate(lines) if "Powered by" in line
@@ -149,6 +202,7 @@ def test_promo_anchor_not_escaped_in_text():
     from bot.utils.review_comment import render_review_comment
     text, _ = render_review_comment(
         _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text=_DEFAULT_PROMO_TEXT, promo_url=_DEFAULT_PROMO_URL,
     )
     # 我们生成的 <a href="..."> 应原样出现，不是 &lt;a&gt;
     assert '<a href="https://t.me/ChiYanDairy/553">' in text
@@ -165,6 +219,7 @@ def test_keyboard_buttons_unchanged():
     from bot.utils.review_comment import render_review_comment
     _, kb = render_review_comment(
         _fake_review(), _fake_teacher(), bot_username="ChiYanBookBot",
+        promo_text=_DEFAULT_PROMO_TEXT, promo_url=_DEFAULT_PROMO_URL,
     )
     rows = kb.inline_keyboard
     assert len(rows) == 3
@@ -181,8 +236,14 @@ def test_keyboard_buttons_unchanged():
 # ============================================================
 
 
-def _patch_publish_dependencies(monkeypatch, *, anchor_present=True):
-    """让 publish_review_comment 走 happy path：DB 查询 + bot.get_me 都 mock 掉。"""
+def _patch_publish_dependencies(monkeypatch, *, anchor_present=True,
+                                  promo_text=_DEFAULT_PROMO_TEXT,
+                                  promo_url=_DEFAULT_PROMO_URL):
+    """让 publish_review_comment 走 happy path：DB 查询 + bot.get_me 都 mock 掉。
+
+    2026-05：footer config 化后还要 mock get_reimburse_promo_text /
+    get_reimburse_promo_url。
+    """
     from bot.utils import review_comment as mod
 
     async def _get_review(rid):
@@ -202,10 +263,18 @@ def _patch_publish_dependencies(monkeypatch, *, anchor_present=True):
     async def _noop_update(*args, **kwargs):
         return None
 
+    async def _get_promo_text():
+        return promo_text
+
+    async def _get_promo_url():
+        return promo_url
+
     monkeypatch.setattr(mod, "get_teacher_review", _get_review)
     monkeypatch.setattr(mod, "get_teacher", _get_teacher)
     monkeypatch.setattr(mod, "get_teacher_channel_post", _get_post)
     monkeypatch.setattr(mod, "update_review_discussion_msg", _noop_update)
+    monkeypatch.setattr(mod, "get_reimburse_promo_text", _get_promo_text)
+    monkeypatch.setattr(mod, "get_reimburse_promo_url", _get_promo_url)
 
 
 def test_publish_sends_with_html_parse_mode(monkeypatch):

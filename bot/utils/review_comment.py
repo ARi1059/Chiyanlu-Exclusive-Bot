@@ -20,6 +20,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.database import (
     REVIEW_RATINGS,
+    get_reimburse_promo_text,
+    get_reimburse_promo_url,
     get_teacher,
     get_teacher_channel_post,
     get_teacher_review,
@@ -30,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 MAX_BUTTON_NAME_LEN: int = 10  # spec §6.3：display_name > 20 字符时按"前 10 字…"截断
 
-# 2026-05-20：报销八折广告超链接（footer 第 2 行，HTML <a>）
+# 2026-05-20 已 config 化（promo_text + promo_url）；保留默认值常量用作历史
+# sync 脚本兼容（scripts/sync_review_promo_footer.py）+ 测试快照。
+# render_review_comment 不直接读这两个常量，而由 caller 注入 promo_text /
+# promo_url 参数；任一为空字符串则 footer 整行不渲染。
 REIMBURSE_PROMO_TEXT: str = "出击报销八折"
 REIMBURSE_PROMO_URL: str = "https://t.me/ChiYanDairy/553"
 
@@ -80,6 +85,9 @@ def render_review_comment(
     review: dict,
     teacher: dict,
     bot_username: str = "ChiYanBookBot",
+    *,
+    promo_text: Optional[str] = None,
+    promo_url: Optional[str] = None,
 ) -> tuple[str, InlineKeyboardMarkup]:
     """渲染评论文字 + 3 按钮键盘
 
@@ -97,10 +105,15 @@ def render_review_comment(
 
         ✳ Powered by @{bot_username}
 
-        <a href="{REIMBURSE_PROMO_URL}">出击报销八折</a>
+        <a href="{promo_url}">{promo_text}</a>   （任一为空整行不渲染）
 
     2026-05-20：文本返回 HTML 格式；调用方须以 parse_mode=HTML 发送。
     用户输入字段（display_name / summary）经 html.escape 处理防注入。
+
+    2026-05 续：footer 推广 text / url 由调用方注入（已 config 化）；
+    若两参数任一为 None 或空串，footer 整行不渲染。caller 在 publish 阶段
+    通过 get_reimburse_promo_text / get_reimburse_promo_url 读 config 后
+    传入。**为保持函数纯度（同步 + 易测试）不在本函数内 await**。
 
     按钮：3 行独占
       [🔗 联系{name前10字…}]       URL = teacher.button_url
@@ -139,10 +152,12 @@ def render_review_comment(
         lines.append(f"【过程】：{_html_escape(summary)}")
     lines.append("")
     lines.append(f"✳ Powered by @{_html_escape(bot_username)}")
-    lines.append("")
-    lines.append(
-        f'<a href="{REIMBURSE_PROMO_URL}">{REIMBURSE_PROMO_TEXT}</a>'
-    )
+    # footer：仅当 promo_text 与 promo_url 都非空时渲染
+    if promo_text and promo_url:
+        lines.append("")
+        lines.append(
+            f'<a href="{_html_escape(promo_url)}">{_html_escape(promo_text)}</a>'
+        )
 
     text = "\n".join(lines)
 
@@ -202,7 +217,16 @@ async def publish_review_comment(bot: Bot, review_id: int) -> dict:
         )
 
     me = await bot.get_me()
-    text, kb = render_review_comment(review, teacher, bot_username=me.username)
+    # 2026-05：footer 推广 text / url 已 config 化，由 publish 阶段读取后注入。
+    # 任一为空字符串 → render 不渲染整行。
+    promo_text = await get_reimburse_promo_text()
+    promo_url = await get_reimburse_promo_url()
+    text, kb = render_review_comment(
+        review, teacher,
+        bot_username=me.username,
+        promo_text=promo_text,
+        promo_url=promo_url,
+    )
 
     fallback = False
     sent_msg = None

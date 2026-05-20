@@ -7080,6 +7080,63 @@ async def set_reimbursement_weekly_limit(value: int) -> None:
     await set_config(REIMBURSE_WEEKLY_LIMIT_KEY, str(v))
 
 
+# ---- 评价 footer 推广（2026-05 新增，原硬编码"出击报销八折" + URL）----
+REIMBURSE_PROMO_TEXT_KEY = "reimbursement_promo_text"
+REIMBURSE_PROMO_URL_KEY = "reimbursement_promo_url"
+REIMBURSE_PROMO_TEXT_DEFAULT = "出击报销八折"
+REIMBURSE_PROMO_URL_DEFAULT = "https://t.me/ChiYanDairy/553"
+REIMBURSE_PROMO_TEXT_MAX_LEN = 100
+REIMBURSE_PROMO_URL_MAX_LEN = 500
+
+
+async def get_reimburse_promo_text() -> str:
+    """读取评价 footer 推广文本；缺失返回默认。
+
+    允许空字符串 "" 表示「不渲染 footer」（caller 在 render 阶段判断）。
+    """
+    raw = await get_config(REIMBURSE_PROMO_TEXT_KEY)
+    if raw is None:
+        return REIMBURSE_PROMO_TEXT_DEFAULT
+    return raw  # 允许 ""（语义：不渲染整行）
+
+
+async def get_reimburse_promo_url() -> str:
+    """读取评价 footer 推广 URL；缺失返回默认。
+
+    允许空字符串 "" 表示「不渲染 footer」（caller 在 render 阶段判断）。
+    """
+    raw = await get_config(REIMBURSE_PROMO_URL_KEY)
+    if raw is None:
+        return REIMBURSE_PROMO_URL_DEFAULT
+    return raw  # 允许 ""
+
+
+async def set_reimburse_promo_text(value: str) -> None:
+    """写入推广文本；caller 必须先校验长度 / 内容（空串合法）。"""
+    v = str(value or "")
+    if len(v) > REIMBURSE_PROMO_TEXT_MAX_LEN:
+        raise ValueError(
+            f"reimbursement_promo_text must be ≤ {REIMBURSE_PROMO_TEXT_MAX_LEN} chars, "
+            f"got {len(v)}"
+        )
+    await set_config(REIMBURSE_PROMO_TEXT_KEY, v)
+
+
+async def set_reimburse_promo_url(value: str) -> None:
+    """写入推广 URL；caller 必须先校验长度 + http(s):// 前缀（空串合法 = 禁用）。"""
+    v = str(value or "")
+    if len(v) > REIMBURSE_PROMO_URL_MAX_LEN:
+        raise ValueError(
+            f"reimbursement_promo_url must be ≤ {REIMBURSE_PROMO_URL_MAX_LEN} chars, "
+            f"got {len(v)}"
+        )
+    if v and not (v.startswith("http://") or v.startswith("https://")):
+        raise ValueError(
+            f"reimbursement_promo_url must start with http:// or https://, got {v!r}"
+        )
+    await set_config(REIMBURSE_PROMO_URL_KEY, v)
+
+
 async def get_reimburse_pool_reset_baselines() -> dict:
     """读取月度报销池重置基线 dict（月份 → {baseline_amount, reset_at, admin_id, reason}）。
 

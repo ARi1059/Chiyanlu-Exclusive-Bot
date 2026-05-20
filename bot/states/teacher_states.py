@@ -106,6 +106,28 @@ class ReimburseWeeklyLimitStates(StatesGroup):
     confirming    = State()
 
 
+class ReimbursePromoTextStates(StatesGroup):
+    """评价 footer 推广文本配置 FSM（2026-05 新增）。
+
+    state.data：
+        old_value (str) —— 修改前的文本
+        new_value (str) —— 待确认的新文本（空串合法 = 禁用 footer）
+    """
+    waiting_value = State()
+    confirming    = State()
+
+
+class ReimbursePromoUrlStates(StatesGroup):
+    """评价 footer 推广 URL 配置 FSM（2026-05 新增）。
+
+    state.data：
+        old_value (str) —— 修改前的 URL
+        new_value (str) —— 待确认的新 URL（http(s):// 开头；空串合法 = 禁用 footer）
+    """
+    waiting_value = State()
+    confirming    = State()
+
+
 class ReimbursePoolResetStates(StatesGroup):
     """本月报销池重置基线 FSM（2026-05 新增）。
 

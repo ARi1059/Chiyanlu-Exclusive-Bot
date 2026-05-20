@@ -25,18 +25,26 @@ from bot.config import config
 from bot.database import (
     REIMBURSE_MIN_POINTS_DEFAULT,
     REIMBURSE_MIN_POINTS_MAX,
+    REIMBURSE_PROMO_TEXT_DEFAULT,
+    REIMBURSE_PROMO_TEXT_MAX_LEN,
+    REIMBURSE_PROMO_URL_DEFAULT,
+    REIMBURSE_PROMO_URL_MAX_LEN,
     REIMBURSE_WEEKLY_LIMIT_DEFAULT,
     REIMBURSE_WEEKLY_LIMIT_MAX,
     REIMBURSE_WEEKLY_LIMIT_MIN,
     current_month_key,
     get_config,
     get_reimburse_pool_reset_baselines,
+    get_reimburse_promo_text,
+    get_reimburse_promo_url,
     get_reimbursement_min_points,
     get_reimbursement_monthly_pool_usage,
     get_reimbursement_weekly_limit,
     is_super_admin,
     log_admin_audit,
     set_reimburse_pool_reset_baseline,
+    set_reimburse_promo_text,
+    set_reimburse_promo_url,
     set_reimbursement_min_points,
     set_reimbursement_weekly_limit,
 )
@@ -47,6 +55,12 @@ from bot.keyboards.admin_kb import (
     reimburse_pool_reset_cancel_kb,
     reimburse_pool_reset_confirm_kb,
     reimburse_pool_reset_done_kb,
+    reimburse_promo_text_cancel_kb,
+    reimburse_promo_text_confirm_kb,
+    reimburse_promo_text_menu_kb,
+    reimburse_promo_url_cancel_kb,
+    reimburse_promo_url_confirm_kb,
+    reimburse_promo_url_menu_kb,
     reimburse_weekly_limit_cancel_kb,
     reimburse_weekly_limit_confirm_kb,
     reimburse_weekly_limit_menu_kb,
@@ -54,6 +68,8 @@ from bot.keyboards.admin_kb import (
 from bot.states.teacher_states import (
     ReimburseMinPointsStates,
     ReimbursePoolResetStates,
+    ReimbursePromoTextStates,
+    ReimbursePromoUrlStates,
     ReimburseWeeklyLimitStates,
 )
 
@@ -325,6 +341,272 @@ async def cb_weekly_limit_confirm(callback: types.CallbackQuery, state: FSMConte
     await callback.answer(f"✅ 已更新每周上限为 {new_value} 次")
     # 回主面板
     await cb_weekly_limit_menu(callback, state)
+
+
+# ============================================================
+# 1c. 📢 评价 footer 推广文本（2026-05 新增）
+# ============================================================
+
+
+def _fmt_promo_value(v: str) -> str:
+    """空值显示为「（已禁用）」。"""
+    return "（已禁用 → footer 不渲染）" if not v else repr(v)
+
+
+@router.callback_query(F.data == "system:reimburse_promo_text")
+@_super_admin_required
+async def cb_promo_text_menu(callback: types.CallbackQuery, state: FSMContext):
+    """📢 评价 footer 推广文本主面板。"""
+    await state.clear()
+    current = await get_reimburse_promo_text()
+    text = (
+        "📢 评价 footer 推广文本\n\n"
+        f"当前：{_fmt_promo_value(current)}\n"
+        f"默认：{REIMBURSE_PROMO_TEXT_DEFAULT!r}\n\n"
+        "说明：\n"
+        "评价通过后讨论群评论 + 老师私聊评论尾部 footer 第二行 HTML 链接的\n"
+        "显示文字。任一（text 或 url）为空 → footer 整行不渲染。\n"
+        f"长度限制：≤ {REIMBURSE_PROMO_TEXT_MAX_LEN} 字符。"
+    )
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=reimburse_promo_text_menu_kb(),
+        )
+    except Exception:
+        await callback.message.answer(
+            text, reply_markup=reimburse_promo_text_menu_kb(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:reimburse_promo_text:edit")
+@_super_admin_required
+async def cb_promo_text_edit(callback: types.CallbackQuery, state: FSMContext):
+    """进入 FSM 等待输入新文本。"""
+    current = await get_reimburse_promo_text()
+    await state.set_state(ReimbursePromoTextStates.waiting_value)
+    await state.update_data(old_value=current)
+    text = (
+        f"✏️ 修改 footer 文本\n\n"
+        f"当前：{_fmt_promo_value(current)}\n\n"
+        f"请输入新文本（≤ {REIMBURSE_PROMO_TEXT_MAX_LEN} 字符）。"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=reimburse_promo_text_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:reimburse_promo_text:clear")
+@_super_admin_required
+async def cb_promo_text_clear(callback: types.CallbackQuery, state: FSMContext):
+    """清空 footer 文本（=禁用 footer）。直接进入确认页。"""
+    current = await get_reimburse_promo_text()
+    await state.set_state(ReimbursePromoTextStates.confirming)
+    await state.update_data(old_value=current, new_value="")
+    text = (
+        "确认清空 footer 文本？\n\n"
+        f"原文本：{_fmt_promo_value(current)}\n"
+        "新文本：（清空 → footer 不渲染）"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=reimburse_promo_text_confirm_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(ReimbursePromoTextStates.waiting_value)
+@_super_admin_required
+async def step_promo_text_value(message: types.Message, state: FSMContext):
+    """超管输入新文本 → 校验长度 → 进入确认页。"""
+    v = (message.text or "")
+    if len(v) > REIMBURSE_PROMO_TEXT_MAX_LEN:
+        await message.reply(
+            f"❌ 文本长度超过上限 {REIMBURSE_PROMO_TEXT_MAX_LEN}（当前 {len(v)}）。",
+            reply_markup=reimburse_promo_text_cancel_kb(),
+        )
+        return
+    await state.update_data(new_value=v)
+    await state.set_state(ReimbursePromoTextStates.confirming)
+    data = await state.get_data()
+    confirm_text = (
+        "确认修改 footer 文本？\n\n"
+        f"原文本：{_fmt_promo_value(data.get('old_value') or '')}\n"
+        f"新文本：{_fmt_promo_value(v)}"
+    )
+    await message.answer(
+        confirm_text, reply_markup=reimburse_promo_text_confirm_kb(),
+    )
+
+
+@router.callback_query(
+    F.data == "system:reimburse_promo_text:confirm",
+    ReimbursePromoTextStates.confirming,
+)
+@_super_admin_required
+async def cb_promo_text_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """确认修改 → 写 config + audit log。"""
+    data = await state.get_data()
+    old_value = data.get("old_value")
+    new_value = data.get("new_value")
+    if new_value is None:
+        await callback.answer("会话已过期，请重新进入", show_alert=True)
+        await state.clear()
+        return
+    try:
+        await set_reimburse_promo_text(str(new_value))
+    except ValueError as e:
+        await callback.answer(f"⚠️ 写入失败：{e}", show_alert=True)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reimburse_promo_text_set",
+        target_type="config",
+        target_id="reimbursement_promo_text",
+        detail={
+            "old_value": str(old_value or ""),
+            "new_value": str(new_value),
+        },
+    )
+    await state.clear()
+    await callback.answer(
+        "✅ 已更新文本" + ("（footer 已禁用）" if not new_value else "")
+    )
+    await cb_promo_text_menu(callback, state)
+
+
+# ============================================================
+# 1d. 🔗 评价 footer 推广 URL（2026-05 新增）
+# ============================================================
+
+
+@router.callback_query(F.data == "system:reimburse_promo_url")
+@_super_admin_required
+async def cb_promo_url_menu(callback: types.CallbackQuery, state: FSMContext):
+    """🔗 评价 footer 推广 URL 主面板。"""
+    await state.clear()
+    current = await get_reimburse_promo_url()
+    text = (
+        "🔗 评价 footer 推广 URL\n\n"
+        f"当前：{_fmt_promo_value(current)}\n"
+        f"默认：{REIMBURSE_PROMO_URL_DEFAULT!r}\n\n"
+        "说明：\n"
+        "评价通过后讨论群评论 + 老师私聊评论尾部 footer 第二行 HTML 链接的\n"
+        "目标 URL。任一（text 或 url）为空 → footer 整行不渲染。\n"
+        "格式要求：http:// 或 https:// 开头。\n"
+        f"长度限制：≤ {REIMBURSE_PROMO_URL_MAX_LEN} 字符。"
+    )
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=reimburse_promo_url_menu_kb(),
+        )
+    except Exception:
+        await callback.message.answer(
+            text, reply_markup=reimburse_promo_url_menu_kb(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:reimburse_promo_url:edit")
+@_super_admin_required
+async def cb_promo_url_edit(callback: types.CallbackQuery, state: FSMContext):
+    """进入 FSM 等待输入新 URL。"""
+    current = await get_reimburse_promo_url()
+    await state.set_state(ReimbursePromoUrlStates.waiting_value)
+    await state.update_data(old_value=current)
+    text = (
+        f"✏️ 修改 footer URL\n\n"
+        f"当前：{_fmt_promo_value(current)}\n\n"
+        f"请输入新 URL（http(s)://，≤ {REIMBURSE_PROMO_URL_MAX_LEN} 字符）。"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=reimburse_promo_url_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:reimburse_promo_url:clear")
+@_super_admin_required
+async def cb_promo_url_clear(callback: types.CallbackQuery, state: FSMContext):
+    """清空 footer URL（=禁用 footer）。直接进入确认页。"""
+    current = await get_reimburse_promo_url()
+    await state.set_state(ReimbursePromoUrlStates.confirming)
+    await state.update_data(old_value=current, new_value="")
+    text = (
+        "确认清空 footer URL？\n\n"
+        f"原 URL：{_fmt_promo_value(current)}\n"
+        "新 URL：（清空 → footer 不渲染）"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=reimburse_promo_url_confirm_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(ReimbursePromoUrlStates.waiting_value)
+@_super_admin_required
+async def step_promo_url_value(message: types.Message, state: FSMContext):
+    """超管输入新 URL → 校验长度 + http(s):// 前缀 → 进入确认页。"""
+    v = (message.text or "").strip()
+    if len(v) > REIMBURSE_PROMO_URL_MAX_LEN:
+        await message.reply(
+            f"❌ URL 长度超过上限 {REIMBURSE_PROMO_URL_MAX_LEN}（当前 {len(v)}）。",
+            reply_markup=reimburse_promo_url_cancel_kb(),
+        )
+        return
+    if v and not (v.startswith("http://") or v.startswith("https://")):
+        await message.reply(
+            "❌ URL 必须以 http:// 或 https:// 开头。",
+            reply_markup=reimburse_promo_url_cancel_kb(),
+        )
+        return
+    await state.update_data(new_value=v)
+    await state.set_state(ReimbursePromoUrlStates.confirming)
+    data = await state.get_data()
+    confirm_text = (
+        "确认修改 footer URL？\n\n"
+        f"原 URL：{_fmt_promo_value(data.get('old_value') or '')}\n"
+        f"新 URL：{_fmt_promo_value(v)}"
+    )
+    await message.answer(
+        confirm_text, reply_markup=reimburse_promo_url_confirm_kb(),
+    )
+
+
+@router.callback_query(
+    F.data == "system:reimburse_promo_url:confirm",
+    ReimbursePromoUrlStates.confirming,
+)
+@_super_admin_required
+async def cb_promo_url_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """确认修改 → 写 config + audit log。"""
+    data = await state.get_data()
+    old_value = data.get("old_value")
+    new_value = data.get("new_value")
+    if new_value is None:
+        await callback.answer("会话已过期，请重新进入", show_alert=True)
+        await state.clear()
+        return
+    try:
+        await set_reimburse_promo_url(str(new_value))
+    except ValueError as e:
+        await callback.answer(f"⚠️ 写入失败：{e}", show_alert=True)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reimburse_promo_url_set",
+        target_type="config",
+        target_id="reimbursement_promo_url",
+        detail={
+            "old_value": str(old_value or ""),
+            "new_value": str(new_value),
+        },
+    )
+    await state.clear()
+    await callback.answer(
+        "✅ 已更新 URL" + ("（footer 已禁用）" if not new_value else "")
+    )
+    await cb_promo_url_menu(callback, state)
 
 
 # ============================================================
