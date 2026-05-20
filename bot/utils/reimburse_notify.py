@@ -318,7 +318,7 @@ async def safe_notify_user_reimburse_activated(
     返回值：True 表示发送成功，False 表示失败。
     异常被捕获并 logger.warning 后吞；queued 激活主流程不应因通知失败而 break。
 
-    注意：本函数刻意**不**写 mark_reimbursement_notified —— POLICY-reimbursement
+    注意：本函数刻意**不**写 mark_reimbursement_notified —— POLICY.md Part II
     §12.7 标注该字段语义为"已通过/驳回 终态通知"，激活只是中间状态切换。
     """
     text = format_user_reimburse_activated_text(reimb_id=reimb_id, amount=amount)

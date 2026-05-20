@@ -75,9 +75,9 @@
 ### 1.5 文档与运维基线
 
 - 已落地的 policy / runbook 类文档：
-  - `DESIGN.md`、`FEATURES-v2.md`、`DEPLOYMENT.md`、`RUNBOOK.md`
-  - `POLICY-lottery.md`、`POLICY-points.md`、`POLICY-reimbursement.md`
-  - `MIGRATION-REGISTRY-DESIGN.md`、`PRUNING-DESIGN.md`
+  - `DESIGN.md`（合并版 Part I/v1 + Part II/v2）、`DEPLOYMENT.md`、`RUNBOOK.md`
+  - `POLICY.md`（合并版，Part I 积分 / Part II 报销 / Part III 抽奖）
+  - `INFRASTRUCTURE-DESIGN.md`（合并版，Part A 迁移注册器 / Part B 历史清理）
 - 任何涉及业务策略的 Sprint，必须**同步更新对应 POLICY 文档**，不允许只改代码不更新策略。
 
 ---
@@ -115,7 +115,7 @@ MIGRATIONS.append(Migration(...))
 - **禁止**通过手工 SQL 在生产环境执行变更后再补迁移。
 - **禁止**反向操作：跳过 migration runner 用 `executescript` 强写。
 - 迁移失败必须留下 `schema_migrations.status = 'failed'`，被 `update.sh` 与 `healthcheck.sh` 检出。
-- 详细规则参见 `MIGRATION-REGISTRY-DESIGN.md`。
+- 详细规则参见 `INFRASTRUCTURE-DESIGN.md` Part A。
 
 ### 2.4 旧 callback 兼容
 
@@ -254,7 +254,7 @@ bash -n scripts/prune.sh
 - 在测试库构造一个「有扣分无 entry」的人工异常，能在对账页正确显示。
 - 在正常活动上对账，差异为 0、异常人数为 0。
 - 抽奖核心流程（参与、开奖、领奖）未被本 Sprint 影响。
-- `POLICY-lottery.md` 同步更新「对账口径」一节。
+- `POLICY.md` Part III 同步更新「对账口径」一节。
 - CI 全绿，生产 healthcheck 0 ERR。
 
 ---
@@ -284,7 +284,7 @@ bash -n scripts/prune.sh
   - **每次编辑必须**：
     - 写入 `admin_audit_logs`（who / when / before / after / reason）
     - 走二次确认弹窗
-    - 同步更新 `POLICY-reimbursement.md`
+    - 同步更新 `POLICY.md` Part II
 - **5.2.3 报销活动公告文案生成**
   - 基于当前生效配置，生成可粘贴的公告草稿。
   - 不自动发布，不调用 broadcast。
@@ -299,7 +299,7 @@ bash -n scripts/prune.sh
 ### 5.4 验收标准
 
 - 只读页正确展示当前所有配置项。
-- `POLICY-reimbursement.md` 与只读页内容口径一致。
+- `POLICY.md` Part II 与只读页内容口径一致。
 - 报销审核 / queued 流程未被影响。
 - CI 全绿，生产 healthcheck 0 ERR。
 
@@ -326,7 +326,7 @@ bash -n scripts/prune.sh
   - **优先使用 `config` 表**承载配置参数。
   - 如果确实需要 schema 变更（新增表 / 加列），**必须**走 `MIGRATIONS.append(Migration(...))`。
   - 每次编辑必须写 `admin_audit_logs`。
-  - 编辑后必须同步 `POLICY-points.md`。
+  - 编辑后必须同步 `POLICY.md` Part I。
 - **6.2.3 积分异常对账**
   - 展示：
     - `users.total_points`
@@ -345,7 +345,7 @@ bash -n scripts/prune.sh
 
 - 只读页正确展示规则。
 - 对账页能在测试库构造的异常用户上正确报出差异。
-- `POLICY-points.md` 与只读页口径一致。
+- `POLICY.md` Part I 与只读页口径一致。
 - CI 全绿，生产 healthcheck 0 ERR。
 
 ---

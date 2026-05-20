@@ -384,7 +384,7 @@ async def _try_notify_losers(
     """UX-8.4：对未中奖的参与者发简短通知（默认 off）。
 
     控制开关：config["lottery_notify_losers"] == "1" 时启用；
-    缺省 / "0" / 任意其它值 → 视为 off（POLICY-lottery §9.4：代码原本
+    缺省 / "0" / 任意其它值 → 视为 off（POLICY.md Part III §9.4：代码原本
     不通知未中奖者；本批落地为"运营可在面板开启"）。
 
     1/s 节流避免 Telegram flood；TelegramForbiddenError 单条失败不阻塞其它；

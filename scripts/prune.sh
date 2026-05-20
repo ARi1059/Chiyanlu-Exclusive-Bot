@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Chiyanlu-Exclusive-Bot 历史数据 pruning · P2 dry-run（详见 docs/PRUNING-DESIGN.md）
+# Chiyanlu-Exclusive-Bot 历史数据 pruning · P2 dry-run（详见 docs/INFRASTRUCTURE-DESIGN.md (Part B)）
 #
 # 用法：
 #   ./scripts/prune.sh --dry-run                  # 默认 days=180
@@ -25,7 +25,7 @@ cd "${PROJECT_DIR}"
 DEFAULT_DAYS=180
 DEFAULT_DB_PATH="data/bot.db"
 
-# 第一阶段白名单表：仅纯日志类（详见 PRUNING-DESIGN §四）
+# 第一阶段白名单表：仅纯日志类（详见 INFRASTRUCTURE-DESIGN.md Part B §四）
 # 不要在此列表中加入任何权益类表（point_transactions / reimbursements /
 # lottery_entries / teacher_reviews 等），P3 阶段也不会加。
 WHITELIST_TABLES=(
@@ -113,7 +113,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --confirm|--delete|--vacuum|--execute)
             err "当前版本只支持 --dry-run，不支持真实删除。"
-            err "P3 阶段（带 --confirm 的实际清理）尚未实施。详见 docs/PRUNING-DESIGN.md §十"
+            err "P3 阶段（带 --confirm 的实际清理）尚未实施。详见 docs/INFRASTRUCTURE-DESIGN.md (Part B) §十"
             exit 1
             ;;
         -h|--help)

@@ -8,14 +8,14 @@
       entry_cost_points 变更时 → side_effects 追加"建议公告"提示
 
 UX 目标（参见 docs/UX-FEATURE-ITERATION-2026-05-19.md §3.2 痛点 5 + §11.1 决策 4 + §11.3）：
-    - 抽奖未中奖者完全无反馈（POLICY-lottery §9.4 既有策略）；本批让运营**按需开启**
+    - 抽奖未中奖者完全无反馈（POLICY.md Part III §9.4 既有策略）；本批让运营**按需开启**
       （`lottery_notify_losers` config，默认 off）。
     - active 期间改 entry_cost_points 不触发公告，先参与的用户被"偷偷涨价"无感知；
       本批超管收到"建议公告"提示。
 
 约束（§11.1 决策 4）：
     - 默认 off：未配置 / "0" / 空白都视为关闭
-    - 不破坏 POLICY-lottery §9.4 既有策略（保守默认）
+    - 不破坏 POLICY.md Part III §9.4 既有策略（保守默认）
     - 1/s 节流防 Telegram flood
     - disable_notification=True 减少打扰
     - 单条 Forbidden / BadRequest 不阻塞其它

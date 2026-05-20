@@ -4,7 +4,7 @@
 
 项目从 v1 的「老师签到 + 每日发布 + 关键词查询」起步，已逐步扩展为覆盖**老师档案、用户私聊菜单、评价/报告、积分、报销、抽奖、必关订阅、推广追踪、发布模板、日报/周报**的运营平台。所有子系统共用一套 SQLite 后台、一套 systemd 单进程部署。
 
-> 本 README 反映截至 2026-05-20 的实际代码能力。早期版本的产品需求与设计见 [`docs/DESIGN.md`](docs/DESIGN.md)（v1）和 [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md)（v2 增量）。
+> 本 README 反映截至 2026-05-20 的实际代码能力。完整产品需求与设计见 [`docs/DESIGN.md`](docs/DESIGN.md)（合并版：Part I v1 原始设计 / Part II v2 增量）。
 
 ---
 
@@ -289,7 +289,7 @@ SQLite 单文件，默认 `./data/bot.db`，**已启用 WAL 模式**（`PRAGMA j
 | 抽奖 | `lotteries`, `lottery_entries`, `lottery_required_chats` |
 | 操作记录 | `admin_audit_logs`, `user_events`, `sent_messages` |
 
-> 详细字段定义见 [`bot/database.py`](bot/database.py)（DDL 在文件开头 `init_db`）。迁移注册器设计与 baseline 见 [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md)。
+> 详细字段定义见 [`bot/database.py`](bot/database.py)（DDL 在文件开头 `init_db`）。迁移注册器设计与 baseline 见 [`docs/INFRASTRUCTURE-DESIGN.md` Part A](docs/INFRASTRUCTURE-DESIGN.md#part-amigration-registry迁移注册器)。
 
 ---
 
@@ -540,7 +540,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 
 | 项 | 说明 | commit |
 |---|---|---|
-| 运营政策文档 | `docs/POLICY-points.md` / `POLICY-reimbursement.md` / `POLICY-lottery.md` 用户面规则 | `8661e22` |
+| 运营政策文档 | [`docs/POLICY.md`](docs/POLICY.md) 合并版（Part I 积分 / Part II 报销 / Part III 抽奖）用户面规则 | `8661e22` |
 | 值守手册 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) 14 节：值守原则 / 常用命令 / 服务-更新-数据库-抽奖-报销-积分-评价-权限安全事故处理 / 事故记录模板 / 升级判定 | `6680e83` |
 | 健康检查脚本 | [`scripts/healthcheck.sh`](scripts/healthcheck.sh) 只读体检：基础文件 / Python / SQLite WAL & integrity_check / 核心表 / **DB 体积（默认 > 512 MB → WARN，可用 `HEALTHCHECK_DB_WARN_MB` 调整）** / schema_migrations / systemd / Git；存在 ERR 时退出码 1 | `6680e83` |
 | 数据库备份脚本 | [`scripts/backup.sh`](scripts/backup.sh) 独立 WAL-safe 备份 + `integrity_check`，产物 `*.manual.bak`；不影响 `update.sh` 的 `*.bak` | `6680e83` |
@@ -548,7 +548,7 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 | `bot/main.py` 拆分 | 拆为 4 个文件，行为零变更：[`bot/app_factory.py`](bot/app_factory.py)（Bot/Dispatcher/Scheduler 构造）+ [`bot/routers.py`](bot/routers.py)（33 个 router 注册，顺序完全等价于拆分前 L109-213）+ [`bot/lifecycle.py`](bot/lifecycle.py)（startup/shutdown 钩子）+ [`bot/main.py`](bot/main.py)（41 行薄入口）；20 个静态测试保证顺序与契约 | (本次) |
 | Dead code 审查 + P3-A 注释 | 给 ReviewSubmitStates / promo_links / source_stats / noop 双 handler 加 deprecated/交叉注释（0 行删除）；7 个静态测试保护注释 + 未注册 router 差集 | (本次) |
 | pytest 测试体系 | `tests/` 67 用例，覆盖 `parse_start_args` / `compute_reimbursement_amount` / `group_search` 工具函数 / 抽奖状态常量；1 秒内跑完；不连 Telegram / 不读真实 .env / 不触碰 data/bot.db | `bea20c1` |
-| 迁移注册器设计 | [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
+| 迁移注册器设计 | [`docs/INFRASTRUCTURE-DESIGN.md` Part A](docs/INFRASTRUCTURE-DESIGN.md#part-amigration-registry迁移注册器) `schema_migrations` 表 + 注册器 13 节方案；保留现有 9 个 `_migrate_*`，通过 baseline 平滑接入 | `1f7f273` |
 | 迁移注册器 P2 baseline | `schema_migrations` 表 + `ensure_schema_migrations_table` / `baseline_schema_migrations` 落地 [bot/database.py](bot/database.py)；接入 `init_db()`；9 个 `_migrate_*` **顺序未改、行为未改**；[scripts/healthcheck.sh](scripts/healthcheck.sh) 新增 `success=0` 行的 hard/soft 分级检查；13 个 pytest 用例 | (本次) |
 | 迁移注册器 P3 runner framework | `Migration` dataclass + `MIGRATIONS = []` + `run_registered_migrations()` 落地；`init_db()` 在 baseline 之后追加调用。**当前 MIGRATIONS 为空**，旧 9 个 `_migrate_*` 仍按原顺序无条件执行；未来新增迁移须以 `Migration(...)` 追加到列表，hard 失败会 raise 让 init_db 失败便于 rollback；15 个 pytest 用例 | (本次) |
 | 迁移注册器 P5 update.sh 接入 | [update.sh](update.sh) 新增 `_check_schema_migrations_status()`（只读 SELECT/PRAGMA，复用 `$DB_PATH`，不读 .env 二次解析）。完整 update 流程在服务 restart + 日志扫描通过后调用：hard failed → ERR + **提示** `./update.sh rollback` + exit 1（不自动 rollback）；soft failed → WARN 不阻断；表不存在 → WARN 兼容旧库；12 个静态 pytest 用例锁定 SQL 只读契约与函数行为 | (本次) |
@@ -557,8 +557,8 @@ sqlite3 "/backup/bot-${TS}.db" "PRAGMA integrity_check;"   # 必须返回 ok
 
 | 类别 | 任务 | 优先级 |
 |---|---|---|
-| 迁移注册器 P3 | 新迁移走 `MIGRATIONS` 注册器（[设计 §八阶段 B](docs/MIGRATION-REGISTRY-DESIGN.md#阶段-b新迁移走注册器)），失败按 kind 路由 ERR/WARN；P2 baseline 已就绪 | P2 |
-| 迁移注册器 P5 | [`update.sh`](update.sh) 检测 hard failed migration 时阻断并提示 rollback（[设计 §八阶段 D](docs/MIGRATION-REGISTRY-DESIGN.md#阶段-d-updatesh-接入)） | P2 |
+| 迁移注册器 P3 | 新迁移走 `MIGRATIONS` 注册器（见 [`docs/INFRASTRUCTURE-DESIGN.md` Part A](docs/INFRASTRUCTURE-DESIGN.md#part-amigration-registry迁移注册器) §八阶段 B），失败按 kind 路由 ERR/WARN；P2 baseline 已就绪 | P2 |
+| 迁移注册器 P5 | [`update.sh`](update.sh) 检测 hard failed migration 时阻断并提示 rollback（见 [`docs/INFRASTRUCTURE-DESIGN.md` Part A](docs/INFRASTRUCTURE-DESIGN.md#part-amigration-registry迁移注册器) §八阶段 D） | P2 |
 | CI | 把 `pytest` + `compileall` + `bash -n scripts/*.sh` 接入 GitHub Actions（push / PR 触发） | P2 |
 | 清理 | scheduler 加 `prune_old_records`（user_events / audit_logs / point_transactions > 180 天） | P2 |
 | 死代码 | 线性 `ReviewSubmitStates` 旧 FSM、`promo_links.py` / `source_stats.py`（router 已下线） | P3 |
@@ -664,17 +664,13 @@ scripts/backup.sh / scripts/prune.sh` 四类检查。workflow 定义见
 - [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — 值守手册（14 节，事故处理流程）
 
 ### 运营规则
-- [`docs/POLICY-points.md`](docs/POLICY-points.md) — 积分获取 / 消耗规则
-- [`docs/POLICY-reimbursement.md`](docs/POLICY-reimbursement.md) — 报销规则、池模型、每周上限
-- [`docs/POLICY-lottery.md`](docs/POLICY-lottery.md) — 抽奖发布 / 参与 / 开奖规则
+- [`docs/POLICY.md`](docs/POLICY.md) — 合并版运营政策：Part I 积分 / Part II 报销 / Part III 抽奖
 
 ### 数据库与维护设计
-- [`docs/MIGRATION-REGISTRY-DESIGN.md`](docs/MIGRATION-REGISTRY-DESIGN.md) — 迁移注册器（P2 baseline 已落地）
-- [`docs/PRUNING-DESIGN.md`](docs/PRUNING-DESIGN.md) — 历史数据清理策略（P2 dry-run 已落地）
+- [`docs/INFRASTRUCTURE-DESIGN.md`](docs/INFRASTRUCTURE-DESIGN.md) — 合并版：Part A 迁移注册器（P2 baseline 已落地）/ Part B 历史数据清理（P2 dry-run 已落地）
 
 ### 历史设计
-- [`docs/DESIGN.md`](docs/DESIGN.md) — v1 原始产品设计
-- [`docs/FEATURES-v2.md`](docs/FEATURES-v2.md) — v2 增量功能清单
+- [`docs/DESIGN.md`](docs/DESIGN.md) — 合并版产品设计：Part I v1 原始设计 / Part II v2 增量
 
 ---
 

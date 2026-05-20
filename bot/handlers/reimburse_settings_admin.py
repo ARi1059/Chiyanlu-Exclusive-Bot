@@ -11,7 +11,7 @@
      让"本月已使用额度"从重置点后重新计算。
 
 所有动作必须二次确认 + 写 admin_audit_logs；完整流程见
-docs/POLICY-reimbursement.md §15。
+docs/POLICY.md (Part II) §15。
 """
 from __future__ import annotations
 

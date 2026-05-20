@@ -1048,7 +1048,7 @@ async def on_lottery_edit_value(message: types.Message, state: FSMContext):
             side_effects.append("⚠️ 频道刷新异常")
 
     # UX-8.4：entry_cost_points 变更（active 期间）→ 提示运营在频道公告说明
-    # 与 POLICY-lottery §11.6 公平性承诺一致：避免"先参与的用户不知情就被改价"
+    # 与 POLICY.md Part III §11.6 公平性承诺一致：避免"先参与的用户不知情就被改价"
     if field == "entry_cost_points" and lottery.get("status") == "active":
         try:
             old_v = int(old_value or 0)

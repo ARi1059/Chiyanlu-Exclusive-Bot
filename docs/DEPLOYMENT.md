@@ -736,7 +736,7 @@ cd /opt/Chiyanlu-Exclusive-Bot
 ./scripts/prune.sh --dry-run --days 180
 # 期望：列出 user_events / user_teacher_views 命中行数；exit 0
 # 当前版本严格只读，不支持 --confirm；任何危险参数都会 exit 1
-# 详见 docs/PRUNING-DESIGN.md
+# 详见 docs/INFRASTRUCTURE-DESIGN.md（Part B）
 
 # 1. 代码语法
 cd /opt/Chiyanlu-Exclusive-Bot
@@ -829,4 +829,4 @@ ls -lh /opt/Chiyanlu-Exclusive-Bot/backups/
 ## 相关文档
 
 - 项目总览：[README.md](../README.md)
-- 设计文档：[DESIGN.md](DESIGN.md)（v1） / [FEATURES-v2.md](FEATURES-v2.md)（v2 增量）
+- 设计文档：[DESIGN.md](DESIGN.md)（v1） / [DESIGN.md Part II](DESIGN.md#part-iiv2-增量需求)（v2 增量）

@@ -463,7 +463,7 @@ async def init_db():
         await db.close()
 
 
-# ============ schema_migrations baseline (P2，详见 docs/MIGRATION-REGISTRY-DESIGN.md) ============
+# ============ schema_migrations baseline (P2，详见 docs/INFRASTRUCTURE-DESIGN.md (Part A)) ============
 #
 # 本阶段仅做 baseline：
 #   - 新增 schema_migrations 表
@@ -571,7 +571,7 @@ async def baseline_schema_migrations(db: aiosqlite.Connection) -> None:
 #   - 任何**未来**的新迁移须以 Migration 实例追加到 MIGRATIONS 列表，**不要**再加
 #     新的 _migrate_* 顶级 async 函数 + init_db 手工调用
 #
-# 详见 docs/MIGRATION-REGISTRY-DESIGN.md §五 / §六。
+# 详见 docs/INFRASTRUCTURE-DESIGN.md (Part A) §五 / §六。
 
 
 @dataclass(frozen=True)

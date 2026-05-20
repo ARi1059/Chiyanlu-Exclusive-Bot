@@ -3,7 +3,7 @@
 范围：cb_reimburse_activate 成功激活 queued → pending 后给用户的中间状态通知。
 
 UX 目标（参见 docs/UX-FEATURE-ITERATION-2026-05-19.md §1 C1 + §4.2 痛点 6 + §11.3）：
-    POLICY-reimbursement §9.6 标注：queued 激活后**不通知用户**，用户对状态变化
+    POLICY.md Part II §9.6 标注：queued 激活后**不通知用户**，用户对状态变化
     完全被动；本批补这条通知，文案 + CTA keyboard：
 
         - [📋 我的报销]    callback=user:reimburse  含当前状态

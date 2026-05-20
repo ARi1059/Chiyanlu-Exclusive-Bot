@@ -266,7 +266,7 @@ if [[ -f "${DB_PATH}" ]] && command -v sqlite3 >/dev/null 2>&1; then
     # reimbursements_new 残留表（迁移残留指示）
     if grep -Fxq "reimbursements_new" <<<"${existing_tables}"; then
         new_count=$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM reimbursements_new;" 2>/dev/null || echo "?")
-        warn "存在 reimbursements_new 表（行数 ${new_count}），属于迁移残留，请按 docs/POLICY-reimbursement.md 处理"
+        warn "存在 reimbursements_new 表（行数 ${new_count}），属于迁移残留，请按 docs/POLICY.md (Part II) 处理"
     fi
 
     # schema_migrations 失败迁移检查（P2 baseline；表不存在视为旧库或未启动新版本 → WARN）

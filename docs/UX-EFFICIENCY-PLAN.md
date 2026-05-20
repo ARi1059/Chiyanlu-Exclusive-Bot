@@ -471,9 +471,9 @@ UX 优化按收益 / 风险三段式：
 
 后续逐步推进：
 
-1. 报销规则只读 → 编辑（写 `admin_audit_logs`、二次确认、同步 `POLICY-reimbursement.md`）
-2. 积分规则只读 → 编辑（优先 config 表，必要时走 `MIGRATIONS`，同步 `POLICY-points.md`）
-3. 抽奖规则只读 → 编辑（同步 `POLICY-lottery.md`）
+1. 报销规则只读 → 编辑（写 `admin_audit_logs`、二次确认、同步 `POLICY.md` Part II）
+2. 积分规则只读 → 编辑（优先 config 表，必要时走 `MIGRATIONS`，同步 `POLICY.md` Part I）
+3. 抽奖规则只读 → 编辑（同步 `POLICY.md` Part III）
 
 **约束**：
 
