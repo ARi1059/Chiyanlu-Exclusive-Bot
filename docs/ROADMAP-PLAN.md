@@ -309,6 +309,12 @@ bash -n scripts/prune.sh
 - 报销审核 / queued 流程未被影响。
 - CI 全绿，生产 healthcheck 0 ERR。
 
+### 5.5 进度（2026-05）
+
+- **§5.2.1 已落地**：报销规则只读页。新增 `bot/services/reimbursement_rules.py`（`ReimbursementRulesSnapshot` dataclass + `get_reimbursement_rules_snapshot()` + `render_reimbursement_rules()`），暴露 7 项规则：功能开关 / 月度池上限 + 本月 reset baseline / 最低积分门槛（含默认 5、上限 100）/ 每周 approved 限制（硬编码 1 次 = `WEEKLY_APPROVED_LIMIT`）/ reset voucher 一次性跳过本周校验说明 / queued 名单模式（按 `feature_enabled` 描述触发条件 + 当前队列长度）/ 必关频道 / 群组（总数 + 启用数）。`admin_reimburse_config_kb` 顶部新增「📜 完整规则一览（只读）」按钮（callback `admin:reimburse_rules`），与编辑入口区分。新增 `admin_reimburse_rules_kb`（仅刷新 + 返回报销配置）。新增 `cb_admin_reimburse_rules` + `cb_admin_reimburse_rules_refresh` 两个 `@super_admin_required` handler。零修改报销审核 / queued / reset voucher 流程；零 schema 变更；零编辑按钮（§5.3）。新增测试 34 个 service test（常量 / dataclass 默认 / `_parse_monthly_pool` 边界 / 5 个 `_fmt_*` helper / `render` 含全部章节 + N/A 回退 + reset baseline 渲染 / `get_snapshot` monkeypatch 集成 5 场景含异常容错）+ 3 个新 kb test（只读 kb 限刷新 + 返回 / 防御性"无编辑按钮" / callback ≤ 64B）+ 1 个 `test_reimburse_config_aggregate` 防御契约扩展（新增 `admin:reimburse_rules` 入白名单，按钮总数 6 → 7，并断言只读入口位于第一行）。
+- **§5.2.2 报销规则编辑页**：**下一个 Sprint（不在本 Sprint 范围）**。
+- **§5.2.3 报销活动公告文案生成**：待后续 PR。
+
 ---
 
 ## 6. Sprint 4：积分规则

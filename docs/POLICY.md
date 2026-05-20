@@ -1064,6 +1064,43 @@ DB 层提供 **`get_reimbursement_monthly_pool_usage(month_key) -> dict`**：
 
 ---
 
+## 十七、报销规则只读总览（2026-05 新增，Sprint 3 §5.2.1）
+
+### 17.1 用途
+
+为超管提供 **一页式只读** 报销规则总览，无需在多个编辑面板间切换或翻 POLICY 文档。展示口径与本文档 Part II §6 / §7 / §15 / §16 / §13 完全一致；服务函数 `services/reimbursement_rules.py::get_reimbursement_rules_snapshot()` 是唯一聚合口径，避免漂移。
+
+### 17.2 展示字段
+
+| 段落 | 字段 | 来源 |
+| --- | --- | --- |
+| 功能开关 | feature_enabled (开 / 关 / N/A) | `config.reimbursement_feature_enabled` |
+| 月度报销池 | monthly_pool + 本月 reset baseline | `config.reimbursement_monthly_pool` + `reimbursement_monthly_pool_reset_baselines` |
+| 积分门槛 | min_points + 默认 5 + 上限 100 | `config.reimbursement_min_points` |
+| 每周限制 | 1 次/周 approved（硬编码） | `WEEKLY_APPROVED_LIMIT = 1` |
+| reset voucher | "一次性跳过本周校验" 说明 | 硬编码文案，与 §6.2 一致 |
+| queued 名单模式 | 触发条件 + 当前队列长度 | `feature_enabled` + `count_queued_reimbursements()` |
+| 必关频道/群组 | 总数 + 启用数 | `get_reimburse_required_chats()` |
+
+### 17.3 后台入口
+
+| 路径 | callback | 权限 |
+| --- | --- | --- |
+| `/admin` → ⚙️ 系统配置 → 💰 报销配置 → 📜 完整规则一览（只读） | `admin:reimburse_rules` | **仅超管** |
+
+子动作：
+- `admin:reimburse_rules` — 入口
+- `admin:reimburse_rules:refresh` — 刷新当前 snapshot
+
+### 17.4 边界
+
+- **严格只读**：本页**不**提供任何编辑入口；编辑请用 `admin:reimburse_config` 聚合页里的 5 个 `system:reimburse_*` 入口
+- **不写表 / 不写 audit log**：纯展示
+- **N/A 容错**：任一字段查询失败 → 显式 N/A，不影响其它字段
+- 公告草稿生成（§5.2.3）作为后续 PR 单独加入，本页不含
+
+---
+
 # Part III：抽奖规则
 
 ## 一、抽奖系统定位

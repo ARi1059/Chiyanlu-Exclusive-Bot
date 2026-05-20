@@ -177,12 +177,32 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
     保留至少一个 Sprint 双跑期不删除（PLAN §1.2）。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📜 完整规则一览（只读）", callback_data="admin:reimburse_rules")],
         [InlineKeyboardButton(text="🔛 报销功能开关", callback_data="system:reimburse_toggle")],
         [InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool")],
         [InlineKeyboardButton(text="🔄 重置本月报销池", callback_data="system:reimburse_pool_reset")],
         [InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points")],
         [InlineKeyboardButton(text="📋 报销必关设置", callback_data="system:reimburse_subreq")],
         [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
+    ])
+
+
+def admin_reimburse_rules_kb() -> InlineKeyboardMarkup:
+    """报销规则只读页 keyboard（Sprint 3 §5.2.1）。
+
+    无任何编辑按钮（§5.3 禁止）；仅刷新 + 返回报销配置。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔄 刷新",
+                callback_data="admin:reimburse_rules:refresh",
+            ),
+            InlineKeyboardButton(
+                text="⬅️ 返回报销配置",
+                callback_data="admin:reimburse_config",
+            ),
+        ],
     ])
 
 

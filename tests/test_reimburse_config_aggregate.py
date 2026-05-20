@@ -74,21 +74,34 @@ def test_kb_has_return_to_settings():
 
 def test_kb_reuses_existing_callbacks_only():
     """所有 callback 全部复用既有 system:reimburse_* / admin:settings；
-    不引入任何 admin:reimburse_config:* 子命名空间或新 callback。"""
+    Sprint 3 §5.2.1 新增 admin:reimburse_rules（只读规则页）也属于报销命名空间。
+
+    防御性：不允许出现其它命名空间的新 callback。"""
     from bot.keyboards.admin_kb import admin_reimburse_config_kb
     kb = admin_reimburse_config_kb()
     cbs = [b.callback_data for b in _flat_buttons(kb)]
+    allowed_prefixes = ("system:reimburse_", "admin:reimburse_rules")
     for cb in cbs:
         assert (
-            cb.startswith("system:reimburse_") or cb == "admin:settings"
+            cb == "admin:settings"
+            or any(cb.startswith(p) for p in allowed_prefixes)
         ), f"unexpected callback {cb}"
 
 
 def test_kb_button_count():
-    """聚合页共 6 个按钮（5 项配置 + 1 返回）。"""
+    """聚合页共 7 个按钮（1 只读规则 + 5 项编辑配置 + 1 返回）。"""
     from bot.keyboards.admin_kb import admin_reimburse_config_kb
     kb = admin_reimburse_config_kb()
-    assert len(_flat_buttons(kb)) == 6
+    assert len(_flat_buttons(kb)) == 7
+
+
+def test_kb_first_button_is_readonly_rules_view():
+    """Sprint 3 §5.2.1：只读规则一览作为第一按钮，引导用户先看现状再决定编辑。"""
+    from bot.keyboards.admin_kb import admin_reimburse_config_kb
+    kb = admin_reimburse_config_kb()
+    first_row = kb.inline_keyboard[0]
+    assert first_row[0].callback_data == "admin:reimburse_rules"
+    assert "完整规则" in first_row[0].text or "规则一览" in first_row[0].text
 
 
 # ============================================================

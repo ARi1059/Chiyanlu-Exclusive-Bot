@@ -49,6 +49,7 @@ from bot.keyboards.admin_kb import (
     admin_lottery_reconcile_kb,
     admin_lottery_reconcile_detail_kb,
     admin_lottery_reconcile_anomaly_kb,
+    admin_reimburse_rules_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -1401,6 +1402,48 @@ async def cb_admin_reimburse_config(callback: types.CallbackQuery):
         reply_markup=admin_reimburse_config_kb(),
     )
     await callback.answer()
+
+
+# ============ 报销规则只读页（Sprint 3 §5.2.1，admin:reimburse_rules） ============
+# 仅超管可见。展示当前生效的全部报销规则（功能开关 / 月度池 / 积分门槛 /
+# 每周限制硬编码 / queued 模式 / reset voucher 规则 / 必关频道）。
+# 严格只读（§5.3 禁止）：不放任何编辑入口，编辑请回 admin:reimburse_config。
+
+
+@router.callback_query(F.data == "admin:reimburse_rules")
+@super_admin_required
+async def cb_admin_reimburse_rules(callback: types.CallbackQuery):
+    """报销规则只读总览页（Sprint 3 §5.2.1）。"""
+    from bot.services.reimbursement_rules import (
+        get_reimbursement_rules_snapshot,
+        render_reimbursement_rules,
+    )
+    snap = await get_reimbursement_rules_snapshot()
+    await callback.message.edit_text(
+        render_reimbursement_rules(snap),
+        reply_markup=admin_reimburse_rules_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:reimburse_rules:refresh")
+@super_admin_required
+async def cb_admin_reimburse_rules_refresh(callback: types.CallbackQuery):
+    """报销规则页刷新按钮（重新拉取 snapshot 并重绘）。"""
+    from bot.services.reimbursement_rules import (
+        get_reimbursement_rules_snapshot,
+        render_reimbursement_rules,
+    )
+    snap = await get_reimbursement_rules_snapshot()
+    try:
+        await callback.message.edit_text(
+            render_reimbursement_rules(snap),
+            reply_markup=admin_reimburse_rules_kb(),
+        )
+    except Exception:
+        # 文本未变时 Telegram 抛 message is not modified
+        pass
+    await callback.answer("已刷新")
 
 
 # ============ 活动运营二级菜单（admin:operations） ============
