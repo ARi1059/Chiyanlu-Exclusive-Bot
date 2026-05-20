@@ -89,16 +89,18 @@ def test_kb_reuses_existing_callbacks_only():
 
 
 def test_kb_button_count():
-    """聚合页共 10 个按钮（1 只读规则 + 8 项编辑配置 + 1 返回）。
+    """聚合页共 8 个按钮（1 只读规则 + 6 项编辑配置 + 1 返回）。
 
-    2026-05 新增：
-    - 🗓 每周报销上限 (system:reimburse_weekly_limit)
-    - 📢 评价 footer 文本 (system:reimburse_promo_text)
-    - 🔗 评价 footer 链接 (system:reimburse_promo_url)
-    旧 5 项 + 新 3 项 + 只读 + 返回 = 10。"""
+    2026-05-20 修订：评价 footer 文本 / 链接（system:reimburse_promo_text /
+    _url）已迁回 menu:system「系统设置」面板（属评价文案全局配置，与报销
+    功能本身解耦），本聚合页不再包含。
+
+    现有 6 项编辑配置 =
+      旧 5 项（toggle / pool / pool_reset / min_points / subreq）
+      + 2026-05 新增 1 项（weekly_limit）。"""
     from bot.keyboards.admin_kb import admin_reimburse_config_kb
     kb = admin_reimburse_config_kb()
-    assert len(_flat_buttons(kb)) == 10
+    assert len(_flat_buttons(kb)) == 8
 
 
 def test_kb_first_button_is_readonly_rules_view():
@@ -153,22 +155,26 @@ def test_admin_settings_kb_super_no_longer_has_overlapping_reimburse_entries():
 
 
 # ============================================================
-# 3. menu:system 子面板里的 5 项报销入口未被本批移除（双跑期保留）
+# 3. menu:system 子面板里的 5 项报销入口已下线（2026-05-20 修订）
 # ============================================================
 
 
-def test_system_menu_kb_still_has_all_reimburse_entries():
-    """旧入口 menu:system 内的 5 项报销 callback 全部保留（双跑期保护）。"""
+def test_system_menu_kb_no_longer_has_reimburse_entries():
+    """2026-05-20 修订：menu:system 内的 5 项报销 callback 已被移除，
+    聚合页 admin:reimburse_config 是唯一入口源；callback handler 本身
+    保留兼容，旧 inline button 仍可工作。"""
     from bot.keyboards.admin_kb import system_menu_kb
     cbs = [b.callback_data for b in _flat_buttons(system_menu_kb())]
-    for expected in (
+    for removed in (
         "system:reimburse_pool",
         "system:reimburse_toggle",
         "system:reimburse_min_points",
         "system:reimburse_pool_reset",
         "system:reimburse_subreq",
     ):
-        assert expected in cbs
+        assert removed not in cbs, (
+            f"{removed} 应已从 system_menu_kb 移除，避免与 admin:reimburse_config 聚合页重复"
+        )
 
 
 # ============================================================

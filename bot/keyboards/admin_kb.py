@@ -153,7 +153,7 @@ def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
     if is_super:
         # UX-6.2 + 2026-05 收口：仅保留聚合入口，去除旧两按钮重叠
         rows.append([
-            InlineKeyboardButton(text="💰 报销配置（聚合 5 项）", callback_data="admin:reimburse_config"),
+            InlineKeyboardButton(text="💰 报销配置（聚合 6 项）", callback_data="admin:reimburse_config"),
         ])
     rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -166,6 +166,10 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
     system:reimburse_weekly_limit），原 POLICY §6.1 硬编码 1 次/周 已升级
     为 config 化（1-10 次范围，默认 1）。
 
+    2026-05-20：评价 footer 文本 / 链接（system:reimburse_promo_text / _url）
+    本质上是「评价文案」相关的全局配置，不属于报销功能本身；已迁回
+    系统设置子面板（menu:system）统一管理，不在本聚合页重复出现。
+
     callback 命名空间继续复用 system:reimburse_*，所有原 handler 不动。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -176,8 +180,6 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points")],
         [InlineKeyboardButton(text="🗓 每周报销上限", callback_data="system:reimburse_weekly_limit")],
         [InlineKeyboardButton(text="📋 报销必关设置", callback_data="system:reimburse_subreq")],
-        [InlineKeyboardButton(text="📢 评价 footer 文本", callback_data="system:reimburse_promo_text")],
-        [InlineKeyboardButton(text="🔗 评价 footer 链接", callback_data="system:reimburse_promo_url")],
         [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
 
@@ -1049,6 +1051,15 @@ def system_menu_kb() -> InlineKeyboardMarkup:
     返回按钮指向二级页 admin:settings（⚙️ 系统配置），不再直接回 menu:main——
     UX-1 第三批返回路径优化（2026-05）。深层子项（system:status / publish:* /
     system:reminder_* 等）的返回路径保持不变。
+
+    2026-05-20：移除 5 个已被「💰 报销配置（admin:reimburse_config）」聚合页
+    收纳的报销按钮（reimburse_pool / reimburse_toggle / reimburse_min_points /
+    reimburse_pool_reset / reimburse_subreq），避免与聚合页入口功能重复；
+    callback handler 本身保持不变，仅本面板不再展示入口。
+
+    同时把评价 footer 文本 / 链接两个按钮（system:reimburse_promo_text /
+    _url）从「报销配置」聚合页移回本系统设置面板——这两项本质是评价文案
+    全局配置（不专属于报销），与本面板其他单项配置同类。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="系统状态检查", callback_data="system:status")],
@@ -1069,17 +1080,8 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
         [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
         [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="system:lottery_contact")],
-        [
-            InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool"),
-            InlineKeyboardButton(text="🔘 报销功能开关", callback_data="system:reimburse_toggle"),
-        ],
-        [
-            InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points"),
-            InlineKeyboardButton(text="🔄 重置本月报销池", callback_data="system:reimburse_pool_reset"),
-        ],
-        [
-            InlineKeyboardButton(text="💰 报销必关设置", callback_data="system:reimburse_subreq"),
-        ],
+        [InlineKeyboardButton(text="📢 评价 footer 文本", callback_data="system:reimburse_promo_text")],
+        [InlineKeyboardButton(text="🔗 评价 footer 链接", callback_data="system:reimburse_promo_url")],
         [
             InlineKeyboardButton(text="🏷 档案品牌名",   callback_data="system:brand_name"),
             InlineKeyboardButton(text="📡 档案品牌频道", callback_data="system:brand_channels"),
@@ -2215,7 +2217,11 @@ def reimburse_weekly_limit_confirm_kb() -> InlineKeyboardMarkup:
 
 
 def reimburse_promo_text_menu_kb() -> InlineKeyboardMarkup:
-    """📢 footer 文本主面板：修改 + 清空 + 返回报销配置。"""
+    """📢 footer 文本主面板：修改 + 清空 + 返回系统设置。
+
+    2026-05-20：入口已从「报销配置」聚合页迁回「系统设置」（menu:system），
+    返回按钮一并改指 menu:system。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="✏️ 修改文本",
@@ -2226,8 +2232,8 @@ def reimburse_promo_text_menu_kb() -> InlineKeyboardMarkup:
             callback_data="system:reimburse_promo_text:clear",
         )],
         [InlineKeyboardButton(
-            text="⬅️ 返回报销配置",
-            callback_data="admin:reimburse_config",
+            text="⬅️ 返回系统设置",
+            callback_data="menu:system",
         )],
     ])
 
@@ -2259,7 +2265,11 @@ def reimburse_promo_text_confirm_kb() -> InlineKeyboardMarkup:
 
 
 def reimburse_promo_url_menu_kb() -> InlineKeyboardMarkup:
-    """🔗 footer 链接主面板：修改 + 清空 + 返回报销配置。"""
+    """🔗 footer 链接主面板：修改 + 清空 + 返回系统设置。
+
+    2026-05-20：入口已从「报销配置」聚合页迁回「系统设置」（menu:system），
+    返回按钮一并改指 menu:system。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="✏️ 修改链接",
@@ -2270,8 +2280,8 @@ def reimburse_promo_url_menu_kb() -> InlineKeyboardMarkup:
             callback_data="system:reimburse_promo_url:clear",
         )],
         [InlineKeyboardButton(
-            text="⬅️ 返回报销配置",
-            callback_data="admin:reimburse_config",
+            text="⬅️ 返回系统设置",
+            callback_data="menu:system",
         )],
     ])
 

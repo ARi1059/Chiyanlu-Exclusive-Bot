@@ -22,23 +22,33 @@ def _texts_by_cb(kb) -> dict:
     return {b.callback_data: b.text for row in kb.inline_keyboard for b in row}
 
 
-# ============ 1. system_menu_kb 含入口 ============
+# ============ 1. admin_reimburse_config_kb 含入口（2026-05-20 修订） ============
+# 原入口在 system_menu_kb；2026-05-20 起 menu:system 不再含报销类直入口，
+# 唯一入口源是聚合页 admin:reimburse_config。
 
 
-def test_system_menu_kb_contains_reimburse_subreq_entry():
-    """⚙️ 系统设置子菜单必须含 system:reimburse_subreq 入口。"""
-    from bot.keyboards.admin_kb import system_menu_kb
-    cbs = _cbs(system_menu_kb())
+def test_admin_reimburse_config_kb_contains_reimburse_subreq_entry():
+    """💰 报销配置聚合页必须含 system:reimburse_subreq 入口。"""
+    from bot.keyboards.admin_kb import admin_reimburse_config_kb
+    cbs = _cbs(admin_reimburse_config_kb())
     assert "system:reimburse_subreq" in cbs
 
 
-def test_system_menu_kb_reimburse_subreq_label_includes_keyword():
+def test_admin_reimburse_config_kb_reimburse_subreq_label_includes_keyword():
     """入口文案应含「报销」「必关」字样。"""
-    from bot.keyboards.admin_kb import system_menu_kb
-    by_cb = _texts_by_cb(system_menu_kb())
+    from bot.keyboards.admin_kb import admin_reimburse_config_kb
+    by_cb = _texts_by_cb(admin_reimburse_config_kb())
     text = by_cb["system:reimburse_subreq"]
     assert "报销" in text
     assert "必关" in text
+
+
+def test_system_menu_kb_no_longer_has_reimburse_subreq_entry():
+    """2026-05-20：menu:system 不再含 system:reimburse_subreq 直入口，
+    避免与 admin:reimburse_config 聚合页重复（用户痛点：按钮重复）。"""
+    from bot.keyboards.admin_kb import system_menu_kb
+    cbs = _cbs(system_menu_kb())
+    assert "system:reimburse_subreq" not in cbs
 
 
 # ============ 2. 权限：仅超管 ============

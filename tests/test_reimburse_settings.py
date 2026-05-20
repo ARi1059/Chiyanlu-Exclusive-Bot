@@ -172,10 +172,11 @@ def test_min_points_audit_log_on_confirm():
     assert "reimburse_min_points_set" in body
 
 
-def test_system_menu_kb_contains_min_points_entry():
-    """系统设置菜单含 🎚 报销门槛设置入口。"""
-    from bot.keyboards.admin_kb import system_menu_kb
-    cbs = _cbs(system_menu_kb())
+def test_admin_reimburse_config_kb_contains_min_points_entry():
+    """2026-05-20：5 项报销直入口已从 menu:system 迁到 admin:reimburse_config
+    聚合页，避免与聚合页重复。本测试改为校验聚合页含 🎚 报销门槛设置入口。"""
+    from bot.keyboards.admin_kb import admin_reimburse_config_kb
+    cbs = _cbs(admin_reimburse_config_kb())
     assert "system:reimburse_min_points" in cbs
 
 
@@ -398,10 +399,10 @@ def test_pool_reset_has_two_step_confirmation():
     assert "ReimbursePoolResetStates.confirming" in src
 
 
-def test_system_menu_kb_contains_pool_reset_entry():
-    """系统设置菜单含 🔄 重置本月报销池入口。"""
-    from bot.keyboards.admin_kb import system_menu_kb
-    cbs = _cbs(system_menu_kb())
+def test_admin_reimburse_config_kb_contains_pool_reset_entry():
+    """2026-05-20：本批次起，入口源在 admin:reimburse_config 聚合页。"""
+    from bot.keyboards.admin_kb import admin_reimburse_config_kb
+    cbs = _cbs(admin_reimburse_config_kb())
     assert "system:reimburse_pool_reset" in cbs
 
 

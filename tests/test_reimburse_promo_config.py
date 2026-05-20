@@ -3,7 +3,7 @@
 测试范围：
     1. 常量值
     2. get/set helper 行为（默认 / 空串合法 / 长度边界 / URL 协议校验）
-    3. admin_reimburse_config_kb 新增 2 个 footer 入口
+    3. system_menu_kb 含 2 个 footer 入口（2026-05-20 从聚合页迁回系统设置）
     4. keyboard 契约（promo_text / promo_url menu / cancel / confirm + clear）
     5. handler 源码静态契约（callback 字面量 / audit / 必经 set helper）
     6. publish_review_comment 读 config 注入 render（空 config 时不渲染 footer）
@@ -142,7 +142,7 @@ def test_set_url_too_long_raises(temp_db):
 
 
 # ============================================================
-# 3. admin_reimburse_config_kb 新增按钮
+# 3. system_menu_kb 含 footer 入口（2026-05-20：从聚合页迁回系统设置）
 # ============================================================
 
 
@@ -150,18 +150,29 @@ def _flat(kb):
     return [b for row in kb.inline_keyboard for b in row]
 
 
-def test_admin_reimburse_config_kb_has_promo_text_entry():
-    from bot.keyboards.admin_kb import admin_reimburse_config_kb
-    kb = admin_reimburse_config_kb()
+def test_system_menu_kb_has_promo_text_entry():
+    """2026-05-20：footer 文本/链接入口本质是评价文案全局配置，
+    迁回 menu:system 与其他系统配置同类管理；不再放在 admin:reimburse_config。"""
+    from bot.keyboards.admin_kb import system_menu_kb
+    kb = system_menu_kb()
     cbs = [b.callback_data for b in _flat(kb)]
     assert "system:reimburse_promo_text" in cbs
 
 
-def test_admin_reimburse_config_kb_has_promo_url_entry():
+def test_system_menu_kb_has_promo_url_entry():
+    from bot.keyboards.admin_kb import system_menu_kb
+    kb = system_menu_kb()
+    cbs = [b.callback_data for b in _flat(kb)]
+    assert "system:reimburse_promo_url" in cbs
+
+
+def test_admin_reimburse_config_kb_does_not_have_promo_entries():
+    """2026-05-20：admin:reimburse_config 聚合页不应再含 footer 入口。"""
     from bot.keyboards.admin_kb import admin_reimburse_config_kb
     kb = admin_reimburse_config_kb()
     cbs = [b.callback_data for b in _flat(kb)]
-    assert "system:reimburse_promo_url" in cbs
+    assert "system:reimburse_promo_text" not in cbs
+    assert "system:reimburse_promo_url" not in cbs
 
 
 # ============================================================
@@ -170,12 +181,13 @@ def test_admin_reimburse_config_kb_has_promo_url_entry():
 
 
 def test_promo_text_menu_kb_has_edit_clear_back():
+    """2026-05-20：返回按钮指向 menu:system（已从 admin:reimburse_config 迁出）。"""
     from bot.keyboards.admin_kb import reimburse_promo_text_menu_kb
     kb = reimburse_promo_text_menu_kb()
     cbs = [b.callback_data for b in _flat(kb)]
     assert "system:reimburse_promo_text:edit" in cbs
     assert "system:reimburse_promo_text:clear" in cbs
-    assert "admin:reimburse_config" in cbs
+    assert "menu:system" in cbs
 
 
 def test_promo_url_menu_kb_has_edit_clear_back():
@@ -184,7 +196,7 @@ def test_promo_url_menu_kb_has_edit_clear_back():
     cbs = [b.callback_data for b in _flat(kb)]
     assert "system:reimburse_promo_url:edit" in cbs
     assert "system:reimburse_promo_url:clear" in cbs
-    assert "admin:reimburse_config" in cbs
+    assert "menu:system" in cbs
 
 
 def test_all_promo_callbacks_within_64b():

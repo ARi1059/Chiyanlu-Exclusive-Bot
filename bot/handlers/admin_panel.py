@@ -1336,13 +1336,13 @@ async def cb_admin_settings(callback: types.CallbackQuery):
         "",
         "📢 必关订阅",
         "🧩 发布模板",
+        "🗝 关键词管理",
         "📣 频道 / 群组设置",
         "📅 日报 / 周报设置",
         "⚙️ 系统设置",
     ]
     if is_super:
-        lines.append("💰 报销池设置")
-        lines.append("🔛 报销功能开关")
+        lines.append("💰 报销配置（聚合 6 项）")
 
     await callback.message.edit_text(
         "\n".join(lines),
