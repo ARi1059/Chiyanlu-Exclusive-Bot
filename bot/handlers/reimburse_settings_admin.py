@@ -25,15 +25,20 @@ from bot.config import config
 from bot.database import (
     REIMBURSE_MIN_POINTS_DEFAULT,
     REIMBURSE_MIN_POINTS_MAX,
+    REIMBURSE_WEEKLY_LIMIT_DEFAULT,
+    REIMBURSE_WEEKLY_LIMIT_MAX,
+    REIMBURSE_WEEKLY_LIMIT_MIN,
     current_month_key,
     get_config,
     get_reimburse_pool_reset_baselines,
     get_reimbursement_min_points,
     get_reimbursement_monthly_pool_usage,
+    get_reimbursement_weekly_limit,
     is_super_admin,
     log_admin_audit,
     set_reimburse_pool_reset_baseline,
     set_reimbursement_min_points,
+    set_reimbursement_weekly_limit,
 )
 from bot.keyboards.admin_kb import (
     reimburse_min_points_cancel_kb,
@@ -42,10 +47,14 @@ from bot.keyboards.admin_kb import (
     reimburse_pool_reset_cancel_kb,
     reimburse_pool_reset_confirm_kb,
     reimburse_pool_reset_done_kb,
+    reimburse_weekly_limit_cancel_kb,
+    reimburse_weekly_limit_confirm_kb,
+    reimburse_weekly_limit_menu_kb,
 )
 from bot.states.teacher_states import (
     ReimburseMinPointsStates,
     ReimbursePoolResetStates,
+    ReimburseWeeklyLimitStates,
 )
 
 logger = logging.getLogger(__name__)
@@ -193,6 +202,129 @@ async def cb_min_points_confirm(callback: types.CallbackQuery, state: FSMContext
     await callback.answer(f"✅ 已更新门槛为 {new_value} 分")
     # 回主面板
     await cb_min_points_menu(callback, state)
+
+
+# ============================================================
+# 1b. 🗓 每周报销上限设置（2026-05 新增）
+# ============================================================
+
+
+@router.callback_query(F.data == "system:reimburse_weekly_limit")
+@_super_admin_required
+async def cb_weekly_limit_menu(callback: types.CallbackQuery, state: FSMContext):
+    """🗓 每周报销上限主面板：展示当前值 + 修改入口。"""
+    await state.clear()
+    current = await get_reimbursement_weekly_limit()
+    text = (
+        "🗓 每周报销上限\n\n"
+        f"当前每用户每周 approved 上限：{current} 次\n\n"
+        "说明：\n"
+        "每个用户每 ISO 周内最多可被批准 N 次报销。\n"
+        f"允许范围：{REIMBURSE_WEEKLY_LIMIT_MIN}–{REIMBURSE_WEEKLY_LIMIT_MAX}"
+        f"（默认 {REIMBURSE_WEEKLY_LIMIT_DEFAULT}）。\n"
+        "如需对单个用户额外解锁本周配额，使用「reset voucher」。"
+    )
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=reimburse_weekly_limit_menu_kb(),
+        )
+    except Exception:
+        await callback.message.answer(
+            text, reply_markup=reimburse_weekly_limit_menu_kb(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "system:reimburse_weekly_limit:edit")
+@_super_admin_required
+async def cb_weekly_limit_edit(callback: types.CallbackQuery, state: FSMContext):
+    """点击「✏️ 修改每周上限」→ 进入 FSM 等待输入。"""
+    current = await get_reimbursement_weekly_limit()
+    await state.set_state(ReimburseWeeklyLimitStates.waiting_value)
+    await state.update_data(old_value=current)
+    text = (
+        f"✏️ 修改每周报销上限\n\n"
+        f"当前：{current} 次\n\n"
+        f"请输入新上限（整数，{REIMBURSE_WEEKLY_LIMIT_MIN}–"
+        f"{REIMBURSE_WEEKLY_LIMIT_MAX}）。"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=reimburse_weekly_limit_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(ReimburseWeeklyLimitStates.waiting_value)
+@_super_admin_required
+async def step_weekly_limit_value(message: types.Message, state: FSMContext):
+    """超管输入新上限值 → 校验 → 进入确认页。"""
+    text = (message.text or "").strip()
+    try:
+        v = int(text)
+    except ValueError:
+        await message.reply(
+            "❌ 必须是整数。",
+            reply_markup=reimburse_weekly_limit_cancel_kb(),
+        )
+        return
+    if v < REIMBURSE_WEEKLY_LIMIT_MIN:
+        await message.reply(
+            f"❌ 不能小于 {REIMBURSE_WEEKLY_LIMIT_MIN}。",
+            reply_markup=reimburse_weekly_limit_cancel_kb(),
+        )
+        return
+    if v > REIMBURSE_WEEKLY_LIMIT_MAX:
+        await message.reply(
+            f"❌ 不能超过上限 {REIMBURSE_WEEKLY_LIMIT_MAX}。",
+            reply_markup=reimburse_weekly_limit_cancel_kb(),
+        )
+        return
+    await state.update_data(new_value=v)
+    await state.set_state(ReimburseWeeklyLimitStates.confirming)
+    data = await state.get_data()
+    confirm_text = (
+        "确认修改每周报销上限？\n\n"
+        f"原上限：{data.get('old_value')} 次/周\n"
+        f"新上限：{v} 次/周"
+    )
+    await message.answer(
+        confirm_text, reply_markup=reimburse_weekly_limit_confirm_kb(),
+    )
+
+
+@router.callback_query(
+    F.data == "system:reimburse_weekly_limit:confirm",
+    ReimburseWeeklyLimitStates.confirming,
+)
+@_super_admin_required
+async def cb_weekly_limit_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """确认修改 → 写 config + audit log + 回主面板。"""
+    data = await state.get_data()
+    old_value = data.get("old_value")
+    new_value = data.get("new_value")
+    if new_value is None:
+        await callback.answer("会话已过期，请重新进入", show_alert=True)
+        await state.clear()
+        return
+    try:
+        await set_reimbursement_weekly_limit(int(new_value))
+    except ValueError as e:
+        await callback.answer(f"⚠️ 写入失败：{e}", show_alert=True)
+        return
+    await log_admin_audit(
+        admin_id=callback.from_user.id,
+        action="reimburse_weekly_limit_set",
+        target_type="config",
+        target_id="reimbursement_weekly_limit",
+        detail={
+            "old_value": int(old_value) if old_value is not None else None,
+            "new_value": int(new_value),
+        },
+    )
+    await state.clear()
+    await callback.answer(f"✅ 已更新每周上限为 {new_value} 次")
+    # 回主面板
+    await cb_weekly_limit_menu(callback, state)
 
 
 # ============================================================

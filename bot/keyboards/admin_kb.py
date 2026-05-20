@@ -162,18 +162,11 @@ def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
 def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
     """二级「💰 报销配置」聚合面板（UX-6.2，仅超管可见）。
 
-    把原来散在 admin:settings 主面板 + menu:system 子面板的 5 个报销配置入口
-    收纳到一个聚合页：
+    2026-05 修订：在 5 项基础配置之上新增「🗓 每周报销上限」（callback
+    system:reimburse_weekly_limit），原 POLICY §6.1 硬编码 1 次/周 已升级
+    为 config 化（1-10 次范围，默认 1）。
 
-        - 🔛 报销功能开关       system:reimburse_toggle
-        - 💰 报销池设置         system:reimburse_pool
-        - 🔄 重置本月报销池     system:reimburse_pool_reset
-        - 🎚 报销门槛设置       system:reimburse_min_points
-        - 📋 报销必关设置       system:reimburse_subreq
-
-    callback 全部复用既有 system:reimburse_* 命名空间，所有 handler 不动；
-    旧入口（admin:settings 主面板的两个 super-only 按钮 + menu:system 内的 5 项）
-    保留至少一个 Sprint 双跑期不删除（PLAN §1.2）。
+    callback 命名空间继续复用 system:reimburse_*，所有原 handler 不动。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📜 完整规则一览（只读）", callback_data="admin:reimburse_rules")],
@@ -181,6 +174,7 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool")],
         [InlineKeyboardButton(text="🔄 重置本月报销池", callback_data="system:reimburse_pool_reset")],
         [InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points")],
+        [InlineKeyboardButton(text="🗓 每周报销上限", callback_data="system:reimburse_weekly_limit")],
         [InlineKeyboardButton(text="📋 报销必关设置", callback_data="system:reimburse_subreq")],
         [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
     ])
@@ -2167,6 +2161,49 @@ def reimburse_min_points_confirm_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="❌ 取消",
                 callback_data="system:reimburse_min_points",
+            ),
+        ],
+    ])
+
+
+# ============ 每周报销上限（2026-05 新增） ============
+
+
+def reimburse_weekly_limit_menu_kb() -> InlineKeyboardMarkup:
+    """🗓 每周报销上限主面板：修改 + 返回报销配置。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✏️ 修改每周上限",
+            callback_data="system:reimburse_weekly_limit:edit",
+        )],
+        [InlineKeyboardButton(
+            text="⬅️ 返回报销配置",
+            callback_data="admin:reimburse_config",
+        )],
+    ])
+
+
+def reimburse_weekly_limit_cancel_kb() -> InlineKeyboardMarkup:
+    """每周上限 FSM 通用取消按钮（回主面板）。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ 取消",
+            callback_data="system:reimburse_weekly_limit",
+        )],
+    ])
+
+
+def reimburse_weekly_limit_confirm_kb() -> InlineKeyboardMarkup:
+    """确认修改每周上限：确认 / 取消。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ 确认修改",
+                callback_data="system:reimburse_weekly_limit:confirm",
+            ),
+            InlineKeyboardButton(
+                text="❌ 取消",
+                callback_data="system:reimburse_weekly_limit",
             ),
         ],
     ])

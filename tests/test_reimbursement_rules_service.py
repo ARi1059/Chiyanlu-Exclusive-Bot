@@ -21,8 +21,10 @@ from bot.services import reimbursement_rules as svc_mod
 from bot.services.reimbursement_rules import (
     REIMBURSE_MIN_POINTS_DEFAULT,
     REIMBURSE_MIN_POINTS_MAX,
+    REIMBURSE_WEEKLY_LIMIT_DEFAULT,
+    REIMBURSE_WEEKLY_LIMIT_MAX,
+    REIMBURSE_WEEKLY_LIMIT_MIN,
     ReimbursementRulesSnapshot,
-    WEEKLY_APPROVED_LIMIT,
     _announce_min_points_line,
     _announce_pool_line,
     _announce_required_chats_line,
@@ -46,9 +48,15 @@ def _run(coro):
 # ============ 常量 + dataclass ============
 
 
-def test_weekly_limit_constant():
-    """POLICY §6.1 硬编码 1 次/周。"""
-    assert WEEKLY_APPROVED_LIMIT == 1
+def test_weekly_limit_constants():
+    """每周 approved 上限可配置范围 1-10，默认 1（2026-05 config 化）。
+
+    原 WEEKLY_APPROVED_LIMIT = 1 硬编码已被 REIMBURSE_WEEKLY_LIMIT_DEFAULT
+    替代；范围由 REIMBURSE_WEEKLY_LIMIT_MIN / MAX 提供。
+    """
+    assert REIMBURSE_WEEKLY_LIMIT_DEFAULT == 1
+    assert REIMBURSE_WEEKLY_LIMIT_MIN == 1
+    assert REIMBURSE_WEEKLY_LIMIT_MAX == 10
 
 
 def test_min_points_defaults_re_exported():
@@ -223,10 +231,13 @@ def test_render_includes_all_data_fields():
     assert "快照时间：2026-05-20 14:30:00" in text
 
 
-def test_render_weekly_limit_hardcoded_1():
+def test_render_weekly_limit_now_configurable():
+    """每周限制 2026-05 起 config 化。渲染必须含当前值 + 可配置范围
+    （不再标"硬编码"）。"""
     text = render_reimbursement_rules(_full_snapshot())
     assert "每用户每周 approved 上限：1 次" in text
-    assert "硬编码" in text
+    assert "可配置 1-10" in text
+    assert "硬编码" not in text
 
 
 def test_render_reset_voucher_explanation_present():

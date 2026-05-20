@@ -89,10 +89,13 @@ def test_kb_reuses_existing_callbacks_only():
 
 
 def test_kb_button_count():
-    """聚合页共 7 个按钮（1 只读规则 + 5 项编辑配置 + 1 返回）。"""
+    """聚合页共 8 个按钮（1 只读规则 + 6 项编辑配置 + 1 返回）。
+
+    2026-05 新增「🗓 每周报销上限」（system:reimburse_weekly_limit）；
+    旧 5 项 → 6 项，含返回总 7 → 8。"""
     from bot.keyboards.admin_kb import admin_reimburse_config_kb
     kb = admin_reimburse_config_kb()
-    assert len(_flat_buttons(kb)) == 7
+    assert len(_flat_buttons(kb)) == 8
 
 
 def test_kb_first_button_is_readonly_rules_view():

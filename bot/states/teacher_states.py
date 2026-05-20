@@ -94,6 +94,18 @@ class ReimburseMinPointsStates(StatesGroup):
     confirming    = State()
 
 
+class ReimburseWeeklyLimitStates(StatesGroup):
+    """报销每周 approved 上限配置 FSM（2026-05 新增）。
+
+    state.data：
+        old_value (int) —— 修改前的每周上限
+        new_value (int) —— 待确认的新上限值
+                           （REIMBURSE_WEEKLY_LIMIT_MIN ≤ v ≤ REIMBURSE_WEEKLY_LIMIT_MAX）
+    """
+    waiting_value = State()
+    confirming    = State()
+
+
 class ReimbursePoolResetStates(StatesGroup):
     """本月报销池重置基线 FSM（2026-05 新增）。
 

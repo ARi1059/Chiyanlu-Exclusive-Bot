@@ -7043,6 +7043,43 @@ async def set_reimbursement_min_points(value: int) -> None:
     await set_config(REIMBURSE_MIN_POINTS_KEY, str(v))
 
 
+# ---- 每周 approved 报销上限（2026-05 新增，原 POLICY §6.1 硬编码 1 次/周）----
+REIMBURSE_WEEKLY_LIMIT_KEY = "reimbursement_weekly_limit"
+REIMBURSE_WEEKLY_LIMIT_DEFAULT = 1
+REIMBURSE_WEEKLY_LIMIT_MIN = 1
+REIMBURSE_WEEKLY_LIMIT_MAX = 10
+
+
+async def get_reimbursement_weekly_limit() -> int:
+    """读取每用户每 ISO 周 approved 报销上限；缺失 / 解析失败 / 越界 → 默认 1。
+
+    范围 [REIMBURSE_WEEKLY_LIMIT_MIN, REIMBURSE_WEEKLY_LIMIT_MAX]（1-10）；
+    与月度池 0=不限的语义不同，本配置不允许 0（避免与 reset voucher 语义冲突）。
+    """
+    raw = await get_config(REIMBURSE_WEEKLY_LIMIT_KEY)
+    if raw is None or raw == "":
+        return REIMBURSE_WEEKLY_LIMIT_DEFAULT
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return REIMBURSE_WEEKLY_LIMIT_DEFAULT
+    if v < REIMBURSE_WEEKLY_LIMIT_MIN or v > REIMBURSE_WEEKLY_LIMIT_MAX:
+        return REIMBURSE_WEEKLY_LIMIT_DEFAULT
+    return v
+
+
+async def set_reimbursement_weekly_limit(value: int) -> None:
+    """写入每周报销上限；caller 必须先校验
+    REIMBURSE_WEEKLY_LIMIT_MIN <= value <= REIMBURSE_WEEKLY_LIMIT_MAX。"""
+    v = int(value)
+    if v < REIMBURSE_WEEKLY_LIMIT_MIN or v > REIMBURSE_WEEKLY_LIMIT_MAX:
+        raise ValueError(
+            f"reimbursement_weekly_limit must be in "
+            f"[{REIMBURSE_WEEKLY_LIMIT_MIN}, {REIMBURSE_WEEKLY_LIMIT_MAX}], got {v}"
+        )
+    await set_config(REIMBURSE_WEEKLY_LIMIT_KEY, str(v))
+
+
 async def get_reimburse_pool_reset_baselines() -> dict:
     """读取月度报销池重置基线 dict（月份 → {baseline_amount, reset_at, admin_id, reason}）。
 

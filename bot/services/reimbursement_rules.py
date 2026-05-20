@@ -33,6 +33,9 @@ from bot.config import config
 from bot.database import (
     REIMBURSE_MIN_POINTS_DEFAULT,
     REIMBURSE_MIN_POINTS_MAX,
+    REIMBURSE_WEEKLY_LIMIT_DEFAULT,
+    REIMBURSE_WEEKLY_LIMIT_MAX,
+    REIMBURSE_WEEKLY_LIMIT_MIN,
     count_queued_reimbursements,
     current_month_key,
     current_week_key,
@@ -40,14 +43,10 @@ from bot.database import (
     get_reimburse_pool_reset_baselines,
     get_reimburse_required_chats,
     get_reimbursement_min_points,
+    get_reimbursement_weekly_limit,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# 硬编码规则常量（与 POLICY.md Part II 同步；当前未走 config）
-WEEKLY_APPROVED_LIMIT = 1
-"""POLICY §6.1：每用户每 ISO 周最多 1 次 approved 报销（硬编码）。"""
 
 
 @dataclass
@@ -77,7 +76,9 @@ class ReimbursementRulesSnapshot:
     min_points_max: int = REIMBURSE_MIN_POINTS_MAX
 
     # 每周限制（硬编码）
-    weekly_approved_limit: int = WEEKLY_APPROVED_LIMIT
+    weekly_approved_limit: int = REIMBURSE_WEEKLY_LIMIT_DEFAULT
+    weekly_limit_min: int = REIMBURSE_WEEKLY_LIMIT_MIN
+    weekly_limit_max: int = REIMBURSE_WEEKLY_LIMIT_MAX
     current_week_key: Optional[str] = None
 
     # 必关频道 / 群组数（reimbursement_required_chats）
@@ -157,6 +158,13 @@ async def get_reimbursement_rules_snapshot() -> ReimbursementRulesSnapshot:
     except Exception as e:
         logger.warning("读取 min_points 失败: %s", e)
         snap.min_points = None
+
+    # ---- 每周 approved 上限（2026-05 起 config 化）----
+    try:
+        snap.weekly_approved_limit = await get_reimbursement_weekly_limit()
+    except Exception as e:
+        logger.warning("读取 weekly_approved_limit 失败: %s", e)
+        snap.weekly_approved_limit = REIMBURSE_WEEKLY_LIMIT_DEFAULT
 
     # ---- queued 名单条数 ----
     try:
@@ -281,7 +289,9 @@ def render_reimbursement_rules(snap: ReimbursementRulesSnapshot) -> str:
         f"• 最低积分：{_fmt_min_points(snap)}",
         "",
         "每周限制",
-        f"• 每用户每周 approved 上限：{snap.weekly_approved_limit} 次（硬编码）",
+        f"• 每用户每周 approved 上限：{snap.weekly_approved_limit} 次"
+        f"（可配置 {snap.weekly_limit_min}-{snap.weekly_limit_max}，"
+        f"默认 {REIMBURSE_WEEKLY_LIMIT_DEFAULT}）",
         f"• 当前周 ({snap.current_week_key or 'N/A'})",
         f"• reset voucher 一次性跳过本周校验（不增加永久额度）",
         "",

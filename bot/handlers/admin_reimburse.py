@@ -27,6 +27,7 @@ from bot.database import (
     get_config,
     get_reimbursement,
     get_reimbursement_monthly_pool_usage,
+    get_reimbursement_weekly_limit,
     get_teacher,
     get_teacher_review,
     get_unused_reimbursement_reset,
@@ -104,6 +105,7 @@ async def _render_reimbursement_detail(reimb: dict) -> str:
     week_used = await count_approved_reimbursements_in_week(
         reimb["user_id"], reimb["week_key"],
     )
+    weekly_limit = await get_reimbursement_weekly_limit()
     reset = await get_unused_reimbursement_reset(reimb["user_id"])
     has_reset = reset is not None
     # 2026-05：使用 effective_used 口径（与 ReimbursementPoolStats 一致）
@@ -130,7 +132,7 @@ async def _render_reimbursement_detail(reimb: dict) -> str:
         over_pool = (
             pool > 0 and pool_remaining is not None and amount > pool_remaining
         )
-        week_full = week_used >= 1
+        week_full = week_used >= weekly_limit
         if over_pool:
             badge_line = (
                 f"🛑 超月池：本月仅剩 {pool_remaining} 元，"
@@ -138,7 +140,7 @@ async def _render_reimbursement_detail(reimb: dict) -> str:
             )
         elif week_full and has_reset:
             badge_line = (
-                "⚠️ 需消耗 voucher：本周已批 1 次，"
+                f"⚠️ 需消耗 voucher：本周已批 {week_used}/{weekly_limit} 次，"
                 "通过将消耗预留 voucher"
             )
         elif week_full and not has_reset:
@@ -163,7 +165,7 @@ async def _render_reimbursement_detail(reimb: dict) -> str:
         f"💰 报销金额：{reimb['amount']} 元",
         "━━━━━━━━━━━━━━━",
         f"🗓 周 key：{reimb['week_key']}",
-        f"   本周已批：{week_used}/1" + (
+        f"   本周已批：{week_used}/{weekly_limit}" + (
             "（有 1 张未消耗 reset voucher）" if has_reset else ""
         ),
         f"📅 月 key：{reimb['month_key']}",
@@ -290,12 +292,14 @@ async def cb_reimburse_approve(callback: types.CallbackQuery, state: FSMContext)
     week_used = await count_approved_reimbursements_in_week(
         reimb["user_id"], reimb["week_key"],
     )
+    weekly_limit = await get_reimbursement_weekly_limit()
     reset_voucher_id = None
-    if week_used >= 1:
+    if week_used >= weekly_limit:
         reset_voucher = await get_unused_reimbursement_reset(reimb["user_id"])
         if reset_voucher is None:
             await callback.answer(
-                "⚠️ 该用户本周已批过 1 次；如要继续，请点 [🔄 重置该用户本周]",
+                f"⚠️ 该用户本周已批过 {week_used}/{weekly_limit} 次；"
+                "如要继续，请点 [🔄 重置该用户本周]",
                 show_alert=True,
             )
             return

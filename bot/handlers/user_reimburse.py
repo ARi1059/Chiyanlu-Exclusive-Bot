@@ -18,6 +18,7 @@ from bot.database import (
     current_month_key,
     current_week_key,
     get_config,
+    get_reimbursement_weekly_limit,
     get_teacher,
     list_user_reimbursements_paged,
     sum_approved_reimbursements_in_month,
@@ -53,6 +54,7 @@ async def cb_user_reimburse(callback: types.CallbackQuery):
 
     total = await count_user_reimbursements(user_id)
     week_used = await count_approved_reimbursements_in_week(user_id, week_key)
+    weekly_limit = await get_reimbursement_weekly_limit()
     month_total = await sum_approved_reimbursements_in_month(month_key)
     pool_raw = await get_config("reimbursement_monthly_pool")
     try:
@@ -74,7 +76,7 @@ async def cb_user_reimburse(callback: types.CallbackQuery):
     lines = [
         "🧾 我的报销",
         "━━━━━━━━━━━━━━━",
-        f"本周已通过：{week_used}/1 笔",
+        f"本周已通过：{week_used}/{weekly_limit} 笔",
         f"本月已通过总额：{month_total} 元" + pool_str,
         f"累计申请：{total} 笔",
         "━━━━━━━━━━━━━━━",
