@@ -419,7 +419,7 @@ def test_schema_migrations_baseline_unchanged():
 
 def test_migrations_list_still_empty():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
 
 
 def test_compute_reimbursement_amount_unchanged():

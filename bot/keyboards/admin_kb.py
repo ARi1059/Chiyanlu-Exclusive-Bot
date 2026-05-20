@@ -658,6 +658,27 @@ def dashboard_menu_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def teacher_profile_draft_restore_kb() -> InlineKeyboardMarkup:
+    """tprofile:add 入口检测到草稿时的引导（UX-9.3）：恢复 / 丢弃重新开始。"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ 恢复上次录入", callback_data="tprofile:draft_restore")],
+        [InlineKeyboardButton(text="🗑 丢弃 → 重新开始", callback_data="tprofile:draft_discard")],
+        [InlineKeyboardButton(text="🔙 返回老师档案管理", callback_data="tprofile:cancel")],
+    ])
+
+
+def teacher_profile_cancel_confirm_kb() -> InlineKeyboardMarkup:
+    """tprofile:cancel 检测到 state 有数据时的二次确认（UX-9.3）：保存 / 不保存。
+
+    刻意不放"继续录入"——既然用户已经点了取消，再回去会让 callback 状态错乱；
+    用户如果后悔可以重新点 [➕ 完整档案录入]，若选了保存草稿则能恢复。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💾 保存草稿后退出", callback_data="tprofile:cancel_save")],
+        [InlineKeyboardButton(text="🗑 不保存直接退出", callback_data="tprofile:cancel_nosave")],
+    ])
+
+
 def dashboard_audit_back_kb() -> InlineKeyboardMarkup:
     """操作日志页：返回看板 / 主菜单"""
     return InlineKeyboardMarkup(inline_keyboard=[

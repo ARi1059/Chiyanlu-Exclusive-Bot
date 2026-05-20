@@ -190,7 +190,7 @@ def test_schema_migrations_baseline_unchanged_count():
 
 def test_no_new_migration_in_MIGRATIONS_list():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
 
 
 # ============ 不修改业务 handler ============

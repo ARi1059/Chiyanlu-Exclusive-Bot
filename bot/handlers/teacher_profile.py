@@ -18,7 +18,10 @@ from aiogram.fsm.context import FSMContext
 
 from bot.database import (
     add_teacher,
+    clear_teacher_draft,
     get_teacher,
+    load_teacher_draft,
+    save_teacher_draft,
     set_teacher_photos,
     parse_basic_info,
 )
@@ -26,6 +29,8 @@ from bot.keyboards.admin_kb import (
     teacher_menu_kb,
     teacher_profile_menu_kb,
     teacher_profile_cancel_kb,
+    teacher_profile_cancel_confirm_kb,
+    teacher_profile_draft_restore_kb,
     teacher_profile_skip_cancel_kb,
     teacher_profile_photos_done_kb,
     teacher_profile_confirm_kb,
@@ -189,10 +194,70 @@ async def cb_profile_menu(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# UX-9.3：FSM state → 用户友好 step 标签（草稿恢复提示用）
+_DRAFT_STEP_LABELS: dict[str, str] = {
+    "TeacherProfileAddStates:waiting_forward":         "Step 1 / 转发老师消息",
+    "TeacherProfileAddStates:waiting_manual_user_id":  "Step 1a / 手动输入 user_id",
+    "TeacherProfileAddStates:waiting_manual_username": "Step 1b / 手动输入 username",
+    "TeacherProfileAddStates:waiting_manual_contact":  "Step 1c / 手动输入 contact",
+    "TeacherProfileAddStates:waiting_display_name":    "Step 2 / 艺名",
+    "TeacherProfileAddStates:waiting_basic_info":      "Step 3 / 基本信息",
+    "TeacherProfileAddStates:waiting_region":          "Step 4 / 地区",
+    "TeacherProfileAddStates:waiting_price":           "Step 5 / 价格描述",
+    "TeacherProfileAddStates:waiting_service_content": "Step 6 / 服务内容",
+    "TeacherProfileAddStates:waiting_tags":            "Step 7 / 标签",
+    "TeacherProfileAddStates:waiting_button_url":      "Step 8 / 跳转链接",
+    "TeacherProfileAddStates:waiting_photos":          "Step 9 / 相册（1-10 张）",
+    "TeacherProfileAddStates:waiting_confirm":         "Step 10 / 确认页",
+}
+
+
+def _format_draft_step_label(fsm_state: Optional[str]) -> str:
+    if not fsm_state:
+        return "未知 step"
+    return _DRAFT_STEP_LABELS.get(fsm_state, fsm_state)
+
+
 @router.callback_query(F.data == "tprofile:cancel")
 @admin_required
 async def cb_profile_cancel(callback: types.CallbackQuery, state: FSMContext):
-    """取消任意子流程，回到 [📋 老师档案管理]"""
+    """取消任意子流程，回到 [📋 老师档案管理]。
+
+    UX-9.3：state 有数据时弹出二次确认（保存草稿 / 不保存）；
+    无数据时（如刚进入或已 clear）直接清并回主菜单。
+    """
+    data = await state.get_data() if state else {}
+    has_progress = bool(data) and (
+        # 仅 _last_active / photos 空列表不算"有进度"
+        any(k for k in data if k not in ("_last_active",))
+        and not (
+            list(data.keys()) == ["photos"] and data["photos"] == []
+            or list(data.keys()) == ["_last_active"]
+            or set(data.keys()) <= {"photos", "_last_active"} and not data.get("photos")
+        )
+    )
+    if has_progress:
+        current_state = await state.get_state()
+        label = _format_draft_step_label(current_state)
+        text = (
+            "⚠️ 是否保存草稿？\n"
+            "━━━━━━━━━━━━━━━\n"
+            f"当前进度：{label}\n"
+            f"已填字段：{len([k for k in data if not k.startswith('_')])} 项\n"
+            "━━━━━━━━━━━━━━━\n\n"
+            "💾 保存草稿：下次进 [➕ 完整档案录入] 时可一键恢复\n"
+            "🗑 不保存：本次输入全部丢弃"
+        )
+        try:
+            await callback.message.edit_text(
+                text, reply_markup=teacher_profile_cancel_confirm_kb(),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    # 无进度：原行为
     await state.clear()
     await callback.message.edit_text(
         "📋 老师档案管理",
@@ -201,12 +266,88 @@ async def cb_profile_cancel(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("已取消")
 
 
+@router.callback_query(F.data == "tprofile:cancel_save")
+@admin_required
+async def cb_profile_cancel_save_draft(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """UX-9.3：取消时保存草稿（admin_id 作 PK；下次进入会显示恢复提示）。"""
+    admin_id = callback.from_user.id
+    current_state = await state.get_state()
+    data = await state.get_data()
+    label = _format_draft_step_label(current_state)
+    # 删除 middleware 写入的 _last_active 字段（无业务意义，避免持久化）
+    persist_data = {k: v for k, v in data.items() if not k.startswith("_")}
+    ok = await save_teacher_draft(
+        admin_id, current_state or "",
+        persist_data, step_label=label,
+    )
+    await state.clear()
+    if ok:
+        msg = f"💾 草稿已保存（{label}），下次进入可恢复。"
+    else:
+        msg = "⚠️ 草稿保存失败（已清空 state，建议联系开发者排查）。"
+    await callback.message.edit_text(
+        msg + "\n\n📋 老师档案管理",
+        reply_markup=teacher_profile_menu_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tprofile:cancel_nosave")
+@admin_required
+async def cb_profile_cancel_nosave(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """UX-9.3：取消时不保存草稿（与既有草稿无关；本次输入丢弃）。"""
+    await state.clear()
+    await callback.message.edit_text(
+        "🗑 已取消（未保存草稿）。\n\n📋 老师档案管理",
+        reply_markup=teacher_profile_menu_kb(),
+    )
+    await callback.answer()
+
+
 # ============ 完整档案录入 FSM ============
 
 @router.callback_query(F.data == "tprofile:add")
 @admin_required
 async def cb_profile_add_start(callback: types.CallbackQuery, state: FSMContext):
-    """[➕ 完整档案录入] 入口 → Step 1 转发老师消息"""
+    """[➕ 完整档案录入] 入口 → Step 1 转发老师消息
+
+    UX-9.3：进入前先 load_teacher_draft；有草稿 → 渲染"恢复 / 丢弃" 提示页，
+    避免覆盖用户上次未完成的输入。
+    """
+    admin_id = callback.from_user.id
+    try:
+        draft = await load_teacher_draft(admin_id)
+    except Exception:
+        draft = None
+
+    if draft:
+        label = draft.get("step_label") or _format_draft_step_label(
+            draft.get("fsm_state"),
+        )
+        updated_at = (draft.get("updated_at") or "").replace("T", " ")[:19]
+        filled = [
+            k for k in (draft.get("data") or {}).keys() if not k.startswith("_")
+        ]
+        text = (
+            "📝 检测到上次未完成的草稿\n"
+            "━━━━━━━━━━━━━━━\n"
+            f"上次进度：{label}\n"
+            f"已填字段：{len(filled)} 项\n"
+            f"保存时间：{updated_at}\n"
+            "━━━━━━━━━━━━━━━\n\n"
+            "▶️ 恢复：把 state + 数据还原，继续上次的步骤\n"
+            "🗑 丢弃：删除草稿，从 Step 1 重新开始"
+        )
+        await callback.message.edit_text(
+            text, reply_markup=teacher_profile_draft_restore_kb(),
+        )
+        await callback.answer()
+        return
+
     await state.set_state(TeacherProfileAddStates.waiting_forward)
     await state.set_data({"photos": []})
     await callback.message.edit_text(
@@ -215,6 +356,65 @@ async def cb_profile_add_start(callback: types.CallbackQuery, state: FSMContext)
         "bot 会自动抓取 user_id / username / @contact_telegram 三项信息。\n\n"
         "⚠️ 若老师 Telegram 隐私设置了「转发消息 → 没有人」，bot 收不到\n"
         "→ 会自动跳到手动录入 3 个字段。\n\n"
+        "任意一步发 /cancel 中止。",
+        reply_markup=teacher_profile_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tprofile:draft_restore")
+@admin_required
+async def cb_profile_draft_restore(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """UX-9.3：恢复草稿 → restore state + data，提示用户继续上次的 step。"""
+    admin_id = callback.from_user.id
+    draft = await load_teacher_draft(admin_id)
+    if not draft:
+        await callback.answer("草稿已不存在，请重新点 [➕ 完整档案录入]", show_alert=True)
+        return
+    fsm_state = draft.get("fsm_state") or ""
+    data = draft.get("data") or {}
+    label = draft.get("step_label") or _format_draft_step_label(fsm_state)
+    if fsm_state:
+        try:
+            await state.set_state(fsm_state)
+        except Exception:
+            # state 字符串无效（如重命名后），回退到 waiting_forward 让用户重新走
+            await state.set_state(TeacherProfileAddStates.waiting_forward)
+    await state.set_data(data)
+    text = (
+        f"✅ 草稿已恢复（{label}）\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"已填字段：{len([k for k in data if not k.startswith('_')])} 项\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "📌 请按当前 step 的提示继续输入。\n"
+        "如不记得当前 step 该填什么，可发 /cancel 后再点 [➕ 完整档案录入]\n"
+        "（再次进入仍会保留这份草稿）。"
+    )
+    await callback.message.edit_text(text, reply_markup=teacher_profile_cancel_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tprofile:draft_discard")
+@admin_required
+async def cb_profile_draft_discard(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """UX-9.3：丢弃草稿 → 清除 DB 记录 + 走 cb_profile_add_start 的"新录入"流程。"""
+    admin_id = callback.from_user.id
+    try:
+        await clear_teacher_draft(admin_id)
+    except Exception:
+        pass
+    # 直接进入 Step 1（复用 cb_profile_add_start 的渲染——但要避免再次检测草稿）
+    await state.set_state(TeacherProfileAddStates.waiting_forward)
+    await state.set_data({"photos": []})
+    await callback.message.edit_text(
+        f"🗑 草稿已丢弃。\n\n"
+        f"[Step 1/{_TOTAL_STEPS}] 转发老师消息\n\n"
+        "请直接转发一条老师本人发出的消息。\n"
+        "bot 会自动抓取 user_id / username / @contact_telegram 三项信息。\n\n"
         "任意一步发 /cancel 中止。",
         reply_markup=teacher_profile_cancel_kb(),
     )
@@ -695,6 +895,12 @@ async def cb_profile_save(callback: types.CallbackQuery, state: FSMContext):
 
     # 写相册（同步更新旧 photo_file_id 为第一张）
     await set_teacher_photos(data["user_id"], photos)
+
+    # UX-9.3：保存成功后清除该 admin 的草稿（避免下次进入仍显示"恢复"）
+    try:
+        await clear_teacher_draft(callback.from_user.id)
+    except Exception:
+        pass
 
     await state.clear()
     await callback.message.edit_text(

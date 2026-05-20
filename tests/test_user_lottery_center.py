@@ -336,4 +336,4 @@ def test_cb_drawn_renders_won_summary(temp_db):
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}

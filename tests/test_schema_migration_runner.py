@@ -87,10 +87,13 @@ def test_empty_migrations_is_noop(monkeypatch):
     _run(go())
 
 
-def test_module_level_migrations_is_empty():
-    """生产代码 MIGRATIONS 必须是空列表 —— P3 阶段不允许预填任何实际迁移。"""
+def test_module_level_migrations_is_baseline():
+    """生产代码 MIGRATIONS 应是 list；UX-9.3 引入第一条 baseline migration
+    (20260520_001_teacher_draft_states)；后续 PR 加新迁移时本契约同步更新。"""
     assert isinstance(db_mod.MIGRATIONS, list)
-    assert db_mod.MIGRATIONS == []
+    assert {m.version for m in db_mod.MIGRATIONS} == {
+        "20260520_001_teacher_draft_states",
+    }
 
 
 # ============ 成功路径 ============
@@ -373,6 +376,9 @@ def test_migration_is_frozen_dataclass():
 
 
 def test_migrations_list_is_typed_correctly():
-    """MIGRATIONS 必须是 list 类型，且当前为空。"""
+    """MIGRATIONS 必须是 list 类型；UX-9.3 已引入 baseline，本测试现仅校验类型。"""
     assert isinstance(db_mod.MIGRATIONS, list)
-    assert len(db_mod.MIGRATIONS) == 0
+    # 所有元素应是 Migration 实例
+    from bot.database import Migration
+    for m in db_mod.MIGRATIONS:
+        assert isinstance(m, Migration)

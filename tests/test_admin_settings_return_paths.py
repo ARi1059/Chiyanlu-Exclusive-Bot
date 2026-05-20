@@ -229,7 +229,7 @@ def test_schema_migrations_baseline_unchanged():
 def test_migrations_list_still_empty():
     """UX-1 第三批不新增 Migration：MIGRATIONS 仍为空 list。"""
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
 
 
 # ============ 6. 不修改业务 handler ============

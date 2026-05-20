@@ -586,8 +586,35 @@ class Migration:
     func: Callable[[aiosqlite.Connection], Awaitable[None]]
 
 
-# 未来新增迁移在此追加。当前为空 —— 历史 9 条迁移由 _migrate_* + baseline 处理。
-MIGRATIONS: list[Migration] = []
+async def _migrate_001_teacher_draft_states(db: aiosqlite.Connection) -> None:
+    """UX-9.3：admin teacher_profile 录入草稿表。
+
+    保存 admin 在 `tprofile:add` 流程中的 state + data，允许"取消 → 重进 → 恢复"。
+    使用 `INSERT OR IGNORE` 表创建幂等；同 admin 一次最多 1 个草稿（admin_id 作 PK）。
+    """
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teacher_draft_states (
+            admin_id    INTEGER PRIMARY KEY,
+            fsm_state   TEXT NOT NULL,
+            json_blob   TEXT NOT NULL,
+            step_label  TEXT,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+    await db.commit()
+
+
+# 未来新增迁移在此追加。
+MIGRATIONS: list[Migration] = [
+    Migration(
+        version="20260520_001_teacher_draft_states",
+        name="UX-9.3 admin teacher_profile 录入草稿表",
+        kind="soft",  # soft：表创建失败不阻断启动；handler 端会 try/except 容错
+        func=_migrate_001_teacher_draft_states,
+    ),
+]
 
 
 # error 字段截断上限（避免 SQLite 单行存超长 traceback）
@@ -2352,6 +2379,103 @@ async def get_dashboard_metrics(today_str: str, since_str: str) -> dict:
             "publishes_today": publishes_today,
             "audits_today": audits_today,
         }
+    finally:
+        await db.close()
+
+
+async def save_teacher_draft(
+    admin_id: int,
+    fsm_state: str,
+    data: dict,
+    *,
+    step_label: Optional[str] = None,
+) -> bool:
+    """保存 admin 当前 teacher_profile 录入草稿（UX-9.3，upsert）。
+
+    Args:
+        admin_id:  超管 / 管理员 user_id（PK，同 admin 一次最多 1 个草稿）
+        fsm_state: 当前 FSM state 字符串（如 "TeacherProfileAddStates:waiting_age"）
+        data:      state.get_data() 的字典，序列化为 JSON 存入
+        step_label: 用户友好的 step 描述（如"已填到 Step 6 / 服务内容"）
+
+    任何异常都被吞 + logger.warning 后返回 False，保证 caller 主流程不被破坏。
+    """
+    try:
+        blob = json.dumps(data, ensure_ascii=False, default=str)
+    except Exception as e:
+        logger.warning("save_teacher_draft JSON 序列化失败 admin=%s: %s", admin_id, e)
+        return False
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO teacher_draft_states
+                  (admin_id, fsm_state, json_blob, step_label, updated_at)
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(admin_id) DO UPDATE SET
+                  fsm_state  = excluded.fsm_state,
+                  json_blob  = excluded.json_blob,
+                  step_label = excluded.step_label,
+                  updated_at = CURRENT_TIMESTAMP""",
+            (int(admin_id), str(fsm_state), blob, step_label),
+        )
+        await db.commit()
+        return True
+    except Exception as e:
+        logger.warning("save_teacher_draft 写入失败 admin=%s: %s", admin_id, e)
+        return False
+    finally:
+        await db.close()
+
+
+async def load_teacher_draft(admin_id: int) -> Optional[dict]:
+    """加载 admin 的 teacher_profile 草稿（UX-9.3）。
+
+    Returns:
+        含 admin_id / fsm_state / data (dict) / step_label / updated_at 的字典；
+        无草稿 / DB 异常 / JSON 解码失败 → None（caller 按"无草稿"处理）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM teacher_draft_states WHERE admin_id = ?",
+            (int(admin_id),),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        row_dict = dict(row)
+        try:
+            row_dict["data"] = json.loads(row_dict.get("json_blob") or "{}")
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "load_teacher_draft JSON 解码失败 admin=%s: %s", admin_id, e,
+            )
+            return None
+        return row_dict
+    except Exception as e:
+        logger.warning("load_teacher_draft 查询失败 admin=%s: %s", admin_id, e)
+        return None
+    finally:
+        await db.close()
+
+
+async def clear_teacher_draft(admin_id: int) -> bool:
+    """删除 admin 的 teacher_profile 草稿（UX-9.3）。
+
+    无草稿存在时返回 False（无操作）；删除成功返回 True。
+    DB 异常时 logger.warning + 返回 False，不向上抛。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "DELETE FROM teacher_draft_states WHERE admin_id = ?",
+            (int(admin_id),),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.warning("clear_teacher_draft 删除失败 admin=%s: %s", admin_id, e)
+        return False
     finally:
         await db.close()
 

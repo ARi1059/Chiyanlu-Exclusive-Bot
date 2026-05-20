@@ -211,4 +211,4 @@ def test_review_card_gate_hint_wrapped_in_try():
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}

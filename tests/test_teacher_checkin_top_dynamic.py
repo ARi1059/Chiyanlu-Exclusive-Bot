@@ -281,4 +281,4 @@ def test_checkin_callback_still_blocks_duplicate():
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}

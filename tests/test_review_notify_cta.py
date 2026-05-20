@@ -327,4 +327,4 @@ def test_safe_send_text_failure_does_not_raise(temp_db, monkeypatch):
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}

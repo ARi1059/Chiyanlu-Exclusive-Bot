@@ -235,4 +235,4 @@ def test_existing_reimburse_handlers_still_registered():
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert MIGRATIONS == []
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states"}
