@@ -153,6 +153,72 @@ async def notify_review_approved(
     )
 
 
+async def notify_teacher_review_approved(
+    bot: Bot,
+    review_id: int,
+) -> bool:
+    """评价审核通过后将评价 + 3 按钮一并推送到老师私聊（2026-05 新增）。
+
+    与讨论群评论使用**同一份** render_review_comment 输出，保证：
+    - 文本格式一致（含 HTML 转义 + footer config 化）
+    - 3 按钮一致（联系 / 评级徽章 / 写报告 deep link）
+    - 老师转发该消息到其它对话时，inline keyboard 跟随消息体保留
+      （Telegram 行为）；deep link 写报告按钮转发后他人点击仍能进 bot
+
+    隐私边界：与讨论群版本一致，留名半匿名（****1234 / 匿*）
+    不暴露评价者真实信息。
+
+    返回：发送成功 True；失败 / skip False（失败仅 logger.warning，
+    不抛异常，caller 不应阻塞主流程）。
+    """
+    from aiogram.enums import ParseMode
+    from bot.utils.review_comment import render_review_comment
+    from bot.database import (
+        get_reimburse_promo_text,
+        get_reimburse_promo_url,
+    )
+
+    review = await get_teacher_review(review_id)
+    if not review:
+        logger.warning("notify_teacher_review_approved skip：review %s 不存在", review_id)
+        return False
+    teacher_id = review.get("teacher_id")
+    if not teacher_id:
+        logger.warning(
+            "notify_teacher_review_approved skip：review %s 缺 teacher_id", review_id,
+        )
+        return False
+    teacher = await get_teacher(teacher_id)
+    if not teacher:
+        logger.warning(
+            "notify_teacher_review_approved skip：teacher %s 不存在", teacher_id,
+        )
+        return False
+
+    try:
+        me = await bot.get_me()
+        bot_username = me.username
+    except Exception as e:
+        logger.warning("notify_teacher_review_approved get_me 失败: %s", e)
+        bot_username = "Bot"
+
+    promo_text = await get_reimburse_promo_text()
+    promo_url = await get_reimburse_promo_url()
+    text, kb = render_review_comment(
+        review, teacher,
+        bot_username=bot_username,
+        promo_text=promo_text,
+        promo_url=promo_url,
+    )
+
+    return await _safe_send_text(
+        bot, teacher_id, text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 async def notify_review_rejected(
     bot: Bot,
     review_id: int,

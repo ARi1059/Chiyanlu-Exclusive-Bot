@@ -557,6 +557,16 @@ async def _do_approve_inner(
     except Exception as e:
         logger.warning("publish_review_comment 异常 review=%s: %s", review_id, e)
 
+    # 4b. 推送评价到老师私聊（2026-05 新增）：复用同一 render，含
+    # 3 按钮可转发；失败仅 warning 不阻塞主流程
+    try:
+        from bot.utils.rreview_notify import notify_teacher_review_approved
+        await notify_teacher_review_approved(bot, review_id)
+    except Exception as e:
+        logger.warning(
+            "notify_teacher_review_approved 异常 review=%s: %s", review_id, e,
+        )
+
     # 5. 通知评价者（附积分）
     teacher = await get_teacher(teacher_id)
     teacher_name = teacher["display_name"] if teacher else None
