@@ -413,6 +413,12 @@ bash -n scripts/prune.sh
 - 三件套行为未变。
 - CI 全绿，生产 healthcheck 0 ERR。
 
+### 7.7 进度（2026-05）
+
+- **§7.3.1 找老师分组**：✅ 已落地（UX-3 第一批 commit `afcfe4c`，2026-05）—— 「🔎 找老师」聚合页含 `user:hot` / `user:today` / `user:filter` / `user:search_history` 4 个入口，主菜单独占首行。
+- **§7.3.2 我的记录**：✅ 已落地（本 PR）。`user_main_menu_kb` 末尾新增「📝 我的记录」独占一行（callback `user:my_records`）；新增 `user_my_records_kb` 二级页含 4 个子入口：「📝 我的评价 → user:write_review」/ 「🧾 我的报销 → user:reimburse」/ 「💰 积分流水 → user:points」/ 「🎁 抽奖记录 → user:lottery:joined」+ 返回主菜单。新增 `cb_user_my_records` handler 仅承担导航（state.clear + edit_text）。`bot/handlers/user_panel.py` 与 `bot/keyboards/user_kb.py` 各加一段；零修改子页业务逻辑（write_review / reimburse / points / lottery 任一 handler 都没动）。**§7.4 实施纪律：旧 4 个一级入口在主菜单原位完全保留**（双跑观察期）。新增测试 10 个 kb test（新入口契约 + 末行独占 + 旧入口仍保留 + 4 子入口 + 复用既有 callback 命名空间 + 不引入子命名空间 + 按钮文案 + callback ≤ 64B）+ 改 3 个旧测试（write_review 末行契约 / lottery 末行契约 / 主菜单按钮总数 14 → 15 → 16）。
+- **§7.3.3 活动中心**：UX-6.1 已落地「🎁 抽奖中心」（commit `fe7ef44`）。当前项目无独立「积分活动 / 订阅任务」功能，§7.3.3 范围（抽奖活动 / 积分活动 / 订阅任务）实际只能映射到抽奖；继续做"活动中心"将与既有"抽奖中心"重复或引入未实现功能（违反 §7.5 "不修改核心动作逻辑"）。**本 Sprint 不重复实现**；待项目新增积分活动 / 订阅任务时再启动 §7.3.3 重组。
+
 ---
 
 ## 8. Sprint 6：老师侧面板精简

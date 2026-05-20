@@ -294,15 +294,22 @@ def test_search_and_teacher_detail_handlers_still_importable():
     assert r6 is not None
 
 
-def test_user_main_kb_still_has_write_review_at_end():
-    """末行布局契约：「📝 写评价」与「🎁 抽奖中心」（UX-6.1 新增）同一行；
-    write_review 仍排第一（左侧）。"""
+def test_user_main_kb_write_review_and_lottery_same_row():
+    """布局契约：「📝 写评价」与「🎁 抽奖中心」（UX-6.1）共享同一行；
+    write_review 仍排第一（左侧）。Sprint 5 §7.3.2 后这一行不再是末行
+    （新增「📝 我的记录」独占末行），但 write_review/lottery 仍同行同序。"""
     from bot.keyboards.user_kb import user_main_menu_kb
     kb = user_main_menu_kb()
-    last_row = kb.inline_keyboard[-1]
-    cbs = [b.callback_data for b in last_row]
-    assert "user:write_review" in cbs
-    # UX-6.1：抽奖中心入口与写评价共享末行
-    assert "user:lottery" in cbs
+    # 找到含 write_review 的行
+    target_row = None
+    for row in kb.inline_keyboard:
+        cbs = [b.callback_data for b in row]
+        if "user:write_review" in cbs:
+            target_row = cbs
+            break
+    assert target_row is not None
+    assert "user:write_review" in target_row
+    # UX-6.1：抽奖中心入口与写评价共享同一行
+    assert "user:lottery" in target_row
     # write_review 应排在 lottery 之前
-    assert cbs.index("user:write_review") < cbs.index("user:lottery")
+    assert target_row.index("user:write_review") < target_row.index("user:lottery")

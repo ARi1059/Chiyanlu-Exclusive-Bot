@@ -89,12 +89,15 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         [🔍 直接搜索]   [💝 收藏开课]
         [🔔 我的提醒]   [📜 搜索历史]
         [💰 我的积分]   [🧾 我的报销]
-        [📝 写评价]                       ← 2026-05-18 新增独占一行
+        [📝 写评价]     [🎁 抽奖中心]
+        [📝 我的记录]                     ← Sprint 5 §7.3.2 新增独占一行（聚合 4 个个人记录入口）
 
-    UX-3 第一批（2026-05）：新增「🔎 找老师」聚合入口（user:find），点击进入
-    二级页（user_find_kb）含 热门 / 今日 / 按条件找 / 搜索历史 四个入口；
-    旧 4 个 callback（user:hot / user:today / user:filter / user:search_history）
-    在主菜单原位完全保留，进入双跑观察期。
+    UX-3 第一批（2026-05）：新增「🔎 找老师」聚合入口（user:find）。
+    Sprint 5 §7.3.2（2026-05）：新增「📝 我的记录」聚合入口（user:my_records），
+    点击进入二级页（user_my_records_kb）含 我的评价 / 我的报销 / 积分流水 /
+    抽奖记录 四个入口。旧的一级入口（user:write_review / user:reimburse /
+    user:points / user:lottery）在主菜单原位**完全保留**，进入双跑观察期
+    （§7.4 实施纪律：不删旧入口）。
 
     callback 复用既有命名空间。
     """
@@ -129,6 +132,39 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="📝 写评价", callback_data="user:write_review"),
             InlineKeyboardButton(text="🎁 抽奖中心", callback_data="user:lottery"),
+        ],
+        [
+            InlineKeyboardButton(text="📝 我的记录", callback_data="user:my_records"),
+        ],
+    ])
+
+
+def user_my_records_kb() -> InlineKeyboardMarkup:
+    """Sprint 5 §7.3.2：「📝 我的记录」二级页 keyboard。
+
+    聚合 4 个个人记录入口（全部复用既有 callback，不引入新 callback）：
+
+        📝 我的评价   → user:write_review     评价主页（含 status / rating 过滤）
+        🧾 我的报销   → user:reimburse        报销申请与历史
+        💰 积分流水   → user:points           积分余额 + 最近流水
+        🎁 抽奖记录   → user:lottery:joined   抽奖中心「我已参与」tab
+
+    返回按钮：⬅️ 返回主菜单 → user:main
+
+    §7.4 实施纪律：本聚合页**仅承担导航**，不修改任何子页业务逻辑；
+    旧主菜单一级入口完全保留双跑期。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📝 我的评价", callback_data="user:write_review"),
+            InlineKeyboardButton(text="🧾 我的报销", callback_data="user:reimburse"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 积分流水", callback_data="user:points"),
+            InlineKeyboardButton(text="🎁 抽奖记录", callback_data="user:lottery:joined"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ 返回主菜单", callback_data="user:main"),
         ],
     ])
 

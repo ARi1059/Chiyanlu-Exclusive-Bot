@@ -210,20 +210,29 @@ def test_main_menu_has_lottery_entry():
     assert "user:lottery" in cbs
 
 
-def test_main_menu_lottery_button_in_last_row_with_write_review():
-    """[🎁 抽奖中心] 与 [📝 写评价] 同一行（行为入口同区域）。"""
+def test_main_menu_lottery_button_same_row_as_write_review():
+    """[🎁 抽奖中心] 与 [📝 写评价] 共享同一行（行为入口同区域）。
+
+    Sprint 5 §7.3.2 后该行不再是主菜单最末行（末行换成「📝 我的记录」独占），
+    但 write_review/lottery 仍同行同序。"""
     from bot.keyboards.user_kb import user_main_menu_kb
     kb = user_main_menu_kb()
-    last_row_cbs = [b.callback_data for b in kb.inline_keyboard[-1]]
-    assert "user:write_review" in last_row_cbs
-    assert "user:lottery" in last_row_cbs
+    target = None
+    for row in kb.inline_keyboard:
+        cbs = [b.callback_data for b in row]
+        if "user:lottery" in cbs:
+            target = cbs
+            break
+    assert target is not None
+    assert "user:write_review" in target
+    assert "user:lottery" in target
 
 
-def test_main_menu_button_count_increased_by_one():
-    """主菜单按钮总数应增加 1（原有 14 → 现在 15）。"""
+def test_main_menu_button_count_after_my_records():
+    """主菜单按钮总数：UX-6.1 后是 15；Sprint 5 §7.3.2 又加「📝 我的记录」→ 16。"""
     from bot.keyboards.user_kb import user_main_menu_kb
     kb = user_main_menu_kb()
-    assert len(_flat_buttons(kb)) == 15
+    assert len(_flat_buttons(kb)) == 16
 
 
 # ============================================================

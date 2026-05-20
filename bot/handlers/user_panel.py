@@ -28,6 +28,7 @@ from bot.database import (
 from bot.keyboards.user_kb import (
     user_main_menu_kb,
     user_find_kb,
+    user_my_records_kb,
     back_to_user_main_kb,
     search_cancel_kb,
     favorites_empty_kb,
@@ -102,6 +103,34 @@ async def cb_user_find(callback: types.CallbackQuery, state: FSMContext):
     except Exception:
         # 上一条若是图片或不可编辑 → 退化为新发一条
         await callback.message.answer(text, reply_markup=user_find_kb())
+    await callback.answer()
+
+
+# ============ 📝 我的记录 二级页（Sprint 5 §7.3.2） ============
+
+
+@router.callback_query(F.data == "user:my_records")
+async def cb_user_my_records(callback: types.CallbackQuery, state: FSMContext):
+    """📝 我的记录 二级页：聚合 4 个个人记录入口
+
+    本 handler 仅渲染聚合页；4 个子入口的 callback（user:write_review /
+    user:reimburse / user:points / user:lottery:joined）含义未变，仍由各自
+    原 handler 处理。Sprint 5 §7.3.2 + §7.4 实施纪律：旧主菜单一级入口
+    保留双跑期，不删除。
+    """
+    await state.clear()
+    text = (
+        "📝 我的记录\n\n"
+        "请选择查看类型：\n\n"
+        "📝 我的评价：写过的评价 / 待审核 / 通过历史\n"
+        "🧾 我的报销：报销申请与处理进度\n"
+        "💰 积分流水：余额与最近积分变动明细\n"
+        "🎁 抽奖记录：参与过的抽奖与中奖情况"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=user_my_records_kb())
+    except Exception:
+        await callback.message.answer(text, reply_markup=user_my_records_kb())
     await callback.answer()
 
 
