@@ -128,14 +128,22 @@ def test_admin_settings_kb_non_super_no_aggregate_entry():
     assert "system:reimburse_toggle" not in cbs
 
 
-def test_admin_settings_kb_super_keeps_old_reimburse_entries():
-    """关键契约：UX-6.2 不删除 admin:settings 主面板的旧 super-only 入口
-    （PLAN §1.2「不破坏旧入口」+ §11.3「旧入口保留双跑期」）。"""
+def test_admin_settings_kb_super_no_longer_has_overlapping_reimburse_entries():
+    """2026-05 修订：admin_settings_kb 顶部原本含 system:reimburse_pool /
+    system:reimburse_toggle 两并列入口，与 admin:reimburse_config 聚合页
+    入口重叠。本批已删除两个直入口；callback handler 仍保留兼容旧
+    inline button（在历史会话中点旧按钮仍可工作）。
+
+    历史 PLAN §1.2「不破坏旧入口」+ §11.3「旧入口保留双跑期」契约由
+    callback handler 自身的存在性满足，UI 入口的去重并不违反这一契约。"""
     from bot.keyboards.admin_kb import admin_settings_kb
     kb = admin_settings_kb(is_super=True)
     cbs = [b.callback_data for b in _flat_buttons(kb)]
-    assert "system:reimburse_pool" in cbs
-    assert "system:reimburse_toggle" in cbs
+    # 聚合入口必在
+    assert "admin:reimburse_config" in cbs
+    # 两个直入口应已被撤除
+    assert "system:reimburse_pool" not in cbs
+    assert "system:reimburse_toggle" not in cbs
 
 
 # ============================================================

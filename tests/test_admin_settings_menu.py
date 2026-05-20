@@ -76,19 +76,36 @@ def test_settings_kb_contains_base_entries():
 
 
 def test_settings_kb_contains_super_only_entries():
-    """超管专属：报销池设置 + 报销功能开关。"""
+    """超管专属：报销配置聚合入口。
+
+    2026-05 修订：原本 admin_settings_kb 同时含 system:reimburse_pool +
+    system:reimburse_toggle 两个直入口，与 admin:reimburse_config 聚合页
+    重叠，造成认知混乱。已删除两直入口，仅保留聚合入口；callback handler
+    仍保留兼容旧 inline button。
+    """
     from bot.keyboards.admin_kb import admin_settings_kb
     kb = admin_settings_kb(is_super=True)
     callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
-    assert "system:reimburse_pool" in callbacks
-    assert "system:reimburse_toggle" in callbacks
+    assert "admin:reimburse_config" in callbacks
+
+
+def test_settings_kb_no_overlapping_reimburse_buttons():
+    """admin_settings_kb 不应同时有两个并列的 system:reimburse_pool /
+    system:reimburse_toggle 直入口（与聚合入口重叠）。"""
+    from bot.keyboards.admin_kb import admin_settings_kb
+    kb = admin_settings_kb(is_super=True)
+    callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
+    assert "system:reimburse_pool" not in callbacks
+    assert "system:reimburse_toggle" not in callbacks
 
 
 def test_settings_kb_hides_super_only_entries_for_non_super():
-    """非超管不应看到报销池设置 / 报销功能开关。"""
+    """非超管不应看到报销配置聚合入口。"""
     from bot.keyboards.admin_kb import admin_settings_kb
     kb = admin_settings_kb(is_super=False)
     callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
+    assert "admin:reimburse_config" not in callbacks
+    # 即便如此，旧 system:reimburse_pool / system:reimburse_toggle 也不应出现
     assert "system:reimburse_pool" not in callbacks
     assert "system:reimburse_toggle" not in callbacks
 
@@ -105,10 +122,11 @@ def test_settings_kb_back_button_is_menu_main():
 
 
 def test_settings_kb_row_counts():
-    """超管：6 base + 2 super + 1 back = 9 行；非超管：6 base + 1 back = 7 行。
-    UX-9.1 在 base 区追加 [🗝 关键词管理]，故每模式 +1 行。"""
+    """超管：6 base + 1 reimburse_config + 1 back = 8 行；
+    非超管：6 base + 1 back = 7 行。
+    2026-05 修订：删除两个直入口（报销池 / 报销功能开关），故超管行数 9 → 8。"""
     from bot.keyboards.admin_kb import admin_settings_kb
-    assert len(admin_settings_kb(is_super=True).inline_keyboard) == 9
+    assert len(admin_settings_kb(is_super=True).inline_keyboard) == 8
     assert len(admin_settings_kb(is_super=False).inline_keyboard) == 7
 
 
@@ -125,8 +143,7 @@ def test_settings_kb_button_texts_match_labels():
     assert "日报" in by_callback["admin:report_settings"] or \
            "周报" in by_callback["admin:report_settings"]
     assert "系统设置" in by_callback["menu:system"]
-    assert "报销池" in by_callback["system:reimburse_pool"]
-    assert "报销功能开关" in by_callback["system:reimburse_toggle"]
+    assert "报销配置" in by_callback["admin:reimburse_config"]
 
 
 # ============ 不含已下线 / 不存在 / 错误归属的入口 ============

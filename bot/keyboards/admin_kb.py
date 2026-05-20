@@ -132,12 +132,15 @@ def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
         - menu:system              ⚙️ 系统设置（含发布时间 / 冷却 / 提醒 / 品牌等深层项）
 
     超管专属：
-        - system:reimburse_pool    💰 报销池设置 (@super_admin_required)
-        - system:reimburse_toggle  🔛 报销功能开关 (@super_admin_required)
+        - admin:reimburse_config   💰 报销配置（聚合页，含报销池 / 开关 / 门槛 / 必关 / 池重置）
 
     callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
     聚合视图组合。UX-9.1：群组快捷词配置入口 admin:keywords（handler 在
     admin_keyword.py），消息匹配触发仍由 keyword.py 处理。
+
+    2026-05 修订：删除 admin_settings_kb 顶部对 system:reimburse_pool /
+    system:reimburse_toggle 的并列直入口（与「💰 报销配置」聚合页的入口
+    重叠造成认知混乱）。两个 callback handler 仍保留，旧 inline button 兼容。
     """
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📢 必关订阅",        callback_data="admin:subreq")],
@@ -148,11 +151,7 @@ def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚙️ 系统设置",        callback_data="menu:system")],
     ]
     if is_super:
-        # UX-6.2：旧两按钮一行排列 + 新增聚合入口（旧 callback 双跑期保留兼容）
-        rows.append([
-            InlineKeyboardButton(text="💰 报销池设置",   callback_data="system:reimburse_pool"),
-            InlineKeyboardButton(text="🔛 报销功能开关", callback_data="system:reimburse_toggle"),
-        ])
+        # UX-6.2 + 2026-05 收口：仅保留聚合入口，去除旧两按钮重叠
         rows.append([
             InlineKeyboardButton(text="💰 报销配置（聚合 5 项）", callback_data="admin:reimburse_config"),
         ])
