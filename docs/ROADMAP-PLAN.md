@@ -257,6 +257,12 @@ bash -n scripts/prune.sh
 - `POLICY.md` Part III 同步更新「对账口径」一节。
 - CI 全绿，生产 healthcheck 0 ERR。
 
+### 4.5 进度（2026-05）
+
+- **§4.2.1 已落地**：抽奖参与对账页（活动列表 + 单活动汇总）。新增 `bot/services/lottery_reconcile.py`（dataclass + 对账 SQL + 渲染），`bot/keyboards/admin_kb.py` 给 `admin_dashboard_kb` 加 `is_super` 参数并新增 `admin_lottery_reconcile_kb` / `admin_lottery_reconcile_detail_kb`，`bot/handlers/admin_panel.py` 新增 4 个 `@super_admin_required` callback（列表 / 列表刷新 / 详情 / 详情刷新）+ `cb_admin_dashboard` 注入 `is_super`。对账口径：期望 = entry_count × cost；实际 = -SUM lottery_entry delta；退款 = SUM lottery_refund delta；净扣 = 实际 - 退款；差异 = 期望 - 净扣。4 类异常（A 有 entry 无扣分 / B 有扣分无 entry / C 双向缺失=0 / D 重复扣分），异常人数 = |A∪B∪D|。仅对 `cost>0` 且非 `draft` 的活动对账。零修改抽奖核心（`lottery_entry.py` / `admin_lottery.py` / `lottery_tasks`）、零 schema 变更（复用既有 `idx_point_tx_related` 索引）、零导出文件、零修复按钮。契约由 `tests/test_lottery_reconcile_service.py`（22 个 test，含平账 / A / B / D / 三类并集去重 / 退款抵消 / cost=0 跳过 / draft 跳过 / cancelled 计入 / 渲染）+ `tests/test_lottery_reconcile_kb.py`（13 个 test，含超管 / 非超管分支 + callback ≤ 64B + 防御性"无修复按钮"）集中锁定。`POLICY.md` §10.2 扩充三小节（对账口径 / 异常分类 / 后台入口）。
+- **§4.2.2 异常用户列表**：待后续 PR。
+- **§4.2.3 汇总文本复制**：待后续 PR。
+
 ---
 
 ## 5. Sprint 3：报销运营

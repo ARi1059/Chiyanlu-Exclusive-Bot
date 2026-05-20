@@ -1407,6 +1407,43 @@ winners = rng.sample(entries, min(prize_count, len(entries)))
 - 定期对账：把 `lottery_entries` 中的 entries 与 `point_transactions` 中的 `lottery_entry` 流水按 `(lottery_id, user_id)` 对照
 - 发现差异由超管人工补扣，原因填「系统修正 lid=X 漏扣」
 
+#### 10.2.1 对账口径（Sprint 2 §4.2.1，2026-05）
+
+仅对 `lotteries.entry_cost_points > 0` 且 `status != 'draft'` 的活动对账：
+
+| 指标 | SQL 口径 |
+|---|---|
+| 期望扣分 | `entry_count × entry_cost_points`，其中 `entry_count = COUNT(lottery_entries WHERE lottery_id=L)` |
+| 实际扣分 | `-SUM(delta)` FROM `point_transactions` WHERE `reason='lottery_entry' AND related_id=L`（delta 为负，取负号变正） |
+| 退款 | `SUM(delta)` FROM `point_transactions` WHERE `reason='lottery_refund' AND related_id=L`（delta 为正） |
+| 净扣分 | `实际扣分 - 退款` |
+| 差异 | `期望扣分 - 净扣分`，>0 少扣（漏扣 / 退款过多）；<0 多扣（重复扣 / 误扣）；=0 平账 |
+
+`entry_cost_points = 0`（免费活动）或 `status='draft'` 跳过对账。
+`status='cancelled'` 仍计入（验证取消退款是否完整）。
+
+#### 10.2.2 异常分类
+
+| 代号 | 名称 | 检测口径 |
+|---|---|---|
+| A | 有 entry 无扣分 | `lottery_entries` 有 `(uid, L)`，`point_transactions` 无 `(uid, 'lottery_entry', L)` |
+| B | 有扣分无 entry | `point_transactions` 有 `(uid, 'lottery_entry', L)`，`lottery_entries` 无 `(uid, L)` |
+| C | 双向缺失 | SQL 视角不可能出现（两边都无记录就不在比对域），常量 0，不展示 |
+| D | 重复扣分 | 同 `(uid, L)` 在 `point_transactions` 'lottery_entry' 出现 ≥ 2 次 |
+
+异常人数 = `|A ∪ B ∪ D|` distinct user_id。
+
+#### 10.2.3 后台入口（仅超管）
+
+`📊 运营看板 → 📊 抽奖对账`（callback `admin:lottery_reconcile`）：
+
+- **列表页**：展示积分门票活动数 / 有差异活动数 / 最近活动对账概览（每条带 ✅ 平账 或 ⚠️ 差异/异常 标记）
+- **单活动详情页**：8 项完整指标（期望 / 实际 / 退款 / 净扣 / 差异 / A / B / D / 异常人数）
+
+**第一版严格只读**：不导出文件、不提供"一键补偿/修复"按钮。异常用户明细（§4.2.2）与汇总文本复制（§4.2.3）留待后续 PR。
+
+实现：`bot/services/lottery_reconcile.py` / `bot/keyboards/admin_kb.py::admin_lottery_reconcile_kb` / `bot/handlers/admin_panel.py::cb_admin_lottery_reconcile`。
+
 ### 10.3 用户未满足必关频道
 
 - 拒绝参与，附 missing 频道列表

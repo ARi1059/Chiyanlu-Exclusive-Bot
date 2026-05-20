@@ -46,6 +46,8 @@ from bot.keyboards.admin_kb import (
     admin_overview_kb,
     admin_reimbursement_pool_kb,
     admin_lottery_status_kb,
+    admin_lottery_reconcile_kb,
+    admin_lottery_reconcile_detail_kb,
 )
 from bot.states.teacher_states import (
     AddAdminStates,
@@ -1479,22 +1481,33 @@ async def cb_admin_review_tasks(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:dashboard")
 @admin_required
 async def cb_admin_dashboard(callback: types.CallbackQuery):
-    """二级「📊 运营看板」入口：聚合三个只读看板
+    """二级「📊 运营看板」入口：聚合三个只读看板（+ 超管专属对账入口）
 
     callback 含义未做任何变更，本 handler 仅渲染聚合页 + 复用既有三个 callback
     入口（admin:overview / admin:reimbursement_pool / admin:lottery_status）。
 
     主菜单中「📈 数据分析」对应 dashboard:enter（user_events / 审计 / 7 日窗口），
     与本「📊 运营看板」职责区分。
+
+    Sprint 2 §4.2.1：超管视角额外渲染「📊 抽奖对账」入口。
     """
-    text = (
-        "📊 运营看板\n\n"
-        "请选择要查看的运营数据：\n\n"
-        "📊 运营总览\n"
-        "💰 报销池状态\n"
-        "🎲 抽奖状态"
+    user_id = callback.from_user.id
+    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
+    lines = [
+        "📊 运营看板",
+        "",
+        "请选择要查看的运营数据：",
+        "",
+        "📊 运营总览",
+        "💰 报销池状态",
+        "🎲 抽奖状态",
+    ]
+    if is_super:
+        lines.append("📊 抽奖对账（仅超管）")
+    text = "\n".join(lines)
+    await callback.message.edit_text(
+        text, reply_markup=admin_dashboard_kb(is_super=is_super),
     )
-    await callback.message.edit_text(text, reply_markup=admin_dashboard_kb())
     await callback.answer()
 
 
@@ -1637,6 +1650,91 @@ async def cb_admin_lottery_status_refresh(callback: types.CallbackQuery):
         # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
         pass
     await callback.answer("已刷新")
+
+
+# ============ 抽奖参与对账（admin:lottery_reconcile） ============
+# Sprint 2 §4.2.1：仅超管可见。读 lottery_entries × point_transactions 比对
+# entry / 扣分 / 退款 一致性。本 PR 不展示异常用户明细（留给 §4.2.2 PR），
+# 不导出文件（留给 §4.2.3 PR），不提供"修复"按钮（§4.3 禁止）。
+
+
+@router.callback_query(F.data == "admin:lottery_reconcile")
+@super_admin_required
+async def cb_admin_lottery_reconcile(callback: types.CallbackQuery):
+    """抽奖对账列表页：列出 cost>0 且非 draft 的活动 + 每条对账概览。"""
+    from bot.services.lottery_reconcile import (
+        get_lottery_reconcile_overview,
+        render_lottery_reconcile_overview,
+    )
+    stats = await get_lottery_reconcile_overview()
+    await callback.message.edit_text(
+        render_lottery_reconcile_overview(stats),
+        reply_markup=admin_lottery_reconcile_kb(stats.items),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:lottery_reconcile:refresh")
+@super_admin_required
+async def cb_admin_lottery_reconcile_refresh(callback: types.CallbackQuery):
+    """对账列表刷新按钮。"""
+    from bot.services.lottery_reconcile import (
+        get_lottery_reconcile_overview,
+        render_lottery_reconcile_overview,
+    )
+    stats = await get_lottery_reconcile_overview()
+    try:
+        await callback.message.edit_text(
+            render_lottery_reconcile_overview(stats),
+            reply_markup=admin_lottery_reconcile_kb(stats.items),
+        )
+    except Exception:
+        # 文本未变 → Telegram message is not modified，吞掉
+        pass
+    await callback.answer("已刷新")
+
+
+@router.callback_query(F.data.startswith("admin:lottery_reconcile:item:"))
+@super_admin_required
+async def cb_admin_lottery_reconcile_item(callback: types.CallbackQuery):
+    """单活动对账详情页（含刷新当前路径）。
+
+    callback 形式：
+        admin:lottery_reconcile:item:<lid>            → 首次进入
+        admin:lottery_reconcile:item:<lid>:refresh    → 刷新当前
+    """
+    from bot.services.lottery_reconcile import (
+        get_lottery_reconcile_detail,
+        render_lottery_reconcile_detail,
+    )
+    data = callback.data or ""
+    parts = data.split(":")
+    # ['admin','lottery_reconcile','item','<lid>'] or [..,'<lid>','refresh']
+    is_refresh = len(parts) >= 5 and parts[4] == "refresh"
+    try:
+        lid = int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer("⚠️ 参数错误", show_alert=True)
+        return
+
+    item = await get_lottery_reconcile_detail(lid)
+    if item is None:
+        await callback.answer(
+            "⚠️ 活动不存在或非积分门票活动（无需对账）",
+            show_alert=True,
+        )
+        return
+
+    try:
+        await callback.message.edit_text(
+            render_lottery_reconcile_detail(item),
+            reply_markup=admin_lottery_reconcile_detail_kb(item),
+        )
+    except Exception:
+        # 刷新时文本未变 → 吞掉 message is not modified
+        if not is_refresh:
+            raise
+    await callback.answer("已刷新" if is_refresh else None)
 
 
 # ============ 通用取消 ============

@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 if TYPE_CHECKING:
     # 仅类型提示用，避免运行时循环依赖
     from bot.services.admin_overview import AdminOverviewStats
+    from bot.services.lottery_reconcile import LotteryReconcileItem
     from bot.services.lottery_status import LotteryStatusStats
     from bot.services.reimbursement_pool import ReimbursementPoolStats
 
@@ -296,23 +297,29 @@ def admin_review_done_next_kb(kind: str) -> InlineKeyboardMarkup:
     ])
 
 
-def admin_dashboard_kb() -> InlineKeyboardMarkup:
-    """二级「📊 数据看板」面板：聚合三个只读看板入口 + 返回后台
+def admin_dashboard_kb(is_super: bool = False) -> InlineKeyboardMarkup:
+    """二级「📊 运营看板」面板：聚合三个只读看板入口 + 返回后台
 
     入口分别对应：
         - admin:overview            运营总览
         - admin:reimbursement_pool  报销池状态
         - admin:lottery_status      抽奖状态
+        - admin:lottery_reconcile   📊 抽奖对账（仅超管，Sprint 2 §4.2.1）
 
     callback 含义未做任何变更，handler 仍由原 admin_panel.py 模块处理；
     本 keyboard 仅是聚合入口的视图组合。
     """
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📊 运营总览",   callback_data="admin:overview")],
         [InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool")],
         [InlineKeyboardButton(text="🎲 抽奖状态",   callback_data="admin:lottery_status")],
-        [InlineKeyboardButton(text="⬅️ 返回后台",   callback_data="menu:main")],
-    ])
+    ]
+    if is_super:
+        rows.append([
+            InlineKeyboardButton(text="📊 抽奖对账", callback_data="admin:lottery_reconcile"),
+        ])
+    rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_overview_kb(
@@ -2280,4 +2287,71 @@ def admin_keyword_cancel_input_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="⬅️ 取消输入", callback_data="admin:keywords",
         )],
+    ])
+
+
+# ============ 抽奖对账（admin:lottery_reconcile） ============
+
+
+def _reconcile_item_button_text(item: "LotteryReconcileItem") -> str:
+    """单条对账活动按钮文案：#L 名称 + 平账/差异标记。
+
+    Telegram callback_data 限 64 字节，按钮 text 不受同等限制，但仍控制长度
+    （活动名截断到 ~20 字符）避免单行换行。
+    """
+    name = (item.name or "(未命名)")
+    if len(name) > 20:
+        name = name[:19] + "…"
+    if item.diff == 0 and item.anomaly_users == 0:
+        tag = "✅"
+    else:
+        tag = "⚠️"
+    return f"{tag} #{item.id} {name}"
+
+
+def admin_lottery_reconcile_kb(
+    items: list["LotteryReconcileItem"],
+) -> InlineKeyboardMarkup:
+    """对账列表 keyboard：每个活动一行 → detail；末尾刷新 + 返回运营看板。
+
+    Sprint 2 §4.2.1：仅超管入口；不放任何"修复"按钮。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for item in items:
+        rows.append([
+            InlineKeyboardButton(
+                text=_reconcile_item_button_text(item),
+                callback_data=f"admin:lottery_reconcile:item:{item.id}",
+            ),
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 刷新", callback_data="admin:lottery_reconcile:refresh",
+        ),
+        InlineKeyboardButton(
+            text="⬅️ 返回运营看板", callback_data="admin:dashboard",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_lottery_reconcile_detail_kb(
+    item: "LotteryReconcileItem",
+) -> InlineKeyboardMarkup:
+    """单活动对账详情 keyboard：仅刷新 + 返回列表。
+
+    Sprint 2 §4.2.1：本 PR 不放"异常用户列表"按钮（留给 §4.2.2 PR）；
+    也不放任何"修复"按钮（§4.3 禁止）。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔄 刷新当前",
+                callback_data=f"admin:lottery_reconcile:item:{item.id}:refresh",
+            ),
+            InlineKeyboardButton(
+                text="⬅️ 返回对账列表",
+                callback_data="admin:lottery_reconcile",
+            ),
+        ],
     ])
