@@ -463,8 +463,8 @@ bash -n scripts/prune.sh
   2. §8.2 建议入口 5 个**比现状多**，与 §8.5 "按钮数量减少" 冲突；其中"📝 我的评价"和"❓ 帮助"对应**当前项目不存在的业务功能**，新增违反 §8.4 "不引入用户/管理员功能"。
   3. `teacher:*` 命名空间被三角色共用（老师 `teacher:status*` / 管理员 `teacher:list/delete/enable/...` / 用户 `teacher:view/similar/...`），但 handler 级别权限校验完备（`get_teacher` / `admin_required` / 私聊校验），不构成功能错误；大改命名空间会破坏所有历史 inline button，与 §2.4 "旧 callback 兼容" 冲突，故**不推荐**。
   4. 全部 `teacher_self:*` / `teacher:status*` callback 均有 handler 引用，无遗弃路径。
-- **§8.3 精简 PR 推荐范围**（可选下一 PR）：仅做防御性测试与文档约束 —— 新增 `tests/test_teacher_main_menu.py` 锁定「主菜单按钮数 ≤ 3 + 签到 callback 在第一行」契约；零 keyboard / handler 代码改动。零业务功能扩展。
-- 零代码改动；零 schema 变更；零 keyboard 改动；CI 全绿（1610 测试沿用本审查 PR 不引入新测试）。
+- **§8.3 精简 PR 已落地**：仅做防御性测试与文档约束，**零 keyboard / handler 代码改动**。新增 `tests/test_teacher_main_menu.py`（15 个契约 test），锁定：① 按钮总数 ≤ 3 且当前 == 3（双向约束防漂移）；② 签到 callback 必须在第一行第一个，文案根据 `checked_in` 动态切换；③ callback 必须属于 `teacher_self:*` 或 `teacher:status*` 命名空间；④ 禁止 `user:*` / `admin:*` / `menu:*` 跨角色入口；⑤ 禁止 `teacher:view/similar/list/delete/enable/confirm/select/remind/reviews/toggle_fav` 等用户/管理员 `teacher:*` 子路径；⑥ 签到 callback_data 精确为 `teacher_self:checkin`（防御重命名）；⑦ 资料 + 状态入口存在（防御无意识删除）；⑧ callback_data ≤ 64B。`docs/DESIGN.md` §2.3.5 新增「老师主菜单契约」段（5 项契约表格 + 防御性测试说明 + 审查报告链接）。零业务功能扩展；CI 1625 全绿。
+- **Sprint 6 收官**：§8.1 / §8.5 验收 4 项已在 UX-5.1 时代自然满足；本 Sprint 仅把"已达成的简化状态"通过契约固化，防止未来回归。
 
 ---
 
