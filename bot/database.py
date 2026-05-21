@@ -259,7 +259,11 @@ async def init_db():
                 teacher_id                  INTEGER NOT NULL,
                 user_id                     INTEGER NOT NULL,
                 booking_screenshot_file_id  TEXT NOT NULL,
-                gesture_photo_file_id       TEXT NOT NULL,
+                -- 2026-05-21：手势照仅在用户选择参与报销时上传；普通评价路径
+                -- 不再强制采集 → 改为可空。create_teacher_review 同步放宽
+                -- 必填字段集；管理员审核侧（rreview_admin / rreview_notify /
+                -- admin_kb）均加 None-guard 防止 NULL 进 InputMediaPhoto。
+                gesture_photo_file_id       TEXT,
                 rating                      TEXT NOT NULL,
                 score_humanphoto            REAL NOT NULL,
                 score_appearance            REAL NOT NULL,
@@ -642,6 +646,131 @@ _QUICK_ENTRY_SEED: tuple[tuple[str, str, str, list], ...] = (
 )
 
 
+async def _migrate_003_teacher_reviews_gesture_nullable(
+    db: aiosqlite.Connection,
+) -> None:
+    """2026-05-21：把 teacher_reviews.gesture_photo_file_id 从 NOT NULL 改为可空。
+
+    背景：评价前置改造后，普通评价（不参与报销）不再强制上传手势照。
+    既有历史评价行均含手势照（旧 NOT NULL 保障），迁移后不受影响。
+
+    SQLite 不支持 ALTER COLUMN DROP NOT NULL，必须 recreate-table：
+        1. CREATE TABLE teacher_reviews_new(... gesture_photo_file_id TEXT ...)
+        2. INSERT INTO _new SELECT * FROM teacher_reviews
+        3. DROP TABLE teacher_reviews
+        4. ALTER _new RENAME TO teacher_reviews
+        5. 重建索引
+
+    幂等性：若 PRAGMA table_info 显示当前列已 nullable（notnull=0），直接跳过。
+    """
+    cursor = await db.execute("PRAGMA table_info(teacher_reviews)")
+    cols = await cursor.fetchall()
+    gesture_notnull = next(
+        (int(c[3]) for c in cols if c[1] == "gesture_photo_file_id"),
+        None,
+    )
+    if gesture_notnull is None:
+        # 表不存在（应不会到这里）—— init_db 的 CREATE TABLE 已含新结构
+        return
+    if gesture_notnull == 0:
+        # 已可空 —— 无需再跑
+        return
+
+    # SQLite recreate-table：在事务内完成，避免中间态被其它连接读到
+    await db.execute("BEGIN")
+    try:
+        await db.execute(
+            """
+            CREATE TABLE teacher_reviews_new (
+                id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                teacher_id                  INTEGER NOT NULL,
+                user_id                     INTEGER NOT NULL,
+                booking_screenshot_file_id  TEXT NOT NULL,
+                gesture_photo_file_id       TEXT,
+                rating                      TEXT NOT NULL,
+                score_humanphoto            REAL NOT NULL,
+                score_appearance            REAL NOT NULL,
+                score_body                  REAL NOT NULL,
+                score_service               REAL NOT NULL,
+                score_attitude              REAL NOT NULL,
+                score_environment           REAL NOT NULL,
+                overall_score               REAL NOT NULL,
+                summary                     TEXT,
+                status                      TEXT NOT NULL DEFAULT 'pending',
+                reviewer_id                 INTEGER,
+                reject_reason               TEXT,
+                discussion_chat_id          INTEGER,
+                discussion_msg_id           INTEGER,
+                request_reimbursement       INTEGER NOT NULL DEFAULT 0,
+                anonymous                   INTEGER NOT NULL DEFAULT 0,
+                created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at                 TEXT,
+                published_at                TEXT,
+                FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE,
+                CHECK (
+                    score_humanphoto BETWEEN 0 AND 10 AND
+                    score_appearance BETWEEN 0 AND 10 AND
+                    score_body BETWEEN 0 AND 10 AND
+                    score_service BETWEEN 0 AND 10 AND
+                    score_attitude BETWEEN 0 AND 10 AND
+                    score_environment BETWEEN 0 AND 10 AND
+                    overall_score BETWEEN 0 AND 10
+                )
+            )
+            """,
+        )
+        await db.execute(
+            """
+            INSERT INTO teacher_reviews_new (
+                id, teacher_id, user_id,
+                booking_screenshot_file_id, gesture_photo_file_id,
+                rating,
+                score_humanphoto, score_appearance, score_body,
+                score_service, score_attitude, score_environment,
+                overall_score, summary, status,
+                reviewer_id, reject_reason,
+                discussion_chat_id, discussion_msg_id,
+                request_reimbursement, anonymous,
+                created_at, reviewed_at, published_at
+            )
+            SELECT id, teacher_id, user_id,
+                   booking_screenshot_file_id, gesture_photo_file_id,
+                   rating,
+                   score_humanphoto, score_appearance, score_body,
+                   score_service, score_attitude, score_environment,
+                   overall_score, summary, status,
+                   reviewer_id, reject_reason,
+                   discussion_chat_id, discussion_msg_id,
+                   request_reimbursement, anonymous,
+                   created_at, reviewed_at, published_at
+            FROM teacher_reviews
+            """,
+        )
+        await db.execute("DROP TABLE teacher_reviews")
+        await db.execute("ALTER TABLE teacher_reviews_new RENAME TO teacher_reviews")
+        # 重建索引（与 init_db schema 字符串中的 CREATE INDEX 一致）
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reviews_teacher_status "
+            "ON teacher_reviews(teacher_id, status)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reviews_status_created "
+            "ON teacher_reviews(status, created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reviews_user_created "
+            "ON teacher_reviews(user_id, created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reviews_user_teacher_created "
+            "ON teacher_reviews(user_id, teacher_id, created_at)"
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+
 async def _migrate_002_quick_entry_keywords(db: aiosqlite.Connection) -> None:
     """UX-9.1：群组快捷词配置表 + seed 默认 5 条。
 
@@ -693,6 +822,14 @@ MIGRATIONS: list[Migration] = [
         name="UX-9.1 群组快捷词配置表 + seed 默认",
         kind="soft",  # soft：表缺失时 handler 走硬编码 fallback
         func=_migrate_002_quick_entry_keywords,
+    ),
+    Migration(
+        version="20260521_001_teacher_reviews_gesture_nullable",
+        name="评价前置：teacher_reviews.gesture_photo_file_id 改为可空",
+        # hard：schema 不一致会让 create_teacher_review 在 req=0 路径插入 None
+        # 时报 NOT NULL 错；启动失败便于 update.sh rollback 比静默放过更安全
+        kind="hard",
+        func=_migrate_003_teacher_reviews_gesture_nullable,
     ),
 ]
 
@@ -5229,11 +5366,12 @@ async def create_teacher_review(data: dict) -> Optional[int]:
     """插入 pending 评价，返回 review_id
 
     data 必含：teacher_id / user_id / booking_screenshot_file_id /
-              gesture_photo_file_id / rating / 6 个 score_* / overall_score
-    可选：summary（None 或字符串）
+              rating / 6 个 score_* / overall_score
+    可选：summary（None 或字符串） / gesture_photo_file_id（2026-05-21 起
+              仅 request_reimbursement=1 路径强制要求，普通评价为 None）
     """
     required = ["teacher_id", "user_id", "booking_screenshot_file_id",
-                "gesture_photo_file_id", "rating", "overall_score"]
+                "rating", "overall_score"]
     for f in required:
         if data.get(f) is None:
             return None
@@ -5257,7 +5395,8 @@ async def create_teacher_review(data: dict) -> Optional[int]:
                 (
                     int(data["teacher_id"]), int(data["user_id"]),
                     data["booking_screenshot_file_id"],
-                    data["gesture_photo_file_id"],
+                    # 2026-05-21：可空，get 而非下标
+                    data.get("gesture_photo_file_id"),
                     data["rating"],
                     float(data["score_humanphoto"]),
                     float(data["score_appearance"]),

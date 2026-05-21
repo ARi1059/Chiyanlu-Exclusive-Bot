@@ -930,7 +930,20 @@ _CARD_FIELDS: list[dict] = [
 
 
 def _card_field_filled(data: dict, field: dict) -> bool:
-    """字段是否已填齐"""
+    """字段是否已填齐
+
+    2026-05-21：evidence 字段的"齐全"判定要按 request_reimbursement 区分：
+        - req=1：booking + gesture 均需有
+        - req=0：仅 booking 需有（gesture 故意为 None）
+    其它字段按 data_keys 全部非空判（行为不变）。
+    """
+    if field.get("key") == "evidence":
+        req = int(data.get("request_reimbursement") or 0)
+        if not data.get("booking_screenshot_file_id"):
+            return False
+        if req == 1 and not data.get("gesture_photo_file_id"):
+            return False
+        return True
     for k in field["data_keys"]:
         v = data.get(k)
         if v is None or (isinstance(v, str) and not v):
@@ -1027,6 +1040,54 @@ def review_card_reimburse_kb(amount: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="否，不申请", callback_data="card:reimburse:no")],
         [InlineKeyboardButton(text="❌ 取消提交", callback_data="card:cancel")],
     ])
+
+
+def review_intent_kb(amount: int) -> InlineKeyboardMarkup:
+    """评价前置「是否参与报销」选择 keyboard（2026-05-21）。
+
+    展示在 start_card_review 之后、卡片渲染之前；仅资格预判通过的用户
+    会看到此屏。选 yes → 强制现场手势照；no → 仅约课截图。
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"✅ 参与报销（预计 {amount} 元）",
+            callback_data="card:intent:yes",
+        )],
+        [InlineKeyboardButton(
+            text="❌ 不参与，仅评价",
+            callback_data="card:intent:no",
+        )],
+        [InlineKeyboardButton(text="🚫 取消", callback_data="card:cancel")],
+    ])
+
+
+def review_intent_subreq_fail_kb(missing: list[dict]) -> InlineKeyboardMarkup:
+    """评价前置 intent=yes 时必关订阅失败的回退选择 keyboard（2026-05-21）。
+
+    布局：
+        - 每个未关注频道 / 群组的邀请链接（URL 按钮）
+        - [🔄 已加入，重新检查]   callback=card:intent:retry
+        - [❌ 改为不参与，继续评价] callback=card:intent:fallback
+        - [🚫 取消]               callback=card:cancel
+
+    用户即便不订阅，也可选择"改为不参与"继续把评价写完——不阻塞普通评价路径。
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for it in missing or []:
+        link = it.get("invite_link") or ""
+        name = it.get("display_name") or str(it.get("chat_id"))
+        if link:
+            rows.append([InlineKeyboardButton(text=f"📺 {name}", url=link)])
+    rows.append([InlineKeyboardButton(
+        text="🔄 已加入，重新检查",
+        callback_data="card:intent:retry",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="❌ 改为不参与，继续评价",
+        callback_data="card:intent:fallback",
+    )])
+    rows.append([InlineKeyboardButton(text="🚫 取消", callback_data="card:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ============ 评价 FSM 键盘（Phase 9.3） ============

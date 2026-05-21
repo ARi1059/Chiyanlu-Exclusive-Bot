@@ -721,17 +721,20 @@ async def _send_review_at_index(
                 "[UX-7.1] try_claim 失败（放行）review=%s: %s", review["id"], e,
             )
 
-    # 媒体组：2 张证据图
+    # 媒体组：约课记录（必有）+ 现场手势（仅参与报销路径有）
+    # 2026-05-21：req=0 路径下 gesture_photo_file_id 可能为 NULL；
+    # 旧 NOT NULL InputMediaPhoto 会崩，须按可用性过滤
     media = [
         InputMediaPhoto(
             media=review["booking_screenshot_file_id"],
             caption="📸 约课记录",
         ),
-        InputMediaPhoto(
+    ]
+    if review.get("gesture_photo_file_id"):
+        media.append(InputMediaPhoto(
             media=review["gesture_photo_file_id"],
             caption="✋ 现场手势",
-        ),
-    ]
+        ))
     mg_msg_ids: list[int] = []
     try:
         sent = await bot.send_media_group(chat_id=chat_id, media=media)
@@ -770,6 +773,8 @@ async def _send_review_at_index(
                 review_id=review["id"],
                 has_prev=(idx > 0),
                 has_next=(idx + 1 < total),
+                # 2026-05-21：req=0 路径无手势照，隐藏对应按钮
+                has_gesture=bool(review.get("gesture_photo_file_id")),
             ),
         )
         text_msg_id = msg.message_id
@@ -953,7 +958,14 @@ async def cb_rreview_photo(callback: types.CallbackQuery):
         fid = review["booking_screenshot_file_id"]
         caption = "📸 约课记录"
     elif kind == "gesture":
-        fid = review["gesture_photo_file_id"]
+        fid = review.get("gesture_photo_file_id")
+        # 2026-05-21：req=0 路径无手势照（NULL）；显式 alert，不发空请求
+        if not fid:
+            await callback.answer(
+                "该评价无现场手势照（用户未选择参与报销）",
+                show_alert=True,
+            )
+            return
         caption = "✋ 现场手势"
     else:
         await callback.answer("未知类型", show_alert=True)

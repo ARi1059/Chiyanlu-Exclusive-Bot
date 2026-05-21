@@ -168,7 +168,12 @@ def test_build_card_text_shows_ready_when_complete(monkeypatch):
 
 
 def test_build_card_text_progress_at_top_above_separator(monkeypatch):
-    """进度行应在分隔线（━）之前，第一眼能看到。"""
+    """进度行应在分隔线（━）之前，第一眼能看到。
+
+    2026-05-21：在进度行和分隔线之间新增了 reimburse_banner
+    （💰/📝 标记本条评价是否参与报销路径）；契约调整为
+    「进度行 < banner < 分隔线」，进度仍在第一眼能看到的位置。
+    """
     from bot.handlers import review_card
     fake_state = MagicMock()
     fake_state.get_data = AsyncMock(return_value={"teacher_id": 1})
@@ -179,10 +184,12 @@ def test_build_card_text_progress_at_top_above_separator(monkeypatch):
 
     text = _run(review_card._build_card_text(fake_state))
     lines = text.split("\n")
-    # 标题第一行，进度第二行（在分隔线之前）
     assert "评价卡片" in lines[0]
     assert "进度" in lines[1]
-    assert "━" in lines[2]
+    # 分隔线在 banner 之后；进度仍位于分隔线之前
+    progress_idx = next(i for i, ln in enumerate(lines) if "进度" in ln)
+    sep_idx = next(i for i, ln in enumerate(lines) if "━" in ln)
+    assert progress_idx < sep_idx
 
 
 # ============================================================
@@ -281,4 +288,4 @@ def test_missing_fields_partial():
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable"}

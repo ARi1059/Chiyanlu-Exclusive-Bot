@@ -372,9 +372,10 @@ async def on_write_review_teacher_name(message: types.Message, state: FSMContext
             disable_web_page_preview=True,
         )
         return
-    # status == "ok" — start_review_flow 已设好 CardReviewStates.card；渲染卡片
-    from bot.handlers.review_card import render_card
-    await render_card(message, state, via_edit=False)
+    # status == "ok" — start_review_flow 已设好 state（intent 或 card）；
+    # 用 dispatcher 自动根据 state 渲染 intent 屏或卡片屏（2026-05-21）
+    from bot.handlers.review_card import render_card_or_intent
+    await render_card_or_intent(message, state, via_edit=False)
 
 
 @router.message(F.text == "/cancel", WriteReviewLookupStates())
@@ -428,9 +429,9 @@ async def cb_review_start(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # status == "ok" — 卡片渲染
-    from bot.handlers.review_card import render_card
-    await render_card(callback.message, state, via_edit=True)
+    # status == "ok" — 由 dispatcher 决定渲染 intent 屏还是卡片屏（2026-05-21）
+    from bot.handlers.review_card import render_card_or_intent
+    await render_card_or_intent(callback.message, state, via_edit=True)
     await callback.answer()
 
 

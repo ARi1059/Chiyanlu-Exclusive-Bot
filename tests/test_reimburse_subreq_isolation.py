@@ -141,22 +141,43 @@ def test_admin_lottery_does_not_call_reimburse_subreq():
 
 
 def test_review_card_main_steps_do_not_call_reimburse_subreq():
-    """review_card.py 同理：仅 cb_card_reimburse_yes + cb_reimburse_subreq_recheck_card 两处。"""
+    """check_user_subscribed_for_reimburse 仅在「报销意愿相关 handler」中出现，
+    评价主体（卡片字段编辑、submit、_finalize_submit）不应触发。
+
+    2026-05-21 评价前置改造后允许出现的 handler 升为 4 个：
+        - cb_card_intent_yes         （新前置 intent 屏的 yes）
+        - cb_card_intent_retry       （新前置 intent 屏的"已加入"重检）
+        - cb_card_reimburse_yes      （旧路径兼容；waiting_reimbursement_choice 状态）
+        - cb_reimburse_subreq_recheck_card（旧路径兼容；waiting_reimbursement_choice 状态）
+
+    其它任何位置（字段编辑 / submit / _finalize_submit 等）出现 →
+    意味着评价主体被报销 subreq 污染，违反 隔离性。
+    """
     import bot.handlers.review_card as mod
     src = _src(mod)
-    yes_idx = src.find("async def cb_card_reimburse_yes(")
-    yes_end = src.find("async def ", yes_idx + 1)
-    yes_body = src[yes_idx:yes_end]
-    recheck_idx = src.find("async def cb_reimburse_subreq_recheck_card(")
-    recheck_end = src.find("async def ", recheck_idx + 1)
-    recheck_body = src[recheck_idx:recheck_end if recheck_end > 0 else recheck_idx + 2000]
-    assert "check_user_subscribed_for_reimburse" in yes_body
-    assert "check_user_subscribed_for_reimburse" in recheck_body
+
+    expected_fns = (
+        "cb_card_intent_yes",
+        "cb_card_intent_retry",
+        "cb_card_reimburse_yes",
+        "cb_reimburse_subreq_recheck_card",
+    )
+    bodies = []
+    for fn in expected_fns:
+        idx = src.find(f"async def {fn}(")
+        assert idx > 0, f"找不到 {fn}"
+        end = src.find("async def ", idx + 1)
+        body = src[idx:end if end > 0 else idx + 2000]
+        assert "check_user_subscribed_for_reimburse" in body, (
+            f"{fn} 应调用 check_user_subscribed_for_reimburse"
+        )
+        bodies.append(body)
+
     total = src.count("check_user_subscribed_for_reimburse")
-    in_two_funcs = (yes_body + recheck_body).count("check_user_subscribed_for_reimburse")
-    assert total == in_two_funcs, (
-        f"check_user_subscribed_for_reimburse 不应在 yes / recheck 之外出现；"
-        f"total={total} 来自两个函数={in_two_funcs}"
+    in_expected = sum(b.count("check_user_subscribed_for_reimburse") for b in bodies)
+    assert total == in_expected, (
+        f"check_user_subscribed_for_reimburse 不应在 4 个 intent/yes/recheck 之外出现；"
+        f"total={total}, in_expected={in_expected}"
     )
 
 
@@ -214,7 +235,7 @@ def test_schema_migrations_baseline_unchanged():
 
 def test_migrations_list_still_empty():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable"}
 
 
 # ============ 28. 新增 callback 字面量锁定 ============

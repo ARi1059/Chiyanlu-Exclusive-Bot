@@ -89,11 +89,13 @@ def test_empty_migrations_is_noop(monkeypatch):
 
 def test_module_level_migrations_is_baseline():
     """生产代码 MIGRATIONS 应是 list；UX-9.3 引入第一条 baseline，
-    UX-9.1（20260520_002_quick_entry_keywords）追加第二条；后续 PR 加新迁移时同步更新。"""
+    UX-9.1（20260520_002_quick_entry_keywords）追加第二条；
+    2026-05-21 评价前置改造追加第三条（teacher_reviews.gesture_photo_file_id 改可空）。"""
     assert isinstance(db_mod.MIGRATIONS, list)
     assert {m.version for m in db_mod.MIGRATIONS} == {
         "20260520_001_teacher_draft_states",
         "20260520_002_quick_entry_keywords",
+        "20260521_001_teacher_reviews_gesture_nullable",
     }
 
 

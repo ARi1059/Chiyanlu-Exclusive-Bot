@@ -164,7 +164,7 @@ def test_schema_migrations_baseline_unchanged():
 def test_migrations_list_still_empty():
     """UX-1 第一批不新增 Migration：MIGRATIONS 仍为空 list。"""
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable"}
 
 
 # ============ 6. 旧 callback 含义未被破坏 ============

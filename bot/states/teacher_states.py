@@ -273,10 +273,16 @@ class CardReviewStates(StatesGroup):
         score_service / score_attitude / score_environment /
         summary /
         anonymous (0/1) /
-        request_reimbursement (0/1/2) — 提交时通过 reimbursement step 设置
+        request_reimbursement (0/1/2) — 选老师后立即在
+            choosing_reimburse_intent 状态由用户选择（前置）；不符合资格
+            的用户在 start_card_review 内直接设为 0 并跳过该状态
         _card_msg_id — 卡片消息 id，用于编辑刷新
         _evidence_files — 临时累积 evidence 媒体组
+        _reimburse_eligibility_info — 2026-05-21 起：start_card_review 时
+            存入 is_user_reimburse_eligible_for_review 的 info dict；
+            提交成功页据此渲染 ineligibility hint（差 X 分 / 价位档 / 池子）
     """
+    choosing_reimburse_intent = State()  # 评价前置：问"是否参与报销"（2026-05-21）
     card               = State()  # 卡片视图（idle）
     editing_evidence   = State()
     editing_rating     = State()
@@ -287,7 +293,7 @@ class CardReviewStates(StatesGroup):
     editing_attitude   = State()
     editing_environment = State()
     editing_summary    = State()
-    waiting_reimbursement_choice = State()  # 报销询问步（可选）
+    waiting_reimbursement_choice = State()  # 旧线流程兜底（subreq 拦截页等场景仍可能短暂进入）
 
 
 class SetGroupStates(StatesGroup):

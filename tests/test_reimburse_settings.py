@@ -186,10 +186,21 @@ def test_admin_reimburse_config_kb_contains_min_points_entry():
 
 
 def test_review_card_uses_get_reimbursement_min_points_helper():
+    """2026-05-21：review_card 不再直接调 get_reimbursement_min_points
+    （前置预判已封装到 is_user_reimburse_eligible_for_review，由 eligibility
+    helper 调用 get_reimbursement_min_points）。本测试改为校验：
+      - review_card 不内联 get_config('reimbursement_min_points')
+      - eligibility helper 仍正确使用门槛 helper
+    """
     import bot.handlers.review_card as mod
-    src = _src(mod)
-    assert "get_reimbursement_min_points" in src
-    assert "min_pts_raw = await get_config" not in src
+    import bot.utils.reimburse_eligibility as elig
+    rc_src = _src(mod)
+    elig_src = _src(elig)
+    # review_card 不应再直接 inline 读 config key
+    assert "min_pts_raw = await get_config" not in rc_src
+    assert 'get_config("reimbursement_min_points"' not in rc_src
+    # eligibility helper 必须用 helper（不内联 SQL）
+    assert "get_reimbursement_min_points" in elig_src
 
 
 def test_rreview_admin_uses_get_reimbursement_min_points_helper():
@@ -206,9 +217,14 @@ def test_rreview_admin_uses_get_reimbursement_min_points_helper():
 
 
 def test_review_card_gates_zero_threshold_passes():
-    import bot.handlers.review_card as mod
+    """2026-05-21：min_pts > 0 判定已搬到 is_user_reimburse_eligible_for_review。
+    review_card 通过该 helper 间接做 zero-threshold 放行；本测试改为校验
+    helper 中包含正确的 zero-threshold 判定形式。"""
+    import bot.utils.reimburse_eligibility as mod
     src = _src(mod)
-    assert "min_pts > 0" in src
+    # zero-threshold（min_pts == 0）应不阻止 eligibility 通过：
+    # 实现形式应是 `if min_pts > 0 and points < min_pts:` 才视为不通过
+    assert "min_pts > 0" in src and "points < min_pts" in src
 
 
 def test_rreview_admin_gates_zero_threshold_passes():
@@ -551,7 +567,7 @@ def test_schema_migrations_baseline_unchanged():
 
 def test_migrations_list_still_empty():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable"}
 
 
 def test_approve_reimbursement_db_function_unchanged():

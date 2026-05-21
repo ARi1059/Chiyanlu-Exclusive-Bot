@@ -556,18 +556,17 @@ async def _route_by_role(
             )
             return
 
-        # status == "ok"
-        teacher = extra["teacher"]
-        body = (
-            f"📝 为「{teacher['display_name']}」写评价\n\n"
-            "[Step B/12] 上传约课记录截图（必填）\n\n"
-            "请发送你和该老师的约课记录截图（一张图片）。\n"
-            "仅作为审核证据，不会公开展示。\n\n"
-            "任意时刻发 /cancel 中止。"
-        )
+        # status == "ok" — start_review_flow 已设好 state（intent / card）。
+        # 2026-05-21：旧 "Step B/12 上传约课截图" 提示与卡片化流程不符；
+        # 改为直接调 render_card_or_intent dispatcher，按 state 自动渲染
+        # intent 选择屏（资格通过）或卡片（资格不通过）。
         if extra_text:
-            body = f"{extra_text}\n\n{body}"
-        await message.answer(body, reply_markup=review_cancel_kb())
+            try:
+                await message.answer(extra_text)
+            except Exception:
+                pass
+        from bot.handlers.review_card import render_card_or_intent
+        await render_card_or_intent(message, state, via_edit=False)
         return
 
     # Phase L.2.3：/start lottery_<id> 直达抽奖参与

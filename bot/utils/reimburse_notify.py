@@ -257,18 +257,44 @@ def format_reimburse_ineligibility_hint(
     amount: int,
     points: int,
     min_pts: int,
+    reason: Optional[str] = None,
+    pool_remaining: Optional[int] = None,
 ) -> str:
     """返回"为什么没看到报销选项"的温和提示文案（UX-5.4）。
 
-    两种不满足资格的原因，独立文案：
-        - amount <= 0：老师价位档不在报销范围
-        - points < min_pts：积分不够门槛
+    2026-05-21 扩展：新增 feature_off / pool_exhausted 两个 reason 分支，
+    对齐评价前置的 [is_user_reimburse_eligible_for_review] 预判结果。
 
-    调用方应**仅在 feature_enabled=True 时**调用本函数；
-    feature OFF 时应保持静默（避免暗示用户可申请）。
+    `reason` 显式传入时按其分支渲染（推荐：调用方直接把预判结果传进来）；
+    若未传，回退到「按 amount / points 反推」的旧行为，保持向后兼容。
+
+    所有分支：
+        - "feature_off"      → 报销功能当前暂关闭
+        - "amount_zero" /
+          amount <= 0        → 老师价位档不在报销范围
+        - "pool_exhausted"   → 本月报销池已用完
+        - "below_threshold" /
+          points < min_pts   → 距离报销门槛还差 X 分
+
+    调用方应**仅在 feature_enabled=True**或想显式告知功能关闭时调用；
+    feature OFF 时旧行为保持静默；本批新增 feature_off 分支供需要显式
+    告知的场景使用（如提交成功页尾注）。
     """
-    if amount <= 0:
-        return "💡 老师价位档不在报销范围（仅 8P/9P/10P 可申请）"
+    if reason == "feature_off":
+        return "💡 报销功能当前暂关闭，敬请期待。"
+    if reason == "pool_exhausted":
+        remaining = pool_remaining if pool_remaining is not None else 0
+        return (
+            f"💡 本月报销池已用完（剩余 {max(0, remaining)} 元），"
+            "下月再来。"
+        )
+    # 价位档不符 —— 显式 reason 或 amount<=0 反推
+    if reason == "amount_zero" or amount <= 0:
+        return (
+            "💡 老师价位档不在报销范围"
+            "（仅 ≦800 元 / 900 元 / ≧1000 元三档可申请）"
+        )
+    # 默认走积分不足分支（含旧调用方的兼容路径）
     diff = max(0, min_pts - points)
     return (
         f"💡 当前积分 {points}（报销门槛 {min_pts}），距离还差 {diff} 分。\n"

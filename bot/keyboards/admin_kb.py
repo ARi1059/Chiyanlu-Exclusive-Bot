@@ -1347,17 +1347,28 @@ def rreview_action_kb(
     *,
     has_prev: bool,
     has_next: bool,
+    has_gesture: bool = True,
 ) -> InlineKeyboardMarkup:
-    """单条报告审核详情页操作按钮（spec §4.2）"""
+    """单条报告审核详情页操作按钮（spec §4.2）
+
+    has_gesture（2026-05-21）：False 时省略「✋ 重看手势照片」按钮——
+    用户未参与报销路径的评价没有手势照，按钮点不动也不该出现。
+    默认 True 兼容旧调用方；新调用应明确传入 review["gesture_photo_file_id"]
+    的真值判断。
+    """
+    photo_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="🖼 重看约课截图", callback_data=f"rreview:photo:booking:{review_id}"),
+    ]
+    if has_gesture:
+        photo_row.append(
+            InlineKeyboardButton(text="✋ 重看手势照片", callback_data=f"rreview:photo:gesture:{review_id}"),
+        )
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(text="✅ 通过", callback_data=f"rreview:approve:{review_id}"),
             InlineKeyboardButton(text="❌ 驳回", callback_data=f"rreview:reject:{review_id}"),
         ],
-        [
-            InlineKeyboardButton(text="🖼 重看约课截图", callback_data=f"rreview:photo:booking:{review_id}"),
-            InlineKeyboardButton(text="✋ 重看手势照片", callback_data=f"rreview:photo:gesture:{review_id}"),
-        ],
+        photo_row,
     ]
     nav: list[InlineKeyboardButton] = []
     if has_prev:

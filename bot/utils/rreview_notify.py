@@ -291,10 +291,14 @@ async def notify_super_admins_new_review(bot: Bot, review_id: int) -> None:
         f"🎯 {review.get('overall_score', '?')}/10\n"
         f"📝 过程：{summary}"
     )
+    # 2026-05-21：req=0 路径 gesture_photo 可能为 NULL；按可用性过滤
     media = [
         InputMediaPhoto(media=review["booking_screenshot_file_id"], caption="📸 约课记录"),
-        InputMediaPhoto(media=review["gesture_photo_file_id"], caption="✋ 现场手势"),
     ]
+    if review.get("gesture_photo_file_id"):
+        media.append(InputMediaPhoto(
+            media=review["gesture_photo_file_id"], caption="✋ 现场手势",
+        ))
     supers = await list_super_admins()
     for uid in supers:
         # 媒体组
