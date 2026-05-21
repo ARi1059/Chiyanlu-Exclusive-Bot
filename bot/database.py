@@ -654,15 +654,24 @@ async def _migrate_003_teacher_reviews_gesture_nullable(
     背景：评价前置改造后，普通评价（不参与报销）不再强制上传手势照。
     既有历史评价行均含手势照（旧 NOT NULL 保障），迁移后不受影响。
 
-    SQLite 不支持 ALTER COLUMN DROP NOT NULL，必须 recreate-table：
-        1. CREATE TABLE teacher_reviews_new(... gesture_photo_file_id TEXT ...)
-        2. INSERT INTO _new SELECT * FROM teacher_reviews
-        3. DROP TABLE teacher_reviews
-        4. ALTER _new RENAME TO teacher_reviews
-        5. 重建索引
+    SQLite 不支持 ALTER COLUMN DROP NOT NULL，必须 recreate-table。
+    关键陷阱（2026-05-21 修复）：reimbursements.review_id FK 反向引用
+    teacher_reviews(id) ON DELETE CASCADE；连接默认 PRAGMA foreign_keys=ON。
+    若不先把 FK 关掉，`DROP TABLE teacher_reviews` 会被 SQLite 拒绝
+    或级联清空 reimbursements。
+    标准做法（参见 SQLite 官方 "ALTER TABLE" 第 7 节）：
+        1. PRAGMA foreign_keys = OFF
+        2. BEGIN
+        3. CREATE new + 拷贝 + DROP old + RENAME new + 重建索引
+        4. PRAGMA foreign_key_check 验证（出错回滚）
+        5. COMMIT
+        6. PRAGMA foreign_keys = ON
 
-    幂等性：若 PRAGMA table_info 显示当前列已 nullable（notnull=0），直接跳过。
+    幂等性：
+        - notnull=0 → 直接 return（不重跑）
+        - 残留 teacher_reviews_new（上次失败留下的）→ DROP IF EXISTS 清理
     """
+    # 1) 幂等：列已可空则跳过
     cursor = await db.execute("PRAGMA table_info(teacher_reviews)")
     cols = await cursor.fetchall()
     gesture_notnull = next(
@@ -670,105 +679,133 @@ async def _migrate_003_teacher_reviews_gesture_nullable(
         None,
     )
     if gesture_notnull is None:
-        # 表不存在（应不会到这里）—— init_db 的 CREATE TABLE 已含新结构
         return
     if gesture_notnull == 0:
-        # 已可空 —— 无需再跑
         return
 
-    # SQLite recreate-table：在事务内完成，避免中间态被其它连接读到
-    await db.execute("BEGIN")
+    # 2) 清理上次失败可能残留的中间表 + 把当前连接的隐式 tx 提交干净
     try:
-        await db.execute(
-            """
-            CREATE TABLE teacher_reviews_new (
-                id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-                teacher_id                  INTEGER NOT NULL,
-                user_id                     INTEGER NOT NULL,
-                booking_screenshot_file_id  TEXT NOT NULL,
-                gesture_photo_file_id       TEXT,
-                rating                      TEXT NOT NULL,
-                score_humanphoto            REAL NOT NULL,
-                score_appearance            REAL NOT NULL,
-                score_body                  REAL NOT NULL,
-                score_service               REAL NOT NULL,
-                score_attitude              REAL NOT NULL,
-                score_environment           REAL NOT NULL,
-                overall_score               REAL NOT NULL,
-                summary                     TEXT,
-                status                      TEXT NOT NULL DEFAULT 'pending',
-                reviewer_id                 INTEGER,
-                reject_reason               TEXT,
-                discussion_chat_id          INTEGER,
-                discussion_msg_id           INTEGER,
-                request_reimbursement       INTEGER NOT NULL DEFAULT 0,
-                anonymous                   INTEGER NOT NULL DEFAULT 0,
-                created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
-                reviewed_at                 TEXT,
-                published_at                TEXT,
-                FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE,
-                CHECK (
-                    score_humanphoto BETWEEN 0 AND 10 AND
-                    score_appearance BETWEEN 0 AND 10 AND
-                    score_body BETWEEN 0 AND 10 AND
-                    score_service BETWEEN 0 AND 10 AND
-                    score_attitude BETWEEN 0 AND 10 AND
-                    score_environment BETWEEN 0 AND 10 AND
-                    overall_score BETWEEN 0 AND 10
-                )
-            )
-            """,
-        )
-        await db.execute(
-            """
-            INSERT INTO teacher_reviews_new (
-                id, teacher_id, user_id,
-                booking_screenshot_file_id, gesture_photo_file_id,
-                rating,
-                score_humanphoto, score_appearance, score_body,
-                score_service, score_attitude, score_environment,
-                overall_score, summary, status,
-                reviewer_id, reject_reason,
-                discussion_chat_id, discussion_msg_id,
-                request_reimbursement, anonymous,
-                created_at, reviewed_at, published_at
-            )
-            SELECT id, teacher_id, user_id,
-                   booking_screenshot_file_id, gesture_photo_file_id,
-                   rating,
-                   score_humanphoto, score_appearance, score_body,
-                   score_service, score_attitude, score_environment,
-                   overall_score, summary, status,
-                   reviewer_id, reject_reason,
-                   discussion_chat_id, discussion_msg_id,
-                   request_reimbursement, anonymous,
-                   created_at, reviewed_at, published_at
-            FROM teacher_reviews
-            """,
-        )
-        await db.execute("DROP TABLE teacher_reviews")
-        await db.execute("ALTER TABLE teacher_reviews_new RENAME TO teacher_reviews")
-        # 重建索引（与 init_db schema 字符串中的 CREATE INDEX 一致）
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reviews_teacher_status "
-            "ON teacher_reviews(teacher_id, status)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reviews_status_created "
-            "ON teacher_reviews(status, created_at)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reviews_user_created "
-            "ON teacher_reviews(user_id, created_at)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reviews_user_teacher_created "
-            "ON teacher_reviews(user_id, teacher_id, created_at)"
-        )
         await db.commit()
     except Exception:
-        await db.rollback()
-        raise
+        pass
+    await db.execute("DROP TABLE IF EXISTS teacher_reviews_new")
+    await db.commit()
+
+    # 3) PRAGMA foreign_keys = OFF 必须在 autocommit（无活跃 tx）状态下执行；
+    #    上面 commit 已确保。设置后所有后续 statement 都不再触发 FK 校验/级联。
+    await db.execute("PRAGMA foreign_keys = OFF")
+
+    try:
+        await db.execute("BEGIN")
+        try:
+            await db.execute(
+                """
+                CREATE TABLE teacher_reviews_new (
+                    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    teacher_id                  INTEGER NOT NULL,
+                    user_id                     INTEGER NOT NULL,
+                    booking_screenshot_file_id  TEXT NOT NULL,
+                    gesture_photo_file_id       TEXT,
+                    rating                      TEXT NOT NULL,
+                    score_humanphoto            REAL NOT NULL,
+                    score_appearance            REAL NOT NULL,
+                    score_body                  REAL NOT NULL,
+                    score_service               REAL NOT NULL,
+                    score_attitude              REAL NOT NULL,
+                    score_environment           REAL NOT NULL,
+                    overall_score               REAL NOT NULL,
+                    summary                     TEXT,
+                    status                      TEXT NOT NULL DEFAULT 'pending',
+                    reviewer_id                 INTEGER,
+                    reject_reason               TEXT,
+                    discussion_chat_id          INTEGER,
+                    discussion_msg_id           INTEGER,
+                    request_reimbursement       INTEGER NOT NULL DEFAULT 0,
+                    anonymous                   INTEGER NOT NULL DEFAULT 0,
+                    created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
+                    reviewed_at                 TEXT,
+                    published_at                TEXT,
+                    FOREIGN KEY (teacher_id) REFERENCES teachers(user_id) ON DELETE CASCADE,
+                    CHECK (
+                        score_humanphoto BETWEEN 0 AND 10 AND
+                        score_appearance BETWEEN 0 AND 10 AND
+                        score_body BETWEEN 0 AND 10 AND
+                        score_service BETWEEN 0 AND 10 AND
+                        score_attitude BETWEEN 0 AND 10 AND
+                        score_environment BETWEEN 0 AND 10 AND
+                        overall_score BETWEEN 0 AND 10
+                    )
+                )
+                """,
+            )
+            await db.execute(
+                """
+                INSERT INTO teacher_reviews_new (
+                    id, teacher_id, user_id,
+                    booking_screenshot_file_id, gesture_photo_file_id,
+                    rating,
+                    score_humanphoto, score_appearance, score_body,
+                    score_service, score_attitude, score_environment,
+                    overall_score, summary, status,
+                    reviewer_id, reject_reason,
+                    discussion_chat_id, discussion_msg_id,
+                    request_reimbursement, anonymous,
+                    created_at, reviewed_at, published_at
+                )
+                SELECT id, teacher_id, user_id,
+                       booking_screenshot_file_id, gesture_photo_file_id,
+                       rating,
+                       score_humanphoto, score_appearance, score_body,
+                       score_service, score_attitude, score_environment,
+                       overall_score, summary, status,
+                       reviewer_id, reject_reason,
+                       discussion_chat_id, discussion_msg_id,
+                       request_reimbursement, anonymous,
+                       created_at, reviewed_at, published_at
+                FROM teacher_reviews
+                """,
+            )
+            await db.execute("DROP TABLE teacher_reviews")
+            await db.execute("ALTER TABLE teacher_reviews_new RENAME TO teacher_reviews")
+            # 重建索引（与 init_db schema 字符串中的 CREATE INDEX 一致）
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reviews_teacher_status "
+                "ON teacher_reviews(teacher_id, status)"
+            )
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reviews_status_created "
+                "ON teacher_reviews(status, created_at)"
+            )
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reviews_user_created "
+                "ON teacher_reviews(user_id, created_at)"
+            )
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reviews_user_teacher_created "
+                "ON teacher_reviews(user_id, teacher_id, created_at)"
+            )
+            # 4) FK 完整性校验（事务内）—— reimbursements.review_id 等任何
+            #    指向 teacher_reviews(id) 的 FK 不应有悬挂引用。
+            cur = await db.execute("PRAGMA foreign_key_check")
+            violations = await cur.fetchall()
+            if violations:
+                raise RuntimeError(
+                    f"foreign_key_check 发现 {len(violations)} 条悬挂引用：{violations[:5]}"
+                )
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            raise
+    finally:
+        # 5) 无论成功失败都恢复 foreign_keys=ON
+        try:
+            await db.execute("PRAGMA foreign_keys = ON")
+            await db.commit()
+        except Exception:
+            pass
 
 
 async def _migrate_002_quick_entry_keywords(db: aiosqlite.Connection) -> None:
