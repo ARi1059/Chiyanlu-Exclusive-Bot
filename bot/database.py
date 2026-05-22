@@ -5273,8 +5273,8 @@ REVIEW_SCORE_DECIMAL_PLACES: int = 1
 # 已于 2026-05-20 Sprint 7 §9.1.4 第 2 批删除（旧线性 FSM 的快捷评分按钮，
 # 卡片化重构后无 caller）。
 
-REVIEW_SUMMARY_MIN_LEN: int = 5
-REVIEW_SUMMARY_MAX_LEN: int = 100
+REVIEW_SUMMARY_MIN_LEN: int = 50
+REVIEW_SUMMARY_MAX_LEN: int = 300
 # 注：REVIEW_SUMMARY_REQUIRED 已于 §9.1.4 第 2 批删除（无 caller，
 # review_card 中过程描述始终必填，不需要此 flag）。
 
