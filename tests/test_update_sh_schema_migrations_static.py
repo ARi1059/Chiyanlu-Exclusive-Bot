@@ -22,7 +22,7 @@ _UPDATE = os.path.join(_PROJECT_ROOT, "update.sh")
 
 
 def _read() -> str:
-    with open(_UPDATE) as f:
+    with open(_UPDATE, encoding="utf-8") as f:
         return f.read()
 
 

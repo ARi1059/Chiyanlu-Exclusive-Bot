@@ -26,7 +26,6 @@ from bot.database import (
     count_teacher_favoriters,
     get_config,
     get_teacher_by_name,
-    get_teacher_daily_status,
     is_checked_in,
     search_teachers_smart_and,
 )
@@ -293,11 +292,8 @@ async def _send_teacher_group_card_v2(
     today = _today_str()
     teacher_id = teacher["user_id"]
 
-    try:
-        daily = await get_teacher_daily_status(teacher_id, today)
-    except Exception as e:
-        logger.debug("get_teacher_daily_status 失败: %s", e)
-        daily = None
+    # Phase A0（2026-05-23）：teacher_daily_status 功能已下线，daily 恒为 None
+    daily = None
     try:
         signed_in = await is_checked_in(teacher_id, today)
     except Exception as e:
@@ -441,14 +437,8 @@ async def _enrich_with_today_status(
             tt["signed_in_today"] = 1 if await is_checked_in(t["user_id"], today) else 0
         except Exception:
             tt["signed_in_today"] = 0
-        try:
-            daily = await get_teacher_daily_status(t["user_id"], today)
-        except Exception:
-            daily = None
-        if daily:
-            tt["daily_status"] = daily.get("status")
-        else:
-            tt["daily_status"] = None
+        # Phase A0（2026-05-23）：teacher_daily_status 功能已下线，daily_status 恒为 None
+        tt["daily_status"] = None
         try:
             tt["fav_count"] = await count_teacher_favoriters(t["user_id"])
         except Exception:

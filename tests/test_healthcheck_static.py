@@ -33,7 +33,7 @@ def test_healthcheck_is_executable():
 
 
 def test_healthcheck_has_bash_shebang():
-    with open(_HC) as f:
+    with open(_HC, encoding="utf-8") as f:
         first = f.readline()
     assert first.startswith("#!") and "bash" in first
 
@@ -42,7 +42,7 @@ def test_healthcheck_has_bash_shebang():
 
 
 def _read() -> str:
-    with open(_HC) as f:
+    with open(_HC, encoding="utf-8") as f:
         return f.read()
 
 

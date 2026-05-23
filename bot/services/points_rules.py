@@ -97,18 +97,8 @@ REASON_CATALOG: list[dict] = [
         "source": "超管「积分管理」手动 - 分",
         "delta_sign": "-",
     },
-    {
-        "reason": "lottery_entry",
-        "meaning": "抽奖参与扣分",
-        "source": "用户成功进入抽奖后扣 entry_cost_points",
-        "delta_sign": "-",
-    },
-    {
-        "reason": "lottery_refund",
-        "meaning": "抽奖取消退款",
-        "source": "超管取消抽奖并勾选「退还参与积分」",
-        "delta_sign": "+",
-    },
+    # Phase A0（2026-05-23）已下线：lottery_entry / lottery_refund 积分原因
+    # （抽奖功能整体下线；历史 point_transactions 数据保留可查）
 ]
 
 
@@ -201,11 +191,7 @@ def render_points_rules(snap: PointsRulesSnapshot) -> str:
     )
     lines.append("• ⚠️ 手动扣分不校验余额，可能产生负余额（POLICY §6.4）")
     lines.append("")
-    lines.append("抽奖积分（reason=lottery_entry / lottery_refund）")
-    lines.append("• 扣分时机：每个抽奖按 entry_cost_points 配置；参与时扣")
-    lines.append("• 退款时机：超管取消活动并勾选「退还参与积分」时全员退还")
-    lines.append("• 扣分与 entry 写入非原子（POLICY §5.1，已知风险）")
-    lines.append("")
+    # Phase A0（2026-05-23）已下线：抽奖积分（lottery_entry / lottery_refund）章节
     lines.append("报销最低积分门槛")
     lines.append(f"• 当前：{_fmt_reimburse_min(snap)}")
     lines.append("")

@@ -6,9 +6,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 if TYPE_CHECKING:
     # 仅类型提示用，避免运行时循环依赖
+    # Phase A0（2026-05-23）：移除 LotteryReconcileItem / LotteryStatusStats（抽奖功能下线）
     from bot.services.admin_overview import AdminOverviewStats
-    from bot.services.lottery_reconcile import LotteryReconcileItem
-    from bot.services.lottery_status import LotteryStatusStats
     from bot.services.reimbursement_pool import ReimbursementPoolStats
 
 
@@ -99,23 +98,17 @@ def admin_admin_settings_kb() -> InlineKeyboardMarkup:
 
 
 def admin_teachers_kb() -> InlineKeyboardMarkup:
-    """二级「👩‍🏫 老师管理」面板：聚合老师资料 / 状态 / 推荐 / 标签类入口 + 返回后台
+    """二级「👩‍🏫 老师管理」面板（Phase A0 后 2026-05-23）
 
+    Phase A0：移除「📅 今日发布状态」入口（teacher_daily_status 表整体下线）。
     入口（全部 @admin_required，所有 admin 可见）：
-        - menu:teacher          👥 老师档案与启停（既有子菜单，含 老师档案管理 /
-                                启停 / 老师列表）
-        - admin:hot_manage      🔥 热门推荐（handler 在 hot_teachers.py）
-        - admin:today_status    📅 今日发布状态（handler 在 teacher_daily_status.py）
-        - admin:user_tags       🏷 用户画像（handler 在 user_tags.py；当前项目仅
-                                有用户画像，无独立的"老师标签"callback）
-
-    callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
-    聚合视图组合。
+        - menu:teacher          👥 老师档案与启停
+        - admin:hot_manage      🔥 热门推荐
+        - admin:user_tags       🏷 用户画像
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 老师列表与启停", callback_data="menu:teacher")],
         [InlineKeyboardButton(text="🔥 热门推荐",       callback_data="admin:hot_manage")],
-        [InlineKeyboardButton(text="📅 今日发布状态",   callback_data="admin:today_status")],
         [InlineKeyboardButton(text="🏷 用户画像",       callback_data="admin:user_tags")],
         [InlineKeyboardButton(text="⬅️ 返回后台",       callback_data="menu:main")],
     ])
@@ -211,21 +204,13 @@ def admin_reimburse_rules_kb() -> InlineKeyboardMarkup:
 
 
 def admin_operations_kb() -> InlineKeyboardMarkup:
-    """二级「🎲 活动运营」面板：聚合活动运营类入口 + 返回后台
+    """二级「💰 活动运营」面板（Phase A0 后 2026-05-23）
 
-    入口分别对应：
-        - admin:lottery   抽奖管理（仅超管，handler 在 admin_lottery.py）
+    Phase A0：移除「🎲 抽奖管理」入口（抽奖功能整体下线）。
+    入口对应：
         - admin:points    积分管理（仅超管，handler 在 admin_points.py）
-
-    报销池设置 / 报销功能开关在系统设置子菜单中（system:reimburse_pool /
-    system:reimburse_toggle），不属于"主菜单一级入口"，不在此聚合。
-    推广来源 / 渠道统计已于 Phase 4 下线（router 未注册），不重新启用。
-
-    callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
-    聚合视图组合。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎲 抽奖管理", callback_data="admin:lottery")],
         [InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points")],
         [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
     ])
@@ -322,26 +307,17 @@ def admin_review_done_next_kb(kind: str) -> InlineKeyboardMarkup:
 
 
 def admin_dashboard_kb(is_super: bool = False) -> InlineKeyboardMarkup:
-    """二级「📊 运营看板」面板：聚合三个只读看板入口 + 返回后台
+    """二级「📊 运营看板」面板（Phase A0 后 2026-05-23）
 
-    入口分别对应：
+    Phase A0：移除「🎲 抽奖状态」「📊 抽奖对账」入口（抽奖功能整体下线）。
+    入口对应：
         - admin:overview            运营总览
         - admin:reimbursement_pool  报销池状态
-        - admin:lottery_status      抽奖状态
-        - admin:lottery_reconcile   📊 抽奖对账（仅超管，Sprint 2 §4.2.1）
-
-    callback 含义未做任何变更，handler 仍由原 admin_panel.py 模块处理；
-    本 keyboard 仅是聚合入口的视图组合。
     """
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📊 运营总览",   callback_data="admin:overview")],
         [InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool")],
-        [InlineKeyboardButton(text="🎲 抽奖状态",   callback_data="admin:lottery_status")],
     ]
-    if is_super:
-        rows.append([
-            InlineKeyboardButton(text="📊 抽奖对账", callback_data="admin:lottery_reconcile"),
-        ])
     rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -353,20 +329,21 @@ def admin_overview_kb(
 ) -> InlineKeyboardMarkup:
     """运营总览面板：（条件）快捷跳转 + 刷新 + 返回二级页 admin:dashboard。
 
+    Phase A0（2026-05-23）：移除「🎲 抽奖管理」快捷入口（抽奖功能整体下线）。
+
     UX-2 第三项第一批：当 stats 传入时，按 pending count 与权限渲染快捷跳转：
 
         老师资料审核 (>0)        → review:enter         所有 admin 可见
         评价审核     (>0)        → rreview:enter        仅超管
         报销审核     (>0)        → reimburse:enter      仅超管
         报销名单     (queued>0)  → reimburse:queued:0   仅超管
-        抽奖管理     (active+scheduled>0) → admin:lottery  仅超管
 
     每个快捷按钮带 (N) 角标；count=0 时该按钮整体不显示。
     刷新 + 返回按钮始终保留。
 
     Args:
         stats: 运营总览统计；None 时不渲染任何快捷跳转（旧调用兼容）
-        is_super: 是否超管；非超管不显示评价 / 报销 / 名单 / 抽奖入口
+        is_super: 是否超管；非超管不显示评价 / 报销 / 名单 入口
     """
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -395,14 +372,6 @@ def admin_overview_kb(
                 rows.append([InlineKeyboardButton(
                     text=f"📋 报销名单 ({queued})",
                     callback_data="reimburse:queued:0",
-                )])
-            active = stats.active_lotteries or 0
-            scheduled = stats.scheduled_lotteries or 0
-            lottery_total = active + scheduled
-            if lottery_total > 0:
-                rows.append([InlineKeyboardButton(
-                    text=f"🎲 抽奖管理 ({lottery_total})",
-                    callback_data="admin:lottery",
                 )])
 
     rows.append([
@@ -455,43 +424,7 @@ def admin_reimbursement_pool_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_lottery_status_kb(
-    stats: Optional["LotteryStatusStats"] = None,
-    *,
-    is_super: bool = False,
-) -> InlineKeyboardMarkup:
-    """抽奖状态面板：（条件）快捷跳转 + 刷新 + 返回二级页 admin:dashboard。
-
-    UX-2 第三项第二批：当 stats 传入且 is_super=True 时，按 count > 0 渲染
-    快捷跳转：
-
-        🎲 抽奖管理 (active + scheduled)  → admin:lottery   仅超管
-
-    口径：(active_count or 0) + (scheduled_count or 0)，与运营总览快捷
-    跳转保持一致；总数 = 0 / None 时整体不显示。
-    刷新 / 返回按钮始终保留。
-
-    Args:
-        stats: 抽奖状态统计；None 时不渲染任何快捷跳转（旧无参调用兼容）
-        is_super: 是否超管；非超管不显示快捷跳转
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-
-    if stats is not None and is_super:
-        active = stats.active_count or 0
-        scheduled = stats.scheduled_count or 0
-        total = active + scheduled
-        if total > 0:
-            rows.append([InlineKeyboardButton(
-                text=f"🎲 抽奖管理 ({total})",
-                callback_data="admin:lottery",
-            )])
-
-    rows.append([
-        InlineKeyboardButton(text="🔄 刷新", callback_data="admin:lottery_status:refresh"),
-        InlineKeyboardButton(text="⬅️ 返回运营看板", callback_data="admin:dashboard"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+# Phase A0（2026-05-23）已下线：admin_lottery_status_kb（抽奖功能整体下线）
 
 
 # ============ 报表设置（Phase 6.3） ============
@@ -507,18 +440,7 @@ def report_settings_cancel_kb() -> InlineKeyboardMarkup:
 # ============ 管理员今日状态总览（Phase 5） ============
 
 
-def admin_today_status_kb() -> InlineKeyboardMarkup:
-    """管理员今日开课状态总览页
-
-    返回按钮指向二级页 admin:teachers（👩‍🏫 老师管理），不再直接回 menu:main——
-    UX-1 第四批返回路径优化（2026-05）。
-    """
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔄 刷新", callback_data="admin:today_status"),
-            InlineKeyboardButton(text="⬅️ 返回老师管理", callback_data="admin:teachers"),
-        ],
-    ])
+# Phase A0（2026-05-23）已下线：admin_today_status_kb（老师今日状态功能整体下线）
 
 
 # ============ 用户画像看板（Phase 6.1） ============
@@ -1079,7 +1001,7 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏰ 修改发布时间", callback_data="system:publish_time")],
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
         [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
-        [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="system:lottery_contact")],
+        # Phase A0（2026-05-23）已下线：[👨‍💼 抽奖客服链接] system:lottery_contact
         [InlineKeyboardButton(text="📢 评价 footer 文本", callback_data="system:reimburse_promo_text")],
         [InlineKeyboardButton(text="🔗 评价 footer 链接", callback_data="system:reimburse_promo_url")],
         [
@@ -1625,295 +1547,8 @@ def rreview_approve_points_kb(review_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-# ============ 抽奖管理（Phase L.1） ============
-
-def admin_lottery_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
-    """[🎲 抽奖管理] 子菜单
-
-    返回按钮指向二级页 admin:operations（🎲 活动运营），不再直接回 menu:main——
-    UX-1 第二批返回路径优化（2026-05）。深层子页（list / detail / create FSM 等）
-    的返回路径保持不变。
-    """
-    list_label = f"📋 抽奖列表 ({pending_count})" if pending_count else "📋 抽奖列表"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ 创建新抽奖",   callback_data="admin:lottery:create")],
-        [InlineKeyboardButton(text=list_label,       callback_data="admin:lottery:list")],
-        [InlineKeyboardButton(text="👨‍💼 抽奖客服链接", callback_data="admin:lottery:contact")],
-        [InlineKeyboardButton(text="⬅️ 返回活动运营", callback_data="admin:operations")],
-    ])
-
-
-def admin_lottery_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
-    """抽奖列表：每条按钮"""
-    from bot.database import LOTTERY_STATUSES
-    status_emoji = {s["key"]: s["emoji"] for s in LOTTERY_STATUSES}
-    rows: list[list[InlineKeyboardButton]] = []
-    for it in items[:30]:
-        emoji = status_emoji.get(it.get("status", ""), "❓")
-        name = it.get("name") or "(未命名)"
-        if len(name) > 25:
-            name = name[:24] + "…"
-        rows.append([InlineKeyboardButton(
-            text=f"{emoji} {name}",
-            callback_data=f"admin:lottery:item:{it['id']}",
-        )])
-    rows.append([InlineKeyboardButton(text="🔙 返回抽奖管理", callback_data="admin:lottery")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_lottery_detail_kb(lottery: dict) -> InlineKeyboardMarkup:
-    """抽奖详情页操作按钮
-
-    draft     → [📤 立即发布] [❌ 取消草稿]
-    scheduled → [❌ 取消计划]
-    active    → [✏️ 编辑] [🔄 重发抽奖帖] [👥 查看参与] [❌ 取消抽奖]
-    drawn / no_entries → [👥 查看参与]
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    lid = lottery["id"]
-    status = lottery.get("status")
-    if status == "draft":
-        rows.append([
-            InlineKeyboardButton(text="📤 立即发布",  callback_data=f"admin:lottery:publish:{lid}"),
-            InlineKeyboardButton(text="❌ 取消草稿", callback_data=f"admin:lottery:cancel:{lid}"),
-        ])
-    elif status == "scheduled":
-        rows.append([
-            InlineKeyboardButton(text="❌ 取消计划", callback_data=f"admin:lottery:cancel:{lid}"),
-        ])
-    elif status == "active":
-        rows.append([
-            InlineKeyboardButton(text="✏️ 编辑抽奖",   callback_data=f"admin:lottery:edit:{lid}"),
-            InlineKeyboardButton(text="🔄 重发抽奖帖", callback_data=f"admin:lottery:repost:{lid}"),
-        ])
-        rows.append([
-            InlineKeyboardButton(text="👥 查看参与", callback_data=f"admin:lottery:entries:{lid}"),
-            InlineKeyboardButton(text="❌ 取消抽奖", callback_data=f"admin:lottery:cancel:{lid}"),
-        ])
-    elif status in ("drawn", "no_entries"):
-        rows.append([
-            InlineKeyboardButton(text="👥 查看参与", callback_data=f"admin:lottery:entries:{lid}"),
-        ])
-    rows.append([
-        InlineKeyboardButton(text="🔙 返回列表",     callback_data="admin:lottery:list"),
-        InlineKeyboardButton(text="🏠 返回抽奖管理", callback_data="admin:lottery"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_lottery_entries_pagination_kb(
-    lottery_id: int, page: int, total_pages: int,
-) -> InlineKeyboardMarkup:
-    """参与人员分页按钮（仿 9.6 / P.2）"""
-    nav: list[InlineKeyboardButton] = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(
-            text="⬅️ 上一页",
-            callback_data=f"admin:lottery:entries:{lottery_id}:{page - 1}",
-        ))
-    nav.append(InlineKeyboardButton(
-        text=f"📄 {page + 1}/{max(1, total_pages)}",
-        callback_data="noop:lottery_entries_page",
-    ))
-    if page + 1 < total_pages:
-        nav.append(InlineKeyboardButton(
-            text="➡️ 下一页",
-            callback_data=f"admin:lottery:entries:{lottery_id}:{page + 1}",
-        ))
-    return InlineKeyboardMarkup(inline_keyboard=[
-        nav,
-        [InlineKeyboardButton(text="🔙 返回详情", callback_data=f"admin:lottery:item:{lottery_id}")],
-    ])
-
-
-def admin_lottery_repost_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
-    """[🔄 重发抽奖帖] 二次确认"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⚠️ 确认重发", callback_data=f"admin:lottery:repost_ok:{lottery_id}"),
-            InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:lottery:item:{lottery_id}"),
-        ],
-    ])
-
-
-def lottery_contact_cancel_kb() -> InlineKeyboardMarkup:
-    """客服链接 FSM 取消按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:lottery")],
-    ])
-
-
-def admin_lottery_edit_field_kb(lottery_id: int) -> InlineKeyboardMarkup:
-    """active 抽奖编辑字段选择（Phase L.4.2）
-
-    7 个可编辑字段：name / description / prize_description / prize_count /
-                    entry_cost_points / required_chat_ids / draw_at
-    （cover / entry_method / entry_code 不可改 — admin 重新建抽奖即可）
-    """
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🏷 名称",   callback_data=f"admin:lottery:edit_field:{lottery_id}:name"),
-            InlineKeyboardButton(text="📋 规则",   callback_data=f"admin:lottery:edit_field:{lottery_id}:description"),
-        ],
-        [
-            InlineKeyboardButton(text="🎁 奖品描述", callback_data=f"admin:lottery:edit_field:{lottery_id}:prize_description"),
-            InlineKeyboardButton(text="🏆 中奖人数", callback_data=f"admin:lottery:edit_field:{lottery_id}:prize_count"),
-        ],
-        [
-            InlineKeyboardButton(text="💰 参与所需积分", callback_data=f"admin:lottery:edit_field:{lottery_id}:entry_cost_points"),
-            InlineKeyboardButton(text="📡 必关频道",   callback_data=f"admin:lottery:edit_field:{lottery_id}:required_chat_ids"),
-        ],
-        [
-            InlineKeyboardButton(text="⏰ 开奖时间", callback_data=f"admin:lottery:edit_field:{lottery_id}:draw_at"),
-            InlineKeyboardButton(text="🔙 返回详情", callback_data=f"admin:lottery:item:{lottery_id}"),
-        ],
-    ])
-
-
-def lottery_edit_cancel_kb(lottery_id: int) -> InlineKeyboardMarkup:
-    """active 编辑 FSM 取消（回详情）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:lottery:item:{lottery_id}")],
-    ])
-
-
-def admin_lottery_publish_confirm_kb(lottery_id: int) -> InlineKeyboardMarkup:
-    """[📤 立即发布] 二次确认"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⚠️ 确认发布", callback_data=f"admin:lottery:publish_ok:{lottery_id}"),
-            InlineKeyboardButton(text="🔙 取消", callback_data=f"admin:lottery:item:{lottery_id}"),
-        ],
-    ])
-
-
-def admin_lottery_cancel_confirm_kb(
-    lottery_id: int,
-    *,
-    show_refund_choice: bool = False,
-) -> InlineKeyboardMarkup:
-    """取消抽奖二次确认
-
-    - show_refund_choice=False（默认；草稿/0 entries/cost=0）：单按钮 ⚠️ 确认取消
-    - show_refund_choice=True（active 且 cost > 0 且 has entries）：
-      两个按钮 [✅ 取消并退积分] / [⚠️ 取消但不退积分]
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    if show_refund_choice:
-        rows.append([
-            InlineKeyboardButton(
-                text="✅ 取消并退积分",
-                callback_data=f"admin:lottery:cancel_ok_refund:{lottery_id}",
-            ),
-        ])
-        rows.append([
-            InlineKeyboardButton(
-                text="⚠️ 取消但不退积分",
-                callback_data=f"admin:lottery:cancel_ok_norefund:{lottery_id}",
-            ),
-        ])
-    else:
-        rows.append([
-            InlineKeyboardButton(
-                text="⚠️ 确认取消",
-                callback_data=f"admin:lottery:cancel_ok:{lottery_id}",
-            ),
-        ])
-    rows.append([
-        InlineKeyboardButton(text="🔙 不取消", callback_data=f"admin:lottery:item:{lottery_id}"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-# ============ 抽奖创建 FSM 键盘（Phase L.1.2） ============
-
-def lottery_create_cancel_kb() -> InlineKeyboardMarkup:
-    """创建抽奖 FSM 通用取消按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
-    ])
-
-
-def lottery_create_skip_cancel_kb() -> InlineKeyboardMarkup:
-    """Step 3 [⏭ 跳过封面] + 取消"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⏭ 跳过封面", callback_data="admin:lottery:c_skip_cover"),
-            InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
-        ],
-    ])
-
-
-def lottery_create_method_kb() -> InlineKeyboardMarkup:
-    """Step 4：参与方式（按键 / 口令）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎲 按键抽奖", callback_data="admin:lottery:c_method:button"),
-            InlineKeyboardButton(text="🔑 口令抽奖", callback_data="admin:lottery:c_method:code"),
-        ],
-        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
-    ])
-
-
-def lottery_create_prize_count_kb() -> InlineKeyboardMarkup:
-    """Step 5：中奖人数预设 + 自定义"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="1",  callback_data="admin:lottery:c_count:1"),
-            InlineKeyboardButton(text="3",  callback_data="admin:lottery:c_count:3"),
-            InlineKeyboardButton(text="5",  callback_data="admin:lottery:c_count:5"),
-        ],
-        [
-            InlineKeyboardButton(text="10", callback_data="admin:lottery:c_count:10"),
-            InlineKeyboardButton(text="20", callback_data="admin:lottery:c_count:20"),
-            InlineKeyboardButton(text="50", callback_data="admin:lottery:c_count:50"),
-        ],
-        [
-            InlineKeyboardButton(text="💬 自定义", callback_data="admin:lottery:c_count_custom"),
-            InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
-        ],
-    ])
-
-
-def lottery_create_required_kb(n_added: int) -> InlineKeyboardMarkup:
-    """Step 7：必关频道子循环"""
-    done_label = f"✅ 完成添加 ({n_added})" if n_added > 0 else "✅ 完成添加"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="➕ 添加",  callback_data="admin:lottery:c_req_add"),
-            InlineKeyboardButton(text=done_label, callback_data="admin:lottery:c_req_done"),
-        ],
-        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
-    ])
-
-
-def lottery_create_publish_mode_kb() -> InlineKeyboardMarkup:
-    """Step 8：发布模式"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⚡ 立即发布", callback_data="admin:lottery:c_pub:immediate"),
-            InlineKeyboardButton(text="⏰ 定时发布", callback_data="admin:lottery:c_pub:scheduled"),
-        ],
-        [InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel")],
-    ])
-
-
-def lottery_create_confirm_kb() -> InlineKeyboardMarkup:
-    """Step 10：保存草稿 / 设置参与所需积分 / 取消"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 设置参与所需积分", callback_data="admin:lottery:c_set_cost")],
-        [
-            InlineKeyboardButton(text="✅ 保存草稿", callback_data="admin:lottery:c_save"),
-            InlineKeyboardButton(text="❌ 取消", callback_data="admin:lottery:c_cancel"),
-        ],
-    ])
-
-
-def lottery_create_cost_cancel_kb() -> InlineKeyboardMarkup:
-    """设置参与积分 FSM 取消（回 Step 10 确认页）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 取消", callback_data="admin:lottery:c_cost_back")],
-    ])
+# Phase A0（2026-05-23）已下线：抽奖管理 keyboards（admin_lottery_*_kb / lottery_*_kb 共 18 个）
+# 删除原因：见 docs/DELETED-FEATURES.md（抽奖功能整体下线）。
 
 
 # ============ 报销审核子系统 ============
@@ -2502,117 +2137,3 @@ def admin_keyword_cancel_input_kb() -> InlineKeyboardMarkup:
     ])
 
 
-# ============ 抽奖对账（admin:lottery_reconcile） ============
-
-
-def _reconcile_item_button_text(item: "LotteryReconcileItem") -> str:
-    """单条对账活动按钮文案：#L 名称 + 平账/差异标记。
-
-    Telegram callback_data 限 64 字节，按钮 text 不受同等限制，但仍控制长度
-    （活动名截断到 ~20 字符）避免单行换行。
-    """
-    name = (item.name or "(未命名)")
-    if len(name) > 20:
-        name = name[:19] + "…"
-    if item.diff == 0 and item.anomaly_users == 0:
-        tag = "✅"
-    else:
-        tag = "⚠️"
-    return f"{tag} #{item.id} {name}"
-
-
-def admin_lottery_reconcile_kb(
-    items: list["LotteryReconcileItem"],
-) -> InlineKeyboardMarkup:
-    """对账列表 keyboard：每个活动一行 → detail；末尾刷新 + 返回运营看板。
-
-    Sprint 2 §4.2.1：仅超管入口；不放任何"修复"按钮。
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    for item in items:
-        rows.append([
-            InlineKeyboardButton(
-                text=_reconcile_item_button_text(item),
-                callback_data=f"admin:lottery_reconcile:item:{item.id}",
-            ),
-        ])
-    rows.append([
-        InlineKeyboardButton(
-            text="🔄 刷新", callback_data="admin:lottery_reconcile:refresh",
-        ),
-        InlineKeyboardButton(
-            text="⬅️ 返回运营看板", callback_data="admin:dashboard",
-        ),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_lottery_reconcile_detail_kb(
-    item: "LotteryReconcileItem",
-) -> InlineKeyboardMarkup:
-    """单活动对账详情 keyboard：复制汇总 + 异常用户列表（条件）+ 刷新 + 返回。
-
-    Sprint 2 §4.2.2 / §4.2.3：
-        - 复制汇总：所有详情页都显示
-        - 异常用户列表：仅当 anomaly_users > 0 时显示，带计数角标
-    不放任何"修复"按钮（§4.3 禁止）。
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    rows.append([
-        InlineKeyboardButton(
-            text="📋 复制汇总",
-            callback_data=f"admin:lottery_reconcile:copy:{item.id}",
-        ),
-    ])
-    if item.anomaly_users > 0:
-        rows.append([
-            InlineKeyboardButton(
-                text=f"📋 异常用户列表 ({item.anomaly_users})",
-                callback_data=f"admin:lottery_reconcile:anomaly:{item.id}:1",
-            ),
-        ])
-    rows.append([
-        InlineKeyboardButton(
-            text="🔄 刷新当前",
-            callback_data=f"admin:lottery_reconcile:item:{item.id}:refresh",
-        ),
-        InlineKeyboardButton(
-            text="⬅️ 返回对账列表",
-            callback_data="admin:lottery_reconcile",
-        ),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_lottery_reconcile_anomaly_kb(
-    lid: int, page: int, total_pages: int,
-) -> InlineKeyboardMarkup:
-    """异常用户列表 keyboard：分页 + 返回详情。
-
-    Sprint 2 §4.2.2：仅超管入口。无"修复 / 导出"按钮。
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    nav: list[InlineKeyboardButton] = []
-    if page > 1:
-        nav.append(InlineKeyboardButton(
-            text="⬅️ 上一页",
-            callback_data=f"admin:lottery_reconcile:anomaly:{lid}:{page - 1}",
-        ))
-    if page < total_pages:
-        nav.append(InlineKeyboardButton(
-            text="下一页 ➡️",
-            callback_data=f"admin:lottery_reconcile:anomaly:{lid}:{page + 1}",
-        ))
-    if nav:
-        rows.append(nav)
-    rows.append([
-        InlineKeyboardButton(
-            text="🔄 刷新当前页",
-            callback_data=f"admin:lottery_reconcile:anomaly:{lid}:{page}",
-        ),
-        InlineKeyboardButton(
-            text=f"⬅️ 返回 #{lid}",
-            callback_data=f"admin:lottery_reconcile:item:{lid}",
-        ),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)

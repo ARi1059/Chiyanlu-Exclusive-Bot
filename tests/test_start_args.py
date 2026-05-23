@@ -20,7 +20,8 @@ def test_empty_returns_all_defaults():
     assert r["fav_teacher_id"] is None
     assert r["teacher_detail_id"] is None
     assert r["review_target_id"] is None
-    assert r["lottery_id"] is None
+    # Phase A0（2026-05-23）：lottery_id 已删除
+    assert "lottery_id" not in r
     assert r["search_entry"] is False
     assert r["source_type"] is None
     assert r["source_id"] is None
@@ -83,8 +84,7 @@ def test_none_input_treated_as_empty():
         # 10. write_123
         ("write_123", {"review_target_id": 123}),
 
-        # 11. lottery_123
-        ("lottery_123", {"lottery_id": 123}),
+        # Phase A0（2026-05-23）已删除：lottery_123 deep link 解析
 
         # 12. search
         ("search", {"search_entry": True}),
@@ -102,7 +102,7 @@ def test_none_input_treated_as_empty():
         "activate", "fav_id",
         "fav_src_channel", "fav_src_group_negative", "fav_src_teacher",
         "fav_campaign", "fav_invite",
-        "teacher_detail", "write_review", "lottery",
+        "teacher_detail", "write_review",
         "search_entry",
         "campaign", "invite", "src_channel",
     ],

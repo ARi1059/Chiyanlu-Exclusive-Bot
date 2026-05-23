@@ -18,11 +18,9 @@ from bot.handlers.admin_review import router as admin_review_router
 from bot.handlers.favorite import router as favorite_router
 from bot.handlers.hot_teachers import router as hot_teachers_router
 from bot.handlers.publish_templates import router as publish_templates_router
-from bot.handlers.admin_lottery import router as admin_lottery_router
 from bot.handlers.admin_points import router as admin_points_router
 from bot.handlers.admin_reimburse import router as admin_reimburse_router
 from bot.handlers.discussion_anchor_listener import router as discussion_anchor_router
-from bot.handlers.lottery_entry import router as lottery_entry_router
 from bot.handlers.noop_handlers import router as noop_router
 from bot.handlers.report_settings import router as report_settings_router
 from bot.handlers.review_card import router as review_card_router
@@ -33,7 +31,6 @@ from bot.handlers.reimburse_subreq_admin import router as reimburse_subreq_admin
 from bot.handlers.reimburse_settings_admin import router as reimburse_settings_admin_router
 from bot.handlers.admin_keyword import router as admin_keyword_router
 from bot.handlers.start_router import router as start_router
-from bot.handlers.teacher_daily_status import router as teacher_daily_status_router
 from bot.handlers.review_list import router as review_list_router
 from bot.handlers.teacher_detail import router as teacher_detail_router
 from bot.handlers.user_tags import router as user_tags_router
@@ -46,7 +43,6 @@ from bot.handlers.user_history import router as user_history_router
 from bot.handlers.user_panel import router as user_panel_router
 from bot.handlers.user_points import router as user_points_router
 from bot.handlers.user_reimburse import router as user_reimburse_router
-from bot.handlers.user_lottery import router as user_lottery_router
 from bot.handlers.user_recommend import router as user_recommend_router
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
@@ -83,11 +79,8 @@ def register_routers(dp: Dispatcher) -> None:
     # - source_stats handler / keyboard / FSM state 已于 2026-05-20 Sprint 7
     #   §9.1 第 2 批 dead code 删除
     # - bot/database.py 中 4 个 source DB helper 留待后续 PR 单独清理
-    # teacher_daily_status_router（Phase 5）：
-    # 老师今日状态（设置时间/取消/已满）+ 时间选择器 + 管理员今日总览 + noop 占位
-    # 注册位置：在 teacher_self / user_panel / keyword 之前，保证 teacher:*/admin:today_status
-    # callback 命名空间清晰；TeacherDailyStatusStates 保证文字消息仅在 FSM 中被截获
-    dp.include_router(teacher_daily_status_router)
+    # Phase A0（2026-05-23）已下线：teacher_daily_status_router（老师今日状态 取消/已满）
+    # 删除原因：见 docs/DELETED-FEATURES.md。
     # user_tags_router（Phase 6.1）：
     # admin:user_tags / admin:user_tags:query + 查询标签用户 FSM
     # UserTagsQueryStates 保证文字消息仅在 FSM 状态下被截获
@@ -112,9 +105,8 @@ def register_routers(dp: Dispatcher) -> None:
     # 必须在 admin_panel 之后（主菜单已嵌入 admin:points 入口），_super_admin_required
     # 装饰器保证非超管被拒
     dp.include_router(admin_points_router)
-    # admin_lottery_router (Phase L.1)：admin:lottery:* 超管抽奖管理
-    # 在 admin_panel 之后，与 admin_points 命名空间独立
-    dp.include_router(admin_lottery_router)
+    # Phase A0（2026-05-23）已下线：admin_lottery_router（超管抽奖管理）
+    # 删除原因：见 docs/DELETED-FEATURES.md。
     # admin_reimburse_router (报销审核子系统)：reimburse:* 超管报销审批
     dp.include_router(admin_reimburse_router)
     # subreq_admin_router (Phase 9.3)：admin:subreq:* callback + SubReqAddStates
@@ -150,10 +142,8 @@ def register_routers(dp: Dispatcher) -> None:
     dp.include_router(user_points_router)
     # 报销子系统用户侧：user:reimburse / user:reimburse:list[:page]
     dp.include_router(user_reimburse_router)
-    # UX-6.1：抽奖中心用户侧（user:lottery / user:lottery:active / :joined / :drawn）
-    # 注册在 user_panel 之后、keyword 之前；callback 命名空间 user:lottery:*
-    # 与既有 user:* / lottery_entry handler 完全独立
-    dp.include_router(user_lottery_router)
+    # Phase A0（2026-05-23）已下线：user_lottery_router（抽奖中心用户侧）
+    # 删除原因：见 docs/DELETED-FEATURES.md。
     # Phase 7.2：user_filter_router / user_recommend_router
     # 注册在 user_panel 之后、user_search / keyword 之前。
     #   - callback 命名空间独立：user:filter:* / user:recommend:*
@@ -179,8 +169,6 @@ def register_routers(dp: Dispatcher) -> None:
     # 必须在 keyword 之前（keyword 是 catch-all）；F.is_automatic_forward 过滤
     # 保证只对自动转发消息触发，不与正常群组关键词冲突
     dp.include_router(discussion_anchor_router)
-    # Phase L.2.3：lottery_entry 私聊文字尝试匹配口令；不匹配 silent skip
-    # 必须在 keyword 之前；F.chat.type == "private" + F.text 过滤；
-    # 群消息走 keyword 不冲突
-    dp.include_router(lottery_entry_router)
+    # Phase A0（2026-05-23）已下线：lottery_entry_router（私聊口令入场）
+    # 删除原因：见 docs/DELETED-FEATURES.md。
     dp.include_router(keyword_router)  # keyword 放最后，避免拦截其他消息

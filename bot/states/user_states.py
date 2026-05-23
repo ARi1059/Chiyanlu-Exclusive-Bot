@@ -21,13 +21,5 @@ class FilterStates(StatesGroup):
     waiting_pick = State()
 
 
-class SearchHistoryStates(StatesGroup):
-    """搜索历史临时状态（Phase 7.3）
-
-    waiting_pick: 已展示用户最近 N 次搜索词，等待点选其中一个回放。
-    state.data 结构:
-        {
-            "queries": ["御姐 1000P", "天府一街", ...]  # 与按钮 callback index 对齐
-        }
-    """
-    waiting_pick = State()
+# Phase A0（2026-05-23）已下线：SearchHistoryStates
+# 删除原因：见 docs/DELETED-FEATURES.md。

@@ -26,19 +26,15 @@ from bot.database import (
     count_teacher_favoriters,
     get_similar_teachers,
     get_teacher,
-    get_teacher_daily_status,
     get_user,
     is_checked_in,
     is_favorited,
-    record_teacher_view,
     set_user_notify_enabled,
     toggle_favorite,
     update_user_tags_from_teacher_action,
     upsert_user,
 )
 from bot.keyboards.user_kb import (
-    recent_views_empty_kb,
-    recent_views_rich_kb,
     teacher_detail_kb,
 )
 
@@ -97,8 +93,8 @@ async def _build_detail_payload(
     today = _today_str()
     is_signed_in = await is_checked_in(teacher["user_id"], today)
     is_fav = await is_favorited(user_id, teacher["user_id"])
-    # Phase 5：今日状态
-    daily_row = await get_teacher_daily_status(teacher["user_id"], today)
+    # Phase A0（2026-05-23）：teacher_daily_status 表已下线，daily_row 恒为 None
+    daily_row = None
     # Phase 7.1：热度展示需要收藏数（异常时降级为 0）
     try:
         fav_count = await count_teacher_favoriters(teacher["user_id"])
@@ -181,8 +177,8 @@ async def send_teacher_detail_message(
     text, kb = await _build_detail_payload(user_id, teacher, source=source)
     await message.answer(text, reply_markup=kb)
     if record_view:
-        await record_teacher_view(user_id, teacher["user_id"])
-        # Phase 6.1：用户画像 view_teacher 动作
+        # Phase A0（2026-05-23）：user_teacher_views 表已下线，不再记录 view
+        # Phase 6.1：用户画像 view_teacher 动作（仍保留）
         await update_user_tags_from_teacher_action(
             user_id, teacher["user_id"], "view_teacher",
         )
@@ -212,8 +208,8 @@ async def _render_detail(
         logger.debug("upsert_user 失败 (user=%s): %s", user.id, e)
 
     if record_view:
-        await record_teacher_view(user.id, teacher_id)
-        # Phase 6.1：用户画像 view_teacher 动作
+        # Phase A0（2026-05-23）：user_teacher_views 表已下线，不再记录 view
+        # Phase 6.1：用户画像 view_teacher 动作（仍保留）
         await update_user_tags_from_teacher_action(
             user.id, teacher_id, "view_teacher",
         )
@@ -395,12 +391,10 @@ async def cb_teacher_remind(callback: types.CallbackQuery):
 
 
 def _short_status_label(t: dict) -> str:
-    """从一行老师 dict 派生短状态文案（结果列表用）"""
-    status = t.get("daily_status")
-    if status == "unavailable":
-        return "今日已取消"
-    if status == "full":
-        return "今日已满"
+    """从一行老师 dict 派生短状态文案（结果列表用）
+
+    Phase A0（2026-05-23）：teacher_daily_status 表已下线，仅根据签到状态判定。
+    """
     if bool(t.get("signed_in_today")):
         return "今日可约"
     return "今日暂未开课"
@@ -508,49 +502,5 @@ async def cb_teacher_similar(callback: types.CallbackQuery):
     )
 
 
-# ============ user:recent —— 最近浏览列表（增强版） ============
-
-
-async def _render_user_recent(user_id: int) -> tuple[str, "types.InlineKeyboardMarkup"]:
-    """生成最近看过的文本 + keyboard。
-
-    抽出便于复用给 user:recent 与 user:recent:refresh。
-    """
-    from bot.services.recent_views import (
-        get_recent_teacher_views,
-        render_recent_views,
-    )
-    items = await get_recent_teacher_views(user_id, limit=10)
-    now_local = datetime.now(_tz)
-    text = render_recent_views(items, generated_at=now_local, now_local=now_local)
-    if not items:
-        return text, recent_views_empty_kb()
-    return text, recent_views_rich_kb(items)
-
-
-@router.callback_query(F.data == "user:recent")
-async def cb_user_recent(callback: types.CallbackQuery):
-    """最近浏览过的老师列表（用户留存 Sprint 增强：显示时间 / 状态 / 收藏）"""
-    if callback.message and callback.message.chat.type != "private":
-        await callback.answer("仅在私聊中可用", show_alert=True)
-        return
-
-    text, kb = await _render_user_recent(callback.from_user.id)
-    await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "user:recent:refresh")
-async def cb_user_recent_refresh(callback: types.CallbackQuery):
-    """最近看过刷新按钮（重绘，不改业务流程）。"""
-    if callback.message and callback.message.chat.type != "private":
-        await callback.answer("仅在私聊中可用", show_alert=True)
-        return
-
-    text, kb = await _render_user_recent(callback.from_user.id)
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        # 文本未变时 Telegram 抛 "message is not modified"，吞掉即可
-        pass
-    await callback.answer("已刷新")
+# Phase A0（2026-05-23）已下线：cb_user_recent / cb_user_recent_refresh / _render_user_recent
+# 删除原因：见 docs/DELETED-FEATURES.md（最近看过功能整体下线）。

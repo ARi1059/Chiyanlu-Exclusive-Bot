@@ -20,7 +20,7 @@ _MAIN_PY = os.path.join(_PROJECT_ROOT, "bot", "main.py")
 
 
 def _read() -> str:
-    with open(_MAIN_PY) as f:
+    with open(_MAIN_PY, encoding="utf-8") as f:
         return f.read()
 
 

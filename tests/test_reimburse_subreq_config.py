@@ -302,11 +302,4 @@ def test_point_transaction_helpers_unchanged():
     assert callable(get_user_total_points)
 
 
-def test_lottery_helpers_unchanged():
-    """spec §25：抽奖相关 helper 未触动。"""
-    from bot.database import (
-        get_lottery,
-        list_lotteries_by_status,
-    )
-    assert callable(get_lottery)
-    assert callable(list_lotteries_by_status)
+# Phase A0（2026-05-23）已下线：test_lottery_helpers_unchanged（抽奖功能整体下线）

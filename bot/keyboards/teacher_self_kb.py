@@ -6,46 +6,24 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ============ 老师主菜单 ============
 
 def teacher_main_menu_kb(*, checked_in: bool = False) -> InlineKeyboardMarkup:
-    """老师私聊主菜单（v2 §2.5.5 + Phase 5 今日状态 + UX-5.1 签到优先）
+    """老师私聊主菜单（Phase A0 后 2026-05-23）
 
-    - **今日签到 / 今日已签到**（置顶，UX-5.1 + PLAN §3.3.A）
-        文案根据 checked_in 动态切换；点击 callback 不变（既有 teacher_checkin handler
-        会判断是否已签到并相应处理）
-    - 我的资料 → 自助管理入口（F3）
-    - 今日状态 → Phase 5 老师今日开课状态管理
+    Phase A0：移除「📅 今日状态」按钮（teacher_daily_status 功能整体下线）。
+    剩余 2 按钮：
+        - ✅ 今日签到 / 今日已签到（文案根据 checked_in 动态切换）
+        - ✏️ 我的资料
 
     Args:
-        checked_in: 当日是否已签到。caller 应预先 `await is_checked_in(teacher_id, today_str)`
-            后传入；缺省 False 保留旧文案，确保旧 caller 兼容。
+        checked_in: 当日是否已签到。
     """
     checkin_label = "✅ 今日已签到" if checked_in else "✅ 今日签到"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=checkin_label, callback_data="teacher_self:checkin")],
         [InlineKeyboardButton(text="✏️ 我的资料", callback_data="teacher_self:profile")],
-        [InlineKeyboardButton(text="📅 今日状态", callback_data="teacher:status")],
     ])
 
 
-# ============ 老师今日状态 ============
-
-
-def teacher_status_kb() -> InlineKeyboardMarkup:
-    """老师今日状态菜单（移除"设置可约时间"后剩 3 操作）"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🈵 标记今日已满", callback_data="teacher:status:mark_full")],
-        [InlineKeyboardButton(text="❌ 取消今日开课", callback_data="teacher:status:cancel")],
-        [InlineKeyboardButton(text="🔙 返回老师菜单", callback_data="teacher_self:menu")],
-    ])
-
-
-def cancel_reason_kb() -> InlineKeyboardMarkup:
-    """取消今日开课时的输入引导：跳过 / 取消"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⏭ 跳过原因", callback_data="teacher:status:cancel_skip"),
-            InlineKeyboardButton(text="🔙 取消", callback_data="teacher:status"),
-        ],
-    ])
+# Phase A0（2026-05-23）已下线：teacher_status_kb / cancel_reason_kb（老师今日状态功能整体下线）
 
 
 # ============ 我的资料字段编辑面板 ============

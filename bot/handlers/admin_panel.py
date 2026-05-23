@@ -45,10 +45,6 @@ from bot.keyboards.admin_kb import (
     admin_admin_settings_kb,
     admin_overview_kb,
     admin_reimbursement_pool_kb,
-    admin_lottery_status_kb,
-    admin_lottery_reconcile_kb,
-    admin_lottery_reconcile_detail_kb,
-    admin_lottery_reconcile_anomaly_kb,
     admin_reimburse_rules_kb,
 )
 from bot.states.teacher_states import (
@@ -728,13 +724,8 @@ async def cb_toggle_reminder(callback: types.CallbackQuery):
     await callback.message.edit_text("⚙️ 系统设置", reply_markup=system_menu_kb())
 
 
-@router.callback_query(F.data == "system:lottery_contact")
-@super_admin_required
-async def cb_set_lottery_contact_from_system(callback: types.CallbackQuery, state: FSMContext):
-    """[👨‍💼 抽奖客服链接] 入口（系统设置）；与抽奖管理入口共用 FSM"""
-    from bot.handlers.admin_lottery import _enter_contact_url_fsm
-    await _enter_contact_url_fsm(callback.message, state, edit=True)
-    await callback.answer()
+# Phase A0（2026-05-23）已下线：cb_set_lottery_contact_from_system
+# 删除原因：见 docs/DELETED-FEATURES.md（抽奖功能整体下线）。
 
 
 @router.callback_query(F.data == "system:publish_time")
@@ -1023,14 +1014,7 @@ _AUDIT_ACTION_LABELS: dict[str, str] = {
     "rreview_reject": "驳回报告",
     "points_query": "查询用户积分",
     "points_grant": "手动加扣积分",
-    "lottery_create": "创建抽奖",
-    "lottery_cancel": "取消抽奖",
-    "lottery_publish": "发布抽奖到频道",
-    "lottery_entry": "参与抽奖",
-    "lottery_repost": "重发抽奖帖",
-    "lottery_contact_set": "设置抽奖客服链接",
-    "lottery_edit": "编辑抽奖",
-    "lottery_refund": "退还参与积分",
+    # Phase A0（2026-05-23）已下线：lottery_* 审计 action 标签（抽奖功能整体下线）
     "reimburse_approve": "通过报销",
     "reimburse_reject": "驳回报销",
     "reimburse_reset": "重置周报销配额",
@@ -1124,7 +1108,8 @@ async def cb_dashboard_enter(callback: types.CallbackQuery):
 # UX-9.6：操作日志分页 + action 筛选
 _AUDIT_PAGE_SIZE = 10
 
-# 筛选子菜单展示的常用 action（按 review / lottery / reimburse / admin 分组）
+# 筛选子菜单展示的常用 action（按 review / reimburse / admin 分组）
+# Phase A0（2026-05-23）：移除 lottery_* 选项（功能整体下线）
 _AUDIT_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("review_approve",     "✅ 审核通过（资料）"),
     ("review_reject",      "❌ 审核驳回（资料）"),
@@ -1132,8 +1117,6 @@ _AUDIT_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("rreview_reject",     "❌ 驳回报告"),
     ("reimburse_approve",  "💰 通过报销"),
     ("reimburse_reject",   "🛑 驳回报销"),
-    ("lottery_create",     "🎲 创建抽奖"),
-    ("lottery_cancel",     "🚫 取消抽奖"),
     ("points_grant",       "💎 手动加扣积分"),
     ("admin_add",          "👥 添加管理员"),
 ]
@@ -1470,21 +1453,20 @@ async def cb_admin_reimburse_announce(callback: types.CallbackQuery):
     await callback.answer("已生成公告草稿，长按消息可复制")
 
 
-# ============ 活动运营二级菜单（admin:operations） ============
+# ============ 活动运营二级菜单（admin:operations，Phase A0 后只剩积分管理） ============
 
 
 @router.callback_query(F.data == "admin:operations")
 @super_admin_required
 async def cb_admin_operations(callback: types.CallbackQuery):
-    """二级「🎲 活动运营」入口：聚合抽奖管理 + 积分管理
+    """二级「💰 活动运营」入口
 
-    两个子入口 (admin:lottery / admin:points) 均为超管功能，因此本聚合页也
-    采用 @super_admin_required。callback 含义全部保持不变。
+    Phase A0（2026-05-23）：抽奖管理整体下线，本聚合页仅剩「💰 积分管理」。
+    callback `admin:points` 含义不变。
     """
     text = (
-        "🎲 活动运营\n\n"
+        "💰 活动运营\n\n"
         "请选择运营功能：\n\n"
-        "🎲 抽奖管理\n"
         "💰 积分管理"
     )
     await callback.message.edit_text(text, reply_markup=admin_operations_kb())
@@ -1561,6 +1543,7 @@ async def cb_admin_dashboard(callback: types.CallbackQuery):
     """
     user_id = callback.from_user.id
     is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
+    # Phase A0（2026-05-23）：移除「🎲 抽奖状态」「📊 抽奖对账」入口
     lines = [
         "📊 运营看板",
         "",
@@ -1568,10 +1551,7 @@ async def cb_admin_dashboard(callback: types.CallbackQuery):
         "",
         "📊 运营总览",
         "💰 报销池状态",
-        "🎲 抽奖状态",
     ]
-    if is_super:
-        lines.append("📊 抽奖对账（仅超管）")
     text = "\n".join(lines)
     await callback.message.edit_text(
         text, reply_markup=admin_dashboard_kb(is_super=is_super),
@@ -1673,211 +1653,11 @@ async def cb_admin_reimbursement_pool_refresh(callback: types.CallbackQuery):
     await callback.answer("已刷新")
 
 
-# ============ 抽奖状态（admin:lottery_status） ============
-
-
-@router.callback_query(F.data == "admin:lottery_status")
-@admin_required
-async def cb_admin_lottery_status(callback: types.CallbackQuery):
-    """抽奖状态：状态总览 / 待办提醒 / 最近活动
-
-    只读聚合，不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑。
-    UX-2 第三项第二批：根据 stats 与权限渲染快捷跳转按钮。
-    """
-    from bot.services.lottery_status import (
-        get_lottery_status_stats,
-        render_lottery_status,
-    )
-    user_id = callback.from_user.id
-    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
-    stats = await get_lottery_status_stats()
-    await callback.message.edit_text(
-        render_lottery_status(stats),
-        reply_markup=admin_lottery_status_kb(stats, is_super=is_super),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "admin:lottery_status:refresh")
-@admin_required
-async def cb_admin_lottery_status_refresh(callback: types.CallbackQuery):
-    """抽奖状态刷新按钮（重新拉取数据并重绘）。"""
-    from bot.services.lottery_status import (
-        get_lottery_status_stats,
-        render_lottery_status,
-    )
-    user_id = callback.from_user.id
-    is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
-    stats = await get_lottery_status_stats()
-    try:
-        await callback.message.edit_text(
-            render_lottery_status(stats),
-            reply_markup=admin_lottery_status_kb(stats, is_super=is_super),
-        )
-    except Exception:
-        # 文本未变时 Telegram 会抛 message is not modified，吞掉即可
-        pass
-    await callback.answer("已刷新")
-
-
-# ============ 抽奖参与对账（admin:lottery_reconcile） ============
-# Sprint 2 §4.2.1：仅超管可见。读 lottery_entries × point_transactions 比对
-# entry / 扣分 / 退款 一致性。本 PR 不展示异常用户明细（留给 §4.2.2 PR），
-# 不导出文件（留给 §4.2.3 PR），不提供"修复"按钮（§4.3 禁止）。
-
-
-@router.callback_query(F.data == "admin:lottery_reconcile")
-@super_admin_required
-async def cb_admin_lottery_reconcile(callback: types.CallbackQuery):
-    """抽奖对账列表页：列出 cost>0 且非 draft 的活动 + 每条对账概览。"""
-    from bot.services.lottery_reconcile import (
-        get_lottery_reconcile_overview,
-        render_lottery_reconcile_overview,
-    )
-    stats = await get_lottery_reconcile_overview()
-    await callback.message.edit_text(
-        render_lottery_reconcile_overview(stats),
-        reply_markup=admin_lottery_reconcile_kb(stats.items),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "admin:lottery_reconcile:refresh")
-@super_admin_required
-async def cb_admin_lottery_reconcile_refresh(callback: types.CallbackQuery):
-    """对账列表刷新按钮。"""
-    from bot.services.lottery_reconcile import (
-        get_lottery_reconcile_overview,
-        render_lottery_reconcile_overview,
-    )
-    stats = await get_lottery_reconcile_overview()
-    try:
-        await callback.message.edit_text(
-            render_lottery_reconcile_overview(stats),
-            reply_markup=admin_lottery_reconcile_kb(stats.items),
-        )
-    except Exception:
-        # 文本未变 → Telegram message is not modified，吞掉
-        pass
-    await callback.answer("已刷新")
-
-
-@router.callback_query(F.data.startswith("admin:lottery_reconcile:item:"))
-@super_admin_required
-async def cb_admin_lottery_reconcile_item(callback: types.CallbackQuery):
-    """单活动对账详情页（含刷新当前路径）。
-
-    callback 形式：
-        admin:lottery_reconcile:item:<lid>            → 首次进入
-        admin:lottery_reconcile:item:<lid>:refresh    → 刷新当前
-    """
-    from bot.services.lottery_reconcile import (
-        get_lottery_reconcile_detail,
-        render_lottery_reconcile_detail,
-    )
-    data = callback.data or ""
-    parts = data.split(":")
-    # ['admin','lottery_reconcile','item','<lid>'] or [..,'<lid>','refresh']
-    is_refresh = len(parts) >= 5 and parts[4] == "refresh"
-    try:
-        lid = int(parts[3])
-    except (IndexError, ValueError):
-        await callback.answer("⚠️ 参数错误", show_alert=True)
-        return
-
-    item = await get_lottery_reconcile_detail(lid)
-    if item is None:
-        await callback.answer(
-            "⚠️ 活动不存在或非积分门票活动（无需对账）",
-            show_alert=True,
-        )
-        return
-
-    try:
-        await callback.message.edit_text(
-            render_lottery_reconcile_detail(item),
-            reply_markup=admin_lottery_reconcile_detail_kb(item),
-        )
-    except Exception:
-        # 刷新时文本未变 → 吞掉 message is not modified
-        if not is_refresh:
-            raise
-    await callback.answer("已刷新" if is_refresh else None)
-
-
-@router.callback_query(F.data.startswith("admin:lottery_reconcile:anomaly:"))
-@super_admin_required
-async def cb_admin_lottery_reconcile_anomaly(callback: types.CallbackQuery):
-    """异常用户列表分页页（§4.2.2）。
-
-    callback 形式：
-        admin:lottery_reconcile:anomaly:<lid>:<page>
-    """
-    from bot.services.lottery_reconcile import (
-        list_lottery_anomalies,
-        render_lottery_anomaly_list,
-    )
-    data = callback.data or ""
-    parts = data.split(":")
-    # ['admin','lottery_reconcile','anomaly','<lid>','<page>']
-    try:
-        lid = int(parts[3])
-        page = int(parts[4])
-    except (IndexError, ValueError):
-        await callback.answer("⚠️ 参数错误", show_alert=True)
-        return
-
-    al = await list_lottery_anomalies(lid, page=page)
-    try:
-        await callback.message.edit_text(
-            render_lottery_anomaly_list(al),
-            reply_markup=admin_lottery_reconcile_anomaly_kb(
-                lid, page=al.page, total_pages=al.total_pages,
-            ),
-        )
-    except Exception:
-        # 文本未变 → 吞 message is not modified
-        pass
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("admin:lottery_reconcile:copy:"))
-@super_admin_required
-async def cb_admin_lottery_reconcile_copy(callback: types.CallbackQuery):
-    """复制对账汇总（§4.2.3）：发新消息含 <pre> 包裹的纯文本汇总。
-
-    用户在 Telegram 客户端长按消息体即可全文复制。原详情页不修改。
-
-    callback 形式：
-        admin:lottery_reconcile:copy:<lid>
-    """
-    from bot.services.lottery_reconcile import (
-        get_lottery_reconcile_detail,
-        render_lottery_reconcile_copy_text,
-        wrap_copy_text_html,
-    )
-    data = callback.data or ""
-    parts = data.split(":")
-    try:
-        lid = int(parts[3])
-    except (IndexError, ValueError):
-        await callback.answer("⚠️ 参数错误", show_alert=True)
-        return
-
-    item = await get_lottery_reconcile_detail(lid)
-    if item is None:
-        await callback.answer(
-            "⚠️ 活动不存在或非积分门票活动（无需对账）",
-            show_alert=True,
-        )
-        return
-
-    plain = render_lottery_reconcile_copy_text(item)
-    await callback.message.answer(
-        wrap_copy_text_html(plain),
-        parse_mode="HTML",
-    )
-    await callback.answer("已生成，长按消息可复制")
+# Phase A0（2026-05-23）已下线：抽奖状态 / 抽奖对账 全部 handler
+# - cb_admin_lottery_status / cb_admin_lottery_status_refresh
+# - cb_admin_lottery_reconcile / cb_admin_lottery_reconcile_refresh
+# - cb_admin_lottery_reconcile_item / cb_admin_lottery_reconcile_anomaly / cb_admin_lottery_reconcile_copy
+# 删除原因：见 docs/DELETED-FEATURES.md（抽奖功能整体下线）。
 
 
 # ============ 通用取消 ============

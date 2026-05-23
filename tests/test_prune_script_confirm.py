@@ -26,7 +26,7 @@ _PRUNE = os.path.join(_PROJECT_ROOT, "scripts", "prune.sh")
 
 
 def _read_script() -> str:
-    with open(_PRUNE) as f:
+    with open(_PRUNE, encoding="utf-8") as f:
         return f.read()
 
 

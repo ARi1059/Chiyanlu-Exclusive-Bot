@@ -42,7 +42,6 @@ from bot.database import (
     get_teacher,
     get_user_onboarding_seen,
     is_admin,
-    list_recent_teacher_views,
     mark_user_started,
     record_user_source,
     update_user_tags_from_teacher_action,
@@ -94,7 +93,6 @@ def parse_start_args(raw: str) -> dict:
         "fav_teacher_id": None,
         "teacher_detail_id": None,
         "review_target_id": None,
-        "lottery_id": None,
         "search_query": None,
         "search_entry": False,
         "source_type": None,
@@ -102,6 +100,7 @@ def parse_start_args(raw: str) -> dict:
         "quick_entry": None,
         "raw": raw or "",
     }
+    # Phase A0（2026-05-23）已下线：lottery_id deep link 解析（抽奖功能整体下线）
     if not raw:
         return result
 
@@ -149,14 +148,7 @@ def parse_start_args(raw: str) -> dict:
             pass
         return result
 
-    # Phase L.2.3：/start lottery_<digits> 抽奖参与 deep link
-    m_lt = re.match(r"^lottery_(\d+)$", raw)
-    if m_lt:
-        try:
-            result["lottery_id"] = int(m_lt.group(1))
-        except ValueError:
-            pass
-        return result
+    # Phase A0（2026-05-23）已下线：/start lottery_<digits> deep link 解析
 
     # fav 前缀：可能是 fav_<digits> 或 fav_<digits>_<source-suffix>
     if raw.startswith("fav_"):
@@ -355,7 +347,6 @@ async def cmd_start_with_arg(
         quick_entry=parsed.get("quick_entry"),
         teacher_detail_id=parsed.get("teacher_detail_id"),
         review_target_id=parsed.get("review_target_id"),
-        lottery_id=parsed.get("lottery_id"),
         search_entry=parsed.get("search_entry", False),
         search_query=parsed.get("search_query"),
         state=state,
@@ -405,12 +396,7 @@ def _quick_entry_kb(target_callback: str, button_label: str) -> InlineKeyboardMa
     ])
 
 
-def _continue_last_kb() -> InlineKeyboardMarkup:
-    """Phase 7.3：欢迎回来 + 继续看上次老师 / 进主菜单"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="继续查看", callback_data="user:continue_last")],
-        [InlineKeyboardButton(text="进入主菜单", callback_data="user:onboarding:main")],
-    ])
+# Phase A0（2026-05-23）已下线：_continue_last_kb（依赖已删的 user_teacher_views 表）
 
 
 def _teacher_detail_landing_kb(teacher_id: int) -> InlineKeyboardMarkup:
@@ -430,8 +416,8 @@ async def _route_by_role(
     extra_text: str | None = None,
     quick_entry: str | None = None,
     teacher_detail_id: int | None = None,
+
     review_target_id: int | None = None,
-    lottery_id: int | None = None,
     search_entry: bool = False,
     search_query: str | None = None,
     state: FSMContext | None = None,
@@ -569,22 +555,7 @@ async def _route_by_role(
         await render_card_or_intent(message, state, via_edit=False)
         return
 
-    # Phase L.2.3：/start lottery_<id> 直达抽奖参与
-    if lottery_id is not None:
-        from bot.handlers.lottery_entry import start_lottery_from_deep_link
-        await _safe_log_user_event(
-            user_id, "deep_link_lottery_entry",
-            {"lottery_id": lottery_id},
-        )
-        if extra_text:
-            try:
-                await message.answer(extra_text)
-            except Exception:
-                pass
-        await start_lottery_from_deep_link(
-            message.bot, user_id, message.chat.id, lottery_id,
-        )
-        return
+    # Phase A0（2026-05-23）已下线：/start lottery_<id> 直达抽奖参与 deep link
 
     # Phase 8.1：/start teacher_<id> 落地页（仅普通用户分支处理；不破坏现有 deep link）
     if teacher_detail_id is not None:
@@ -682,28 +653,7 @@ async def _route_by_role(
         await message.answer(body, reply_markup=_quick_entry_kb(target_cb, btn_label))
         return
 
-    # Phase 7.3：欢迎回来 + 继续看上次（仅 plain /start 或 quick_entry=menu）
-    if not quick_entry or quick_entry == "menu":
-        try:
-            views = await list_recent_teacher_views(user_id, limit=1)
-        except Exception as e:
-            logger.debug("list_recent_teacher_views 失败 user=%s: %s", user_id, e)
-            views = []
-        if views:
-            last = views[0]
-            name = last.get("display_name") or "?"
-            region = (last.get("region") or "").strip() or "?"
-            price = (last.get("price") or "").strip() or "?"
-            body = (
-                "👋 欢迎回来\n\n"
-                "你上次看过：\n"
-                f"{name}｜{region}｜{price}\n\n"
-                "你想继续看看吗？"
-            )
-            if extra_text:
-                body = f"{extra_text}\n\n{body}"
-            await message.answer(body, reply_markup=_continue_last_kb())
-            return
+    # Phase A0（2026-05-23）已下线：「欢迎回来 + 继续看上次」（依赖已删的 user_teacher_views 表）
 
     text = "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？"
     if extra_text:

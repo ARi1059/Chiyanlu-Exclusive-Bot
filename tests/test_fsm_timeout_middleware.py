@@ -272,12 +272,8 @@ def test_teacher_profile_uses_long_timeout():
 # ============================================================
 
 
-def test_admin_lottery_router_unchanged_by_this_pr():
-    """admin_lottery router 本批不接入超时中间件（单 PR 单范围）。"""
-    import bot.handlers.admin_lottery as mod
-    src = _src(mod)
-    # 不应有 FSMTimeoutMiddleware import
-    assert "FSMTimeoutMiddleware" not in src
+# Phase A0（2026-05-23）已下线：test_admin_lottery_router_unchanged_by_this_pr
+# （抽奖功能整体下线）
 
 
 def test_review_card_router_unchanged_by_this_pr():

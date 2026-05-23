@@ -28,10 +28,47 @@ from pytz import timezone as pytz_timezone
 from bot.config import config
 from bot.database import get_db
 
-# 复用 recent_views 中已经写好的时间格式化（无修改）
-from bot.services.recent_views import format_viewed_at_relative
-
 logger = logging.getLogger(__name__)
+
+
+# Phase A0（2026-05-23）：recent_views.py 已下线，原 format_viewed_at_relative
+# inline 到此处供 user_favorites 自用。
+def format_viewed_at_relative(
+    viewed_at: Optional[str],
+    now_local: Optional[datetime] = None,
+) -> str:
+    """把 ISO 时间格式化为「今天 HH:MM / 昨天 HH:MM / YYYY-MM-DD HH:MM」相对显示。
+
+    Args:
+        viewed_at: SQLite 存储的时间字符串（'YYYY-MM-DD HH:MM:SS' 等格式）
+        now_local: 用于"今天/昨天"判定的当前时间；None 时实时取
+    """
+    if not viewed_at:
+        return "N/A"
+    try:
+        # 兼容 'YYYY-MM-DD HH:MM:SS' 和 ISO 8601
+        dt = datetime.fromisoformat(viewed_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        try:
+            dt = datetime.strptime(viewed_at, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return str(viewed_at)
+    tz = pytz_timezone(config.timezone)
+    if dt.tzinfo is None:
+        # SQLite CURRENT_TIMESTAMP 默认 UTC
+        from datetime import timezone as _utc_tz
+        dt = dt.replace(tzinfo=_utc_tz.utc)
+    dt_local = dt.astimezone(tz)
+    if now_local is None:
+        now_local = datetime.now(tz)
+    today = now_local.date()
+    days_diff = (today - dt_local.date()).days
+    hhmm = dt_local.strftime("%H:%M")
+    if days_diff == 0:
+        return f"今天 {hhmm}"
+    if days_diff == 1:
+        return f"昨天 {hhmm}"
+    return dt_local.strftime("%Y-%m-%d %H:%M")
 
 
 MODE_ALL = "all"

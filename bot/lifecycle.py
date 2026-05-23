@@ -18,7 +18,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.config import config
 from bot.database import init_db
-from bot.scheduler.lottery_tasks import schedule_pending_lotteries
 from bot.scheduler.tasks import (
     schedule_checkin_reminder,
     schedule_daily_publish,
@@ -57,16 +56,8 @@ def register_lifecycle_handlers(
             f"日报: {daily_report_time}，周报: {weekly_report_time} ({config.timezone})"
         )
 
-        # Phase L.2：bot 重启时扫所有 scheduled/active 抽奖重注册定时任务（spec §8）
-        try:
-            lottery_summary = await schedule_pending_lotteries(scheduler, bot)
-            logger.info(
-                "抽奖任务扫描完成：发布 %d / 开奖 %d",
-                lottery_summary["scheduled_publish"],
-                lottery_summary["scheduled_draw"],
-            )
-        except Exception as e:
-            logger.warning("schedule_pending_lotteries 失败（不阻断启动）: %s", e)
+        # Phase A0（2026-05-23）已下线：抽奖任务扫描重注册
+        # 删除原因：见 docs/DELETED-FEATURES.md。
 
         me = await bot.get_me()
         logger.info(f"Bot 启动成功: @{me.username} (ID: {me.id})")

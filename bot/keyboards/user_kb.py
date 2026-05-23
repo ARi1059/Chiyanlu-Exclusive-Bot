@@ -19,9 +19,10 @@ from bot.utils.url import normalize_url
 #
 #   白名单严格限制——任意字符串都不会被当作有效 source 使用。
 
+# Phase A0（2026-05-23）：移除 "history" / "recent" 两个 source（功能下线）
 TEACHER_VIEW_SOURCES: frozenset[str] = frozenset({
     "main", "hot", "today", "filter",
-    "search", "history", "recent", "favorites", "similar",
+    "search", "favorites", "similar",
 })
 
 # (按钮文案, 返回 callback) — 详情页底部"返回 X"按钮配置
@@ -31,8 +32,6 @@ _BACK_BUTTON_BY_SOURCE: dict[str, tuple[str, str]] = {
     "today":     ("🔙 返回今日可约", "user:today"),
     "filter":    ("🔙 返回条件筛选", "user:filter"),
     "search":    ("🔙 返回搜索",     "user:search"),
-    "history":   ("🔙 返回搜索历史", "user:search_history"),
-    "recent":    ("🔙 返回最近看过", "user:recent"),
     "favorites": ("🔙 返回我的收藏", "user:favorites"),
     # similar 比较特殊：相似推荐点击其它老师后的详情页，本批不引入"返回相似"
     # 返回按钮——直接回退主菜单，避免造成跨老师对比链回环
@@ -79,27 +78,24 @@ def parse_teacher_view_callback(data: str) -> tuple[int, str]:
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单
+    """普通用户私聊主菜单（Phase A0 后 2026-05-23）
 
-    布局：
-        [🔎 找老师]                       ← UX-3 第一批新增独占首行（聚合 4 个找老师入口）
+    布局（已删 抽奖 / 搜索历史 / 最近看过 / 我的记录 后剩余 11 按钮 + 1 聚合）：
+        [🔎 找老师]                       ← 聚合 4 个找老师入口
         [📚 今天能约谁] [🎯 帮我推荐]
         [🔎 按条件找]   [🔥 热门推荐]
-        [⭐ 我的收藏]   [🕘 最近看过]
-        [🔍 直接搜索]   [💝 收藏开课]
-        [🔔 我的提醒]   [📜 搜索历史]
+        [⭐ 我的收藏]   [🔍 直接搜索]
+        [💝 收藏开课]   [🔔 我的提醒]
         [💰 我的积分]   [🧾 我的报销]
-        [📝 写评价]     [🎁 抽奖中心]
-        [📝 我的记录]                     ← Sprint 5 §7.3.2 新增独占一行（聚合 4 个个人记录入口）
+        [📝 写评价]
 
-    UX-3 第一批（2026-05）：新增「🔎 找老师」聚合入口（user:find）。
-    Sprint 5 §7.3.2（2026-05）：新增「📝 我的记录」聚合入口（user:my_records），
-    点击进入二级页（user_my_records_kb）含 我的评价 / 我的报销 / 积分流水 /
-    抽奖记录 四个入口。旧的一级入口（user:write_review / user:reimburse /
-    user:points / user:lottery）在主菜单原位**完全保留**，进入双跑观察期
-    （§7.4 实施纪律：不删旧入口）。
+    Phase A0 删除入口：
+        - 🕘 最近看过 (user:recent)
+        - 📜 搜索历史 (user:search_history)
+        - 🎁 抽奖中心 (user:lottery)
+        - 📝 我的记录 (user:my_records)
 
-    callback 复用既有命名空间。
+    后续 Plan A1 将进一步把主菜单收口到 6 按钮（4 行）。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -115,15 +111,11 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites"),
-            InlineKeyboardButton(text="🕘 最近看过", callback_data="user:recent"),
-        ],
-        [
             InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search"),
-            InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today"),
         ],
         [
+            InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today"),
             InlineKeyboardButton(text="🔔 我的提醒", callback_data="user:reminders"),
-            InlineKeyboardButton(text="📜 搜索历史", callback_data="user:search_history"),
         ],
         [
             InlineKeyboardButton(text="💰 我的积分", callback_data="user:points"),
@@ -131,105 +123,24 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📝 写评价", callback_data="user:write_review"),
-            InlineKeyboardButton(text="🎁 抽奖中心", callback_data="user:lottery"),
-        ],
-        [
-            InlineKeyboardButton(text="📝 我的记录", callback_data="user:my_records"),
         ],
     ])
 
 
-def user_my_records_kb() -> InlineKeyboardMarkup:
-    """Sprint 5 §7.3.2：「📝 我的记录」二级页 keyboard。
-
-    聚合 4 个个人记录入口（全部复用既有 callback，不引入新 callback）：
-
-        📝 我的评价   → user:write_review     评价主页（含 status / rating 过滤）
-        🧾 我的报销   → user:reimburse        报销申请与历史
-        💰 积分流水   → user:points           积分余额 + 最近流水
-        🎁 抽奖记录   → user:lottery:joined   抽奖中心「我已参与」tab
-
-    返回按钮：⬅️ 返回主菜单 → user:main
-
-    §7.4 实施纪律：本聚合页**仅承担导航**，不修改任何子页业务逻辑；
-    旧主菜单一级入口完全保留双跑期。
-    """
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📝 我的评价", callback_data="user:write_review"),
-            InlineKeyboardButton(text="🧾 我的报销", callback_data="user:reimburse"),
-        ],
-        [
-            InlineKeyboardButton(text="💰 积分流水", callback_data="user:points"),
-            InlineKeyboardButton(text="🎁 抽奖记录", callback_data="user:lottery:joined"),
-        ],
-        [
-            InlineKeyboardButton(text="⬅️ 返回主菜单", callback_data="user:main"),
-        ],
-    ])
-
-
-# ============ 抽奖中心（UX-6.1） ============
-
-
-def user_lottery_menu_kb(
-    *, active_count: int, joined_count: int, drawn_count: int,
-) -> InlineKeyboardMarkup:
-    """「🎁 抽奖中心」二级菜单（UX-6.1）。
-
-    三个 tab 入口（角标显示 count；count=0 时仍显示，避免按钮"消失"）：
-        - 🎲 进行中可参与   user:lottery:active
-        - 📋 我已参与       user:lottery:joined
-        - 🏆 已开奖记录     user:lottery:drawn
-    + 返回主菜单
-    """
-    def _badge(n: int) -> str:
-        return f" ({n})" if n > 0 else ""
-
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"🎲 进行中可参与{_badge(active_count)}",
-            callback_data="user:lottery:active",
-        )],
-        [InlineKeyboardButton(
-            text=f"📋 我已参与{_badge(joined_count)}",
-            callback_data="user:lottery:joined",
-        )],
-        [InlineKeyboardButton(
-            text=f"🏆 已开奖记录{_badge(drawn_count)}",
-            callback_data="user:lottery:drawn",
-        )],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
-    ])
-
-
-def user_lottery_back_kb() -> InlineKeyboardMarkup:
-    """抽奖中心 tab 页底部返回按钮（仅"返回抽奖中心"）。"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 返回抽奖中心", callback_data="user:lottery")],
-    ])
+# Phase A0（2026-05-23）已下线：user_my_records_kb / user_lottery_menu_kb / user_lottery_back_kb
+# 删除原因：见 docs/DELETED-FEATURES.md。
 
 
 def user_find_kb() -> InlineKeyboardMarkup:
-    """UX-3 第一批：「🔎 找老师」二级页 keyboard。
+    """「🔎 找老师」二级页 keyboard（Phase A0 后 2026-05-23）。
 
-    聚合 4 个找老师入口（仅复用既有 callback，不引入新 callback）：
+    聚合 3 个找老师入口（Phase A0 移除「📜 搜索历史」入口）：
 
         🔥 热门推荐   → user:hot              当前热门老师
         📚 今天能约谁 → user:today            今日可约老师
         🔎 按条件找   → user:filter           地区 / 价格 / 标签筛选
-        📜 搜索历史   → user:search_history   快速复用最近搜索
 
     返回按钮：⬅️ 返回主菜单 → user:main
-
-    刻意不收纳的入口（保留在主菜单一级位置）：
-        - ⭐ 我的收藏 / 🕘 最近看过       留存类，不应藏入二级
-        - 🔍 直接搜索                       最直觉入口，不应藏入二级
-        - 🎯 帮我推荐 / 💝 收藏开课         与找老师互补，本批不动
-        - 🔔 我的提醒                       个人通知类，与找老师无关
-
-    本 keyboard 仅做聚合视图，不引入新业务逻辑；4 个收纳 callback 仍由
-    各自原 handler 处理（user:hot / user:today / user:filter / user:search_history）。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -238,7 +149,6 @@ def user_find_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🔎 按条件找", callback_data="user:filter"),
-            InlineKeyboardButton(text="📜 搜索历史", callback_data="user:search_history"),
         ],
         [
             InlineKeyboardButton(text="⬅️ 返回主菜单", callback_data="user:main"),
@@ -427,10 +337,10 @@ def teacher_detail_kb(
         source=today     → "🔙 返回今日可约"     user:today
         source=filter    → "🔙 返回条件筛选"     user:filter
         source=search    → "🔙 返回搜索"         user:search
-        source=history   → "🔙 返回搜索历史"     user:search_history
-        source=recent    → "🔙 返回最近看过"     user:recent
         source=favorites → "🔙 返回我的收藏"     user:favorites
         source=similar / main / 未知 → "🔙 返回主菜单"  user:main
+
+    Phase A0（2026-05-23）：history / recent source 已下线。
 
     收藏 / 写评价 / 相似推荐等其它按钮 callback 完全不变。
     """
@@ -543,55 +453,8 @@ def teacher_detail_list_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def recent_views_kb(views: list[dict]) -> InlineKeyboardMarkup:
-    """最近浏览列表 keyboard（Phase 2）
-
-    每行一位老师，文案 `{display_name} · {region} · {price}`，点击进 teacher:view 详情页。
-    """
-    return teacher_detail_list_kb(
-        views,
-        per_row=1,
-        label_fn=lambda t: f"{t['display_name']} · {t['region']} · {t['price']}",
-    )
-
-
-def recent_views_rich_kb(items: list) -> InlineKeyboardMarkup:
-    """最近看过增强版 keyboard（用户留存 Sprint）
-
-    每位老师一行 [查看详情 #N（艺名）]，callback 复用 teacher:view:<id>。
-    末尾两行：刷新 / 返回主菜单。
-
-    Args:
-        items: list[RecentTeacherViewItem] —— 用 list 类型注释而不绑 service 内
-               dataclass，避免 keyboards 反向依赖 services。
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    for i, it in enumerate(items, start=1):
-        # 兼容 dict 与 dataclass —— attrgetter 失败时回退到 dict.get
-        teacher_id = getattr(it, "teacher_id", None) or it.get("teacher_id")
-        display_name = getattr(it, "display_name", None) or it.get("display_name") or "老师"
-        label = f"📋 #{i} {display_name}"
-        if len(label) > 40:
-            label = label[:39] + "…"
-        rows.append([InlineKeyboardButton(
-            text=label,
-            # UX-3 第二批：附带 from:recent，详情页"返回"指向最近看过
-            callback_data=format_teacher_view_callback(teacher_id, "recent"),
-        )])
-    rows.append([
-        InlineKeyboardButton(text="🔄 刷新", callback_data="user:recent:refresh"),
-        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def recent_views_empty_kb() -> InlineKeyboardMarkup:
-    """最近看过为空时的引导 keyboard"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
-        [InlineKeyboardButton(text="🔎 条件搜索", callback_data="user:filter")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
-    ])
+# Phase A0（2026-05-23）已下线：recent_views_kb / recent_views_rich_kb / recent_views_empty_kb
+# 删除原因：见 docs/DELETED-FEATURES.md（最近看过功能整体下线）。
 
 
 def favorites_rich_kb(items: list, mode: str = "all") -> InlineKeyboardMarkup:
@@ -657,48 +520,19 @@ def favorites_rich_kb(items: list, mode: str = "all") -> InlineKeyboardMarkup:
 
 
 def favorites_empty_kb() -> InlineKeyboardMarkup:
-    """收藏列表为空时的引导 keyboard"""
+    """收藏列表为空时的引导 keyboard
+
+    Phase A0（2026-05-23）：移除「👀 最近看过」入口。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
         [InlineKeyboardButton(text="🔎 条件搜索", callback_data="user:filter")],
-        [InlineKeyboardButton(text="👀 最近看过", callback_data="user:recent")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
     ])
 
 
-def search_history_rich_kb(queries: list[str]) -> InlineKeyboardMarkup:
-    """搜索历史增强版 keyboard。
-
-    保留现有 FSM-state-indexed 点选机制（避开 callback_data 长度限制）：
-    每个历史词渲染为 [关键词] 按钮，callback_data 为 user:search_history:pick:<idx>，
-    handler (user_history.cb_search_history_pick) 不变。
-
-    末尾两行：
-        [🔄 刷新]
-        [🔙 返回主菜单]
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    for i, q in enumerate(queries):
-        # Telegram inline button 文案上限 64 字节，超长截断
-        label = q if len(q) <= 30 else q[:29] + "…"
-        rows.append([InlineKeyboardButton(
-            text=label,
-            callback_data=f"user:search_history:pick:{i}",
-        )])
-    rows.append([
-        InlineKeyboardButton(text="🔄 刷新", callback_data="user:search_history:refresh"),
-        InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def search_history_empty_kb() -> InlineKeyboardMarkup:
-    """搜索历史为空时的引导 keyboard"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔎 条件筛选", callback_data="user:filter")],
-        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
-    ])
+# Phase A0（2026-05-23）已下线：search_history_rich_kb / search_history_empty_kb
+# 删除原因：见 docs/DELETED-FEATURES.md（搜索历史功能整体下线）。
 
 
 # ============ 搜索失败推荐 / 搜索结果（Phase 2） ============

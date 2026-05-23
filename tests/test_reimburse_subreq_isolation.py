@@ -116,18 +116,7 @@ def test_hot_teachers_does_not_call_reimburse_subreq():
 
 
 # ============ 21. 抽奖 不触发 ============
-
-
-def test_lottery_entry_does_not_call_reimburse_subreq():
-    import bot.handlers.lottery_entry as mod
-    src = _src(mod)
-    assert "check_user_subscribed_for_reimburse" not in src
-
-
-def test_admin_lottery_does_not_call_reimburse_subreq():
-    import bot.handlers.admin_lottery as mod
-    src = _src(mod)
-    assert "check_user_subscribed_for_reimburse" not in src
+# Phase A0（2026-05-23）已下线：抽奖功能整体下线，相关 isolation tests 不再适用
 
 
 # ============ 22. 评价提交主体（除 yes/recheck 外）不触发 ============
@@ -195,10 +184,7 @@ def test_point_transaction_helpers_unchanged():
     assert callable(get_user_total_points)
 
 
-def test_lottery_helpers_unchanged():
-    from bot.database import get_lottery, list_lotteries_by_status
-    assert callable(get_lottery)
-    assert callable(list_lotteries_by_status)
+# Phase A0（2026-05-23）已下线：test_lottery_helpers_unchanged
 
 
 def test_create_reimbursement_unchanged():

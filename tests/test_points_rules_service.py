@@ -54,14 +54,15 @@ def test_review_custom_constants_re_exported():
 
 
 def test_reason_catalog_covers_known_reasons():
-    """REASON_CATALOG 应覆盖 POLICY §3 表中全部 5 个 reason。"""
+    """REASON_CATALOG 应覆盖 POLICY §3 表中 reason。
+
+    Phase A0（2026-05-23）：移除 lottery_entry / lottery_refund（抽奖功能整体下线）。
+    """
     reasons = {entry["reason"] for entry in REASON_CATALOG}
     assert reasons == {
         "review_approved",
         "admin_grant",
         "admin_revoke",
-        "lottery_entry",
-        "lottery_refund",
     }
 
 
@@ -140,27 +141,26 @@ def _full_snapshot(**overrides) -> PointsRulesSnapshot:
 
 
 def test_render_contains_all_section_headers():
+    """Phase A0（2026-05-23）：移除「抽奖积分」section（功能整体下线）。"""
     text = render_points_rules(_full_snapshot())
     for header in (
         "📜 积分规则一览",
         "积分流水 reason 取值",
         "评价 / 报告审核加分套餐",
         "管理员手动加扣分",
-        "抽奖积分",
         "报销最低积分门槛",
         "余额一致性",
     ):
         assert header in text
 
 
-def test_render_includes_all_five_reasons():
+def test_render_includes_all_reasons():
+    """Phase A0（2026-05-23）：移除 lottery_entry / lottery_refund 两个 reason。"""
     text = render_points_rules(_full_snapshot())
     for reason in (
         "review_approved",
         "admin_grant",
         "admin_revoke",
-        "lottery_entry",
-        "lottery_refund",
     ):
         assert reason in text
 
@@ -196,12 +196,6 @@ def test_render_warns_about_no_balance_check_on_manual_revoke():
     """POLICY §6.4 已知问题：手动扣分不校验余额。规则页必须明示。"""
     text = render_points_rules(_full_snapshot())
     assert "手动扣分不校验余额" in text or "可能产生负余额" in text
-
-
-def test_render_lottery_section_marks_atomicity_risk():
-    """POLICY §5.1 已知风险：扣分与 entry 非原子。规则页应明示。"""
-    text = render_points_rules(_full_snapshot())
-    assert "非原子" in text
 
 
 def test_render_cross_references_reimburse_rules_page():

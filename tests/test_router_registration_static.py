@@ -17,7 +17,7 @@ _ROUTERS_PY = os.path.join(_PROJECT_ROOT, "bot", "routers.py")
 
 
 def _read() -> str:
-    with open(_ROUTERS_PY) as f:
+    with open(_ROUTERS_PY, encoding="utf-8") as f:
         return f.read()
 
 
@@ -90,6 +90,7 @@ def test_critical_pairwise_orderings():
     calls = _include_router_calls(_read())
     idx = {name: i for i, name in enumerate(calls)}
 
+    # Phase A0（2026-05-23）：移除 admin_lottery_router / lottery_entry_router 顺序对
     pairs = [
         # callback 命名空间相关
         ("favorite_router", "teacher_detail_router"),
@@ -98,7 +99,6 @@ def test_critical_pairwise_orderings():
         ("admin_review_router", "rreview_admin_router"),
         ("rreview_admin_router", "admin_panel_router"),
         ("admin_panel_router", "admin_points_router"),
-        ("admin_panel_router", "admin_lottery_router"),
         ("admin_panel_router", "subreq_admin_router"),
         # teacher_profile 必须在 teacher_flow 之前（避免 teacher_flow 通用 handler 抢 FSM）
         ("teacher_profile_router", "teacher_flow_router"),
@@ -108,7 +108,6 @@ def test_critical_pairwise_orderings():
         ("review_card_router", "review_submit_router"),
         # 私聊消息匹配在 keyword 之前
         ("discussion_anchor_router", "keyword_router"),
-        ("lottery_entry_router", "keyword_router"),
         ("user_search_router", "keyword_router"),
     ]
     for before, after in pairs:
@@ -120,7 +119,10 @@ def test_critical_pairwise_orderings():
 
 
 def test_subsystem_routers_all_registered():
-    """关键业务子系统的 router 都必须被注册（防止误删）"""
+    """关键业务子系统的 router 都必须被注册（防止误删）
+
+    Phase A0（2026-05-23）：移除抽奖 / 老师今日状态相关 router。
+    """
     calls = set(_include_router_calls(_read()))
     required = {
         # 评价 / 报告
@@ -132,9 +134,6 @@ def test_subsystem_routers_all_registered():
         # 报销
         "admin_reimburse_router",
         "user_reimburse_router",
-        # 抽奖
-        "admin_lottery_router",
-        "lottery_entry_router",
         # 积分
         "admin_points_router",
         "user_points_router",
@@ -152,15 +151,11 @@ def test_subsystem_routers_all_registered():
 
 
 def test_total_router_count_matches_pre_split():
-    """拆分前 main.py 共 33 个 include_router 调用；
-    2026-05 新增 reimburse_subreq_admin_router(34) + reimburse_settings_admin_router(35)；
-    UX-6.1 新增 user_lottery_router(36)；
-    UX-9.1 新增 admin_keyword_router(37)。
-
-    本测试是回归网，防止有人不小心删了 router。
+    """Phase A0（2026-05-23）：从 37 个 router 移除 4 个（admin_lottery /
+    user_lottery / lottery_entry / teacher_daily_status），剩余 33 个。
     """
     calls = _include_router_calls(_read())
-    assert len(calls) == 37, f"期望 37 个 include_router，实际 {len(calls)}"
+    assert len(calls) == 33, f"期望 33 个 include_router，实际 {len(calls)}"
 
 
 def test_router_names_are_unique():

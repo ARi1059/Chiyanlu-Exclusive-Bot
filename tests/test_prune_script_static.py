@@ -38,7 +38,7 @@ def test_prune_script_is_executable():
 
 
 def test_prune_script_has_bash_shebang():
-    with open(_PRUNE) as f:
+    with open(_PRUNE, encoding="utf-8") as f:
         first = f.readline()
     assert first.startswith("#!"), "missing shebang"
     assert "bash" in first, f"shebang 应使用 bash，得到：{first.strip()!r}"
@@ -48,7 +48,7 @@ def test_prune_script_has_bash_shebang():
 
 
 def _read_script() -> str:
-    with open(_PRUNE) as f:
+    with open(_PRUNE, encoding="utf-8") as f:
         return f.read()
 
 

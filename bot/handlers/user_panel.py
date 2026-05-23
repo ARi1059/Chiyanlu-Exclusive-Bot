@@ -1,11 +1,18 @@
-"""普通用户私聊菜单的 callback handlers（v2 §2.5 C1 + Phase 2 详情页接入）
+"""普通用户私聊菜单的 callback handlers（Phase A0 后 2026-05-23）
 
-主菜单 5 个按钮:
-    📚 user:today      → 今日所有开课老师（点击老师进入 teacher:view 详情页）
-    ⭐ user:favorites  → 我的收藏（增强版：含今日可约/未签计数 + today/all 切换）
-    💝 user:fav_today  → 收藏 ∩ 已签到（老师按钮 → 详情页）
-    🕘 user:recent     → 最近看过（Phase 2 新增；handler 在 teacher_detail.py）
-    🔍 user:search     → 进入搜索 FSM（user_search.py 接管）
+主菜单按钮（Phase A0 删除 抽奖 / 搜索历史 / 最近看过 / 我的记录 后剩余）:
+    🔎 user:find          → 找老师二级页（聚合 4 个找老师入口）
+    📚 user:today         → 今日所有开课老师
+    🎯 user:recommend     → 个性化推荐
+    🔎 user:filter        → 按条件找
+    🔥 user:hot           → 热门推荐
+    ⭐ user:favorites     → 我的收藏（含 today/all 切换）
+    💝 user:fav_today     → 收藏 ∩ 已签到（Phase A4 将并入 user:favorites toggle）
+    🔍 user:search        → 进入搜索 FSM
+    🔔 user:reminders     → 我的提醒（Phase A3 将并入 user:favorites 每条 toggle）
+    💰 user:points        → 我的积分
+    🧾 user:reimburse     → 我的报销
+    📝 user:write_review  → 写评价
 
 user:main → 返回主菜单（通用按钮）
 """
@@ -28,7 +35,6 @@ from bot.database import (
 from bot.keyboards.user_kb import (
     user_main_menu_kb,
     user_find_kb,
-    user_my_records_kb,
     back_to_user_main_kb,
     search_cancel_kb,
     favorites_empty_kb,
@@ -106,32 +112,8 @@ async def cb_user_find(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============ 📝 我的记录 二级页（Sprint 5 §7.3.2） ============
-
-
-@router.callback_query(F.data == "user:my_records")
-async def cb_user_my_records(callback: types.CallbackQuery, state: FSMContext):
-    """📝 我的记录 二级页：聚合 4 个个人记录入口
-
-    本 handler 仅渲染聚合页；4 个子入口的 callback（user:write_review /
-    user:reimburse / user:points / user:lottery:joined）含义未变，仍由各自
-    原 handler 处理。Sprint 5 §7.3.2 + §7.4 实施纪律：旧主菜单一级入口
-    保留双跑期，不删除。
-    """
-    await state.clear()
-    text = (
-        "📝 我的记录\n\n"
-        "请选择查看类型：\n\n"
-        "📝 我的评价：写过的评价 / 待审核 / 通过历史\n"
-        "🧾 我的报销：报销申请与处理进度\n"
-        "💰 积分流水：余额与最近积分变动明细\n"
-        "🎁 抽奖记录：参与过的抽奖与中奖情况"
-    )
-    try:
-        await callback.message.edit_text(text, reply_markup=user_my_records_kb())
-    except Exception:
-        await callback.message.answer(text, reply_markup=user_my_records_kb())
-    await callback.answer()
+# Phase A0（2026-05-23）已下线：cb_user_my_records（我的记录聚合菜单）
+# 删除原因：见 docs/DELETED-FEATURES.md。
 
 
 # ============ 🧭 新手引导 callbacks（Phase 7.1） ============
@@ -341,10 +323,12 @@ async def cb_favorites_rm(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "user:fav_today")
 async def cb_fav_today(callback: types.CallbackQuery):
-    """收藏老师中当天已签到的（扁平列表 + 隐藏 full 状态）"""
+    """收藏老师中当天已签到的（扁平列表）
+
+    Phase A0（2026-05-23）：teacher_daily_status 已下线，不再按 daily_status='full' 过滤。
+    """
     today = _today_str()
     teachers = await list_user_favorites_signed_in(callback.from_user.id, today)
-    teachers = [t for t in teachers if (t.get("daily_status") or "") != "full"]
     if not teachers:
         await callback.message.edit_text(
             f"💝 收藏开课 · {today}\n\n你的收藏老师今日均未开课。",

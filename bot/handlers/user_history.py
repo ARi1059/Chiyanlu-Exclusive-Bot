@@ -1,43 +1,30 @@
-"""Phase 7.3 §二/三/四的复访入口
+"""用户复访入口（Phase A0 已删除 search_history / continue_last）
 
 Callbacks:
-    user:search_history             → 展示用户最近 10 次搜索词
-    user:search_history:pick:<idx>  → 从 FSM state 中读真实 query 回放
-    user:continue_last              → 打开用户上次看过的老师详情页
     user:reminders                  → 展示"我的开课提醒"（= 收藏 + notify_enabled）
     user:reminders:enable_notify    → 一键开启通知
 
-设计要点：
-    - 搜索词可能含中文长字符串，不直接塞 callback_data，用 FSM state 索引映射
-    - 用 SearchHistoryStates.waiting_pick 与 FilterStates 隔离，互不影响
-    - 我的提醒第一版 = 我的收藏 + 用户级 notify_enabled 状态
+Phase A0（2026-05-23）变更：
+    - 删除 search_history 全套（user:search_history / :pick / :refresh）
+    - 删除 continue_last（user:continue_last，依赖已删的 user_teacher_views 表）
+    - 简化 reminders 中 _short_today_status：移除对 get_teacher_daily_status 的依赖
 """
 
 import logging
 from datetime import datetime
 
 from aiogram import F, Router, types
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pytz import timezone
 
 from bot.config import config
 from bot.database import (
-    get_teacher,
-    get_teacher_daily_status,
     get_user,
     is_checked_in,
-    list_recent_teacher_views,
     list_user_favorites,
     set_user_notify_enabled,
 )
-from bot.keyboards.user_kb import (
-    search_history_empty_kb,
-    search_history_rich_kb,
-    user_main_menu_kb,
-)
-from bot.states.user_states import SearchHistoryStates
 
 logger = logging.getLogger(__name__)
 
@@ -78,190 +65,6 @@ async def _edit_or_send(
         await callback.message.answer(text, reply_markup=kb)
 
 
-def _back_to_main_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
-    ])
-
-
-# ============ 搜索历史（Phase 7.3 §二，用户留存增强：富数据展示 + 刷新） ============
-
-
-async def _render_search_history(
-    user_id: int,
-    state: FSMContext,
-) -> tuple[str, InlineKeyboardMarkup, list[str]]:
-    """生成搜索历史的文本 + keyboard + 用于 FSM 索引的 query 列表。
-
-    被 user:search_history 与 user:search_history:refresh 共用。
-    """
-    from bot.services.search_history import (
-        get_user_search_history_detailed,
-        render_search_history,
-    )
-    try:
-        items = await get_user_search_history_detailed(user_id, limit=10)
-    except Exception as e:
-        logger.warning(
-            "get_user_search_history_detailed 失败 user=%s: %s", user_id, e,
-        )
-        items = []
-
-    now_local = datetime.now(_tz)
-    text = render_search_history(items, generated_at=now_local, now_local=now_local)
-    if not items:
-        return text, search_history_empty_kb(), []
-    queries = [it.query for it in items]
-    return text, search_history_rich_kb(queries), queries
-
-
-@router.callback_query(F.data == "user:search_history")
-async def cb_search_history(callback: types.CallbackQuery, state: FSMContext):
-    """打开搜索历史页：读 user_events → 富数据渲染 → FSM 暂存原始 queries"""
-    if callback.message and callback.message.chat.type != "private":
-        await callback.answer("仅在私聊中可用", show_alert=True)
-        return
-
-    user_id = callback.from_user.id
-    text, kb, queries = await _render_search_history(user_id, state)
-
-    if not queries:
-        await state.clear()
-        await _edit_or_send(callback, text, kb)
-        await callback.answer()
-        await _safe_log_event(user_id, "user_search_history_open", {"count": 0})
-        return
-
-    # FSM 索引点选机制保持不变（cb_search_history_pick 仍可工作）
-    await state.set_state(SearchHistoryStates.waiting_pick)
-    await state.update_data(queries=queries)
-
-    await _edit_or_send(callback, text, kb)
-    await callback.answer()
-    await _safe_log_event(user_id, "user_search_history_open", {"count": len(queries)})
-
-
-@router.callback_query(F.data == "user:search_history:refresh")
-async def cb_search_history_refresh(callback: types.CallbackQuery, state: FSMContext):
-    """刷新搜索历史（重新拉取 + 重绘 + 刷新 FSM queries 索引）。"""
-    if callback.message and callback.message.chat.type != "private":
-        await callback.answer("仅在私聊中可用", show_alert=True)
-        return
-
-    user_id = callback.from_user.id
-    text, kb, queries = await _render_search_history(user_id, state)
-
-    # 刷新后必须同步更新 FSM 中的 queries 索引，否则 pick:<idx> 会取到旧序列
-    if queries:
-        await state.set_state(SearchHistoryStates.waiting_pick)
-        await state.update_data(queries=queries)
-    else:
-        await state.clear()
-
-    try:
-        await _edit_or_send(callback, text, kb)
-    except Exception:
-        pass
-    await callback.answer("已刷新")
-
-
-@router.callback_query(F.data.startswith("user:search_history:pick:"))
-async def cb_search_history_pick(callback: types.CallbackQuery, state: FSMContext):
-    """从 FSM state 中取真实 query，调 user_search._execute_search 回放"""
-    raw = callback.data[len("user:search_history:pick:"):]
-    try:
-        idx = int(raw)
-    except ValueError:
-        await callback.answer("⚠️ 无效操作")
-        return
-
-    data = await state.get_data()
-    queries = data.get("queries") or []
-    if not isinstance(queries, list) or idx < 0 or idx >= len(queries):
-        await callback.answer("搜索记录已失效，请重新打开", show_alert=True)
-        await state.clear()
-        return
-
-    query = str(queries[idx])
-    await callback.answer(f"🔍 {query}")
-    await _safe_log_event(
-        callback.from_user.id,
-        "user_search_history_pick",
-        {"query": query, "index": idx},
-    )
-
-    # 调用 user_search 的共享搜索逻辑（结果通过 message.answer 新发）
-    try:
-        from bot.handlers.user_search import _execute_search
-    except ImportError:
-        await callback.message.answer(
-            "搜索模块不可用，请直接点「🔍 直接搜索」",
-            reply_markup=_back_to_main_kb(),
-        )
-        return
-
-    try:
-        await _execute_search(callback.from_user.id, query, callback.message)
-    except Exception as e:
-        logger.warning("回放搜索失败 user=%s query=%s: %s",
-                       callback.from_user.id, query, e)
-        await callback.message.answer(
-            "搜索执行失败，请稍后再试",
-            reply_markup=_back_to_main_kb(),
-        )
-
-
-@router.message(SearchHistoryStates.waiting_pick, Command("cancel"))
-async def cancel_search_history(message: types.Message, state: FSMContext):
-    """搜索历史页 /cancel 兜底"""
-    await state.clear()
-    await message.answer("已退出搜索历史。", reply_markup=user_main_menu_kb())
-
-
-# ============ 继续上次浏览（Phase 7.3 §三） ============
-
-
-@router.callback_query(F.data == "user:continue_last")
-async def cb_continue_last(callback: types.CallbackQuery, state: FSMContext):
-    """打开用户最近浏览过的老师详情页
-
-    在 callback 时点重新查询 last view，避免依赖陈旧的 message_id。
-    """
-    if callback.message and callback.message.chat.type != "private":
-        await callback.answer("仅在私聊中可用", show_alert=True)
-        return
-
-    user_id = callback.from_user.id
-    try:
-        views = await list_recent_teacher_views(user_id, limit=1)
-    except Exception as e:
-        logger.warning("list_recent_teacher_views 失败 user=%s: %s", user_id, e)
-        views = []
-
-    if not views:
-        await callback.answer("最近浏览记录已被清除")
-        await _edit_or_send(
-            callback,
-            "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？",
-            user_main_menu_kb(),
-        )
-        return
-
-    teacher_id = views[0]["user_id"]
-    await _safe_log_event(user_id, "user_continue_last", {"teacher_id": teacher_id})
-    await state.clear()
-
-    # 复用 teacher_detail._render_detail 渲染（避免重复实现 UI 拼装）
-    try:
-        from bot.handlers.teacher_detail import _render_detail
-        await _render_detail(callback, teacher_id, record_view=False)
-        await callback.answer()
-    except Exception as e:
-        logger.warning("渲染上次浏览详情页失败 user=%s tid=%s: %s",
-                       user_id, teacher_id, e)
-        await callback.answer("打开失败，请重试", show_alert=True)
-
-
 # ============ 我的提醒（Phase 7.3 §四） ============
 
 
@@ -300,16 +103,7 @@ def _reminders_empty_kb() -> InlineKeyboardMarkup:
 
 
 async def _short_today_status(teacher_id: int, today: str) -> str:
-    """单个老师的今日状态短文案（轻量查询，仅供 reminders 列表使用）"""
-    try:
-        daily = await get_teacher_daily_status(teacher_id, today)
-    except Exception:
-        daily = None
-    status = (daily or {}).get("status") if daily else None
-    if status == "unavailable":
-        return "今日已取消"
-    if status == "full":
-        return "今日已满"
+    """单个老师的今日状态短文案（Phase A0：移除 daily_status 依赖）"""
     try:
         signed = await is_checked_in(teacher_id, today)
     except Exception:

@@ -135,27 +135,8 @@ async def get_admin_overview_stats() -> AdminOverviewStats:
             "SELECT COUNT(*) FROM reimbursements WHERE status = 'queued'",
         )
 
-        # ---- 抽奖 ----
-        stats.active_lotteries = await _scalar_int(
-            db,
-            "SELECT COUNT(*) FROM lotteries WHERE status = 'active'",
-        )
-        stats.scheduled_lotteries = await _scalar_int(
-            db,
-            "SELECT COUNT(*) FROM lotteries WHERE status = 'scheduled'",
-        )
-        # draw_at 是 TEXT，存储格式为 ISO 字符串；与同样 TEXT 的 now()
-        # 字典序比较即可，不需要解析。失败时回退 active 总数。
-        now_iso = _now_local().strftime("%Y-%m-%d %H:%M:%S")
-        waiting = await _scalar_int(
-            db,
-            "SELECT COUNT(*) FROM lotteries "
-            "WHERE status = 'active' AND draw_at > ?",
-            (now_iso,),
-        )
-        if waiting is None:
-            waiting = stats.active_lotteries
-        stats.active_lotteries_waiting_draw = waiting
+        # Phase A0（2026-05-23）已下线：抽奖统计（active_lotteries / scheduled_lotteries /
+        # active_lotteries_waiting_draw）。AdminOverviewStats 字段保留为 None 兼容旧 caller。
 
         # ---- 系统：schema_migrations 失败迁移 ----
         # 表不存在 / 字段差异都会被 _scalar_int 吞成 None；
@@ -196,6 +177,7 @@ def render_admin_overview(stats: AdminOverviewStats) -> str:
     else:
         ts_str = "N/A"
 
+    # Phase A0（2026-05-23）：移除「抽奖」section（功能整体下线）
     lines = [
         "📊 运营总览",
         "",
@@ -209,11 +191,6 @@ def render_admin_overview(stats: AdminOverviewStats) -> str:
         f"• 待审核评价：{_fmt(stats.pending_reviews)} 条",
         f"• 待审核报销：{_fmt(stats.pending_reimbursements)} 条",
         f"• queued 报销名单：{_fmt(stats.queued_reimbursements)} 条",
-        "",
-        "抽奖",
-        f"• 进行中抽奖：{_fmt(stats.active_lotteries)} 个",
-        f"• 待发布抽奖：{_fmt(stats.scheduled_lotteries)} 个",
-        f"• 待开奖抽奖：{_fmt(stats.active_lotteries_waiting_draw)} 个",
         "",
         "系统",
         f"• schema_migrations 失败迁移："

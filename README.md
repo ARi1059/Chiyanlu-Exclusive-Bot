@@ -30,10 +30,12 @@
 
 | 角色 | 主要入口 | 能做什么 |
 |---|---|---|
-| **普通用户** | 私聊 `/start`、群组关键词、群组按钮 | 浏览每日开课、私聊主菜单（推荐 / 筛选 / 收藏 / 提醒 / 最近看过 / 搜索历史 / 积分 / 报销 / 写评价）、群组直接搜艺名/地区/价格/标签、领抽奖、写评价并申请报销 |
-| **老师** | 私聊发送「签到」、`/me` 自助菜单 | 每日签到、设置今日状态（取消/已满）、查看个人统计、自助修改部分档案字段、上传/管理相册 |
-| **管理员** | `/admin` 后台 | 老师管理、签到/发布概览、关键词测试、热门推荐管理、报销审批、抽奖管理、报表查看 |
-| **超级管理员** | `/admin`（含超管专属入口） | 配置发布频道/讨论群/必关订阅、管理管理员、调整系统设置、积分加扣分、超管报告审核（rreview）、报销池配置、抽奖创建/开奖、发布模板管理、报表设置、报销重置 voucher |
+| **普通用户** | 私聊 `/start`、群组关键词、群组按钮 | 浏览每日开课、私聊主菜单（推荐 / 筛选 / 收藏 / 提醒 / 积分 / 报销 / 写评价）、群组直接搜艺名/地区/价格/标签、写评价并申请报销 |
+| **老师** | 私聊发送「签到」、`/me` 自助菜单 | 每日签到、查看个人统计、自助修改部分档案字段、上传/管理相册 |
+| **管理员** | `/admin` 后台 | 老师管理、签到/发布概览、关键词测试、热门推荐管理、报销审批、报表查看 |
+| **超级管理员** | `/admin`（含超管专属入口） | 配置发布频道/讨论群/必关订阅、管理管理员、调整系统设置、积分加扣分、超管报告审核（rreview）、报销池配置、发布模板管理、报表设置、报销重置 voucher |
+
+> **Phase A0（2026-05-23）已下线**：抽奖系统、搜索历史、最近看过、我的记录聚合、老师今日状态。详见 [`docs/DELETED-FEATURES.md`](docs/DELETED-FEATURES.md)。
 
 ---
 
@@ -55,20 +57,21 @@
 - 不区分大小写，无匹配静默跳过
 - 冷却时间防刷屏；群组级别的快捷菜单按钮（今日开课、热门、搜索）
 
-### 3. 用户私聊中台（主菜单 13 项）
+### 3. 用户私聊中台（Phase A0 后主菜单 11 项 + 1 聚合）
 
+**Phase A0（2026-05-23）已下线**：🕘 最近看过 / 📜 搜索历史 / 🎁 抽奖中心 / 📝 我的记录聚合。
+
+- **🔎 找老师**（聚合页，含 热门 / 今天 / 按条件 / 帮我推荐 4 项）
 - **📚 今天能约谁**：当日已开课老师快捷列表
 - **🎯 帮我推荐 / 🔥 热门推荐**：基于热度分 + 个性化标签
 - **🔎 按条件找**：地区 × 价格 × 标签 多步筛选 FSM
 - **⭐ 我的收藏**：列表分页，可直接进详情页或取消收藏
-- **🕘 最近看过**：浏览历史
 - **🔍 直接搜索**：艺名/地区/价格 精确/模糊查
-- **💝 收藏开课**：仅显示「收藏过且今日已签到」的老师
-- **🔔 我的提醒**：管理老师开课通知订阅
-- **📜 搜索历史**：最近搜索词快捷回放
+- **💝 收藏开课**：仅显示「收藏过且今日已签到」的老师（Plan A4 将并入收藏视图切换）
+- **🔔 我的提醒**：管理老师开课通知订阅（Plan A3 将并入收藏每条 toggle）
 - **💰 我的积分**：积分总览 + 明细分页
 - **🧾 我的报销**：报销总览 + 月池/周限额 + 明细分页
-- **📝 写评价**：进入「个人评价主页」（统计 + 筛选 + 自己历史评价分页 + 写新评价入口）
+- **📝 写评价**：进入「个人评价主页」
 
 ### 4. 老师详情页
 
@@ -106,18 +109,15 @@
 - 超管审批：通过 / 驳回（必填原因） / 重置某用户周 voucher
 - 用户侧「🧾 我的报销」总览 + 明细分页 + 状态显示（待审/已通过/已驳回/已取消/已录入名单）
 
-### 9. 抽奖系统
+### 9. ~~抽奖系统~~（Phase A0 已下线，2026-05-23）
 
-- 超管 10 步 FSM 创建抽奖：名称 / 描述 / 封面 / 入场方式（button / code） / 奖品数量 / 奖品描述 / 必关频道 / 发布模式（立即/定时） / 开奖时间 / 入场积分门票
-- 触发方式：button（频道海报按钮）或 code（私聊口令）
-- 入场扣积分：用户取消时自动退积分
-- 调度：APScheduler 定时发布 + 定时开奖（bot 重启自动重注册）
-- 客服链接配置（中奖后跳转领奖）
-- 抽奖编辑 / 提前开奖 / 取消并退款
+抽奖系统于 Phase A0 整体下线。详见 [`docs/DELETED-FEATURES.md`](docs/DELETED-FEATURES.md)。
+DB 表 `lotteries` / `lottery_entries` 保留但已无写入；historical point_transactions
+保留 reason='lottery_entry'/'lottery_refund' 历史数据。
 
 ### 10. 必关订阅校验
 
-- 写评价 / 抽奖入场前校验用户已加入指定频道/群组
+- 写评价前校验用户已加入指定频道/群组
 - 超管管理 active 列表（含友好名称 + 邀请链接）
 - bot 异常（频道不存在 / bot 没权限）自动 skip + warning
 
@@ -132,7 +132,7 @@
 
 ### 13. 日报 / 周报
 
-- 调度器定时生成统计：当日签到数 / 发布老师数 / 新增评价数 / 报销/抽奖动作数等
+- 调度器定时生成统计：当日签到数 / 发布老师数 / 新增评价数 / 报销动作数等
 - 推送到指定 chat_id
 
 ### 14. 审计日志
@@ -142,13 +142,11 @@
 
 ### 15. 管理员运营看板二级菜单（admin:dashboard）
 
-- 后台主菜单按钮「📊 运营看板」入口（超管 / 管理员可见），收纳三个只读看板：
+- 后台主菜单按钮「📊 运营看板」入口（超管 / 管理员可见），收纳两个只读看板（**Phase A0 移除抽奖状态**）：
   - 📊 运营总览 → `admin:overview`
   - 💰 报销池状态 → `admin:reimbursement_pool`
-  - 🎲 抽奖状态 → `admin:lottery_status`
-- 与主菜单中「📈 数据分析」(callback `dashboard:enter`，旧 Phase 1 user_events + 审计 + 7 日窗口看板) 区分命名：本入口聚焦运营状态，数据分析入口聚焦事件 / 审计 / 历史分析
-- 仅菜单结构调整：原一级菜单中三个独立按钮下沉至二级页，三个子看板的统计逻辑、callback 含义、permission 边界、刷新行为全部保持不变
-- 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) 的 `cb_admin_dashboard` + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py) 的 `admin_dashboard_kb()`
+- 与主菜单中「📈 数据分析」(callback `dashboard:enter`) 区分命名：本入口聚焦运营状态，数据分析入口聚焦事件 / 审计 / 历史分析
+- 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py)
 
 ### 16. 管理员审核处理二级菜单（admin:review_tasks）
 
@@ -163,11 +161,8 @@
 
 ### 17. 管理员活动运营二级菜单（admin:operations）
 
-- 后台主菜单按钮「🎲 活动运营」入口（**仅超管可见**，两个子入口均为超管功能），收纳：
-  - 🎲 抽奖管理 → `admin:lottery`（仅超管，handler 在 `admin_lottery.py`）
-  - 💰 积分管理 → `admin:points`（仅超管，handler 在 `admin_points.py`）
-- 仅菜单结构调整：两个 callback 含义、handler、超管权限边界全部保持不变；老消息中的旧 inline button 仍可使用
-- 推广来源 / 渠道统计（`admin:promo_links` / `admin:source_stats`）已于 Phase 4 下线，本菜单不重新启用
+- 后台主菜单按钮「💰 活动运营」入口（**仅超管可见**）。**Phase A0 移除「🎲 抽奖管理」**，仅剩：
+  - 💰 积分管理 → `admin:points`（仅超管）
 - 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) 的 `cb_admin_operations` + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py) 的 `admin_operations_kb()`
 
 ### 18. 管理员系统配置二级菜单（admin:settings）
@@ -186,13 +181,11 @@
 
 ### 19. 管理员老师管理二级菜单（admin:teachers）
 
-- 后台主菜单按钮「👩‍🏫 老师管理」入口（所有 admin 可见，原 `menu:teacher` 一级按钮 callback 升级为 `admin:teachers`，文案保留），收纳：
-  - 👥 老师列表与启停 → `menu:teacher`（既有子菜单，含老师档案管理 / 启停 / 老师列表）
-  - 🔥 热门推荐 → `admin:hot_manage`（handler 在 `hot_teachers.py`）
-  - 📅 今日发布状态 → `admin:today_status`（handler 在 `teacher_daily_status.py`）
-  - 🏷 用户画像 → `admin:user_tags`（handler 在 `user_tags.py`；当前项目仅有用户画像，无独立的"老师标签" callback）
-- 仅菜单结构调整：四个 callback 含义、handler、`@admin_required` 权限边界全部保持不变；`menu:teacher` 旧入口仍可用（旧消息中的 inline button 仍可点击）
-- 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) 的 `cb_admin_teachers` + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py) 的 `admin_teachers_kb()`
+- 后台主菜单按钮「👩‍🏫 老师管理」入口（所有 admin 可见）。**Phase A0 移除「📅 今日发布状态」**，剩余：
+  - 👥 老师列表与启停 → `menu:teacher`
+  - 🔥 热门推荐 → `admin:hot_manage`
+  - 🏷 用户画像 → `admin:user_tags`
+- 实现位于 [`bot/handlers/admin_panel.py`](bot/handlers/admin_panel.py) + [`bot/keyboards/admin_kb.py`](bot/keyboards/admin_kb.py)
 
 ### 20. 管理员管理员设置二级菜单（admin:admin_settings）
 
@@ -207,7 +200,7 @@
 ### 21. 管理员运营总览（admin:overview）
 
 - 经 `📊 运营看板` 二级页进入；超管 / 管理员可见
-- 只读聚合：今日签到老师 / 今日新增用户 / 今日新增收藏 / 今日新增评价 / 待审核评价 / 待审核报销 / queued 报销名单 / 进行中抽奖 / 待发布抽奖 / 待开奖抽奖 / schema_migrations 失败迁移数（hard / soft）
+- 只读聚合（**Phase A0 移除抽奖统计**）：今日签到老师 / 今日新增用户 / 今日新增收藏 / 今日新增评价 / 待审核评价 / 待审核报销 / queued 报销名单 / schema_migrations 失败迁移数（hard / soft）
 - 不修改任何业务流程，单点查询失败时该字段显示 `N/A`，不影响其它指标
 - 实现位于 [`bot/services/admin_overview.py`](bot/services/admin_overview.py)，callback 命名空间 `admin:overview` / `admin:overview:refresh`
 
@@ -218,42 +211,25 @@
 - 月度池为 0 时显示"不限"，超额时显示负值与超额量；不修改报销审核流程、不修改金额计算规则
 - 实现位于 [`bot/services/reimbursement_pool.py`](bot/services/reimbursement_pool.py)，callback 命名空间 `admin:reimbursement_pool` / `admin:reimbursement_pool:refresh`
 
-### 23. 管理员抽奖状态总览（admin:lottery_status）
+### 23. ~~管理员抽奖状态总览~~（Phase A0 已下线，2026-05-23）
 
-- 经 `📊 运营看板` 二级页进入；超管 / 管理员可见
-- 只读聚合：6 个状态计数（draft / scheduled / active / drawn / no_entries / cancelled）+ 待发布 / 待开奖（active 且 draw_at > now）/ active 但无人参与 / 积分门票活动 + 最近 5 条抽奖摘要（参与人数 / 中奖人数 / 开奖时间 / 积分门票）
-- 无任何抽奖时显示"暂无抽奖活动"；不修改抽奖创建 / 参与 / 扣分 / 开奖逻辑
-- 实现位于 [`bot/services/lottery_status.py`](bot/services/lottery_status.py)，callback 命名空间 `admin:lottery_status` / `admin:lottery_status:refresh`
+抽奖系统已整体下线，详见 [`docs/DELETED-FEATURES.md`](docs/DELETED-FEATURES.md)。
 
-### 24. 用户「👀 最近看过」（user:recent）增强
-
-- 入口复用主菜单既有「🕘 最近看过」按钮（callback `user:recent`），不新增入口
-- 列表展示每位老师：编号 / 艺名 / 最近查看（今天 HH:mm / 昨天 HH:mm / YYYY-MM-DD HH:mm 相对时间）/ 今日是否签到 / 是否已收藏
-- 每条带 `[📋 #N 艺名]` 进入既有 `teacher:view:<id>` 详情页（详情页内已有「收藏切换」按钮，避免新增重复收藏 callback）
-- 空记录时展示固定引导：`[🔥 热门推荐] [🔎 条件搜索] [🔙 返回主菜单]`
-- 新增 `user:recent:refresh` 刷新；不修改 record_teacher_view / 收藏 / 签到流程
-- 实现位于 [`bot/services/recent_views.py`](bot/services/recent_views.py)
+最近看过功能已整体下线，详见 [`docs/DELETED-FEATURES.md`](docs/DELETED-FEATURES.md)。
 
 ### 25. 用户「⭐ 我的收藏」（user:favorites）增强
 
 - 入口复用主菜单既有「⭐ 我的收藏」按钮（callback `user:favorites`），不新增入口
 - 顶部三个计数：今日可约 / 今日未签到 / 总收藏；每条展示艺名 / 状态 / 收藏时间相对格式
 - 视图切换：`[📅 只看今日可约] / [📋 查看全部]`；分别对应 `user:favorites:today` 与 `user:favorites`
-- 每条带 `[👀 查看详情]`（复用 `teacher:view:<id>`）+ `[❌ 取消收藏]`（`user:favorites:rm:<id>`，handler 复用 `remove_favorite` DB 函数；与既有 `fav:rm_from_list` 隔离，避免新老视图相互覆盖）
-- 空记录时引导：`[🔥 热门推荐] [🔎 条件搜索] [👀 最近看过] [🔙 返回主菜单]`
+- 每条带 `[👀 查看详情]`（复用 `teacher:view:<id>`）+ `[❌ 取消收藏]`（`user:favorites:rm:<id>`）
+- 空记录时引导：`[🔥 热门推荐] [🔎 条件搜索] [🔙 返回主菜单]`（Phase A0 移除「最近看过」入口）
 - 新增 `user:favorites:refresh` 刷新；不修改 add_favorite / remove_favorite / toggle_favorite / 详情页 / 签到 / 通知逻辑
-- 实现位于 [`bot/services/user_favorites.py`](bot/services/user_favorites.py)；时间格式化复用 [`bot/services/recent_views.py`](bot/services/recent_views.py) 中的 `format_viewed_at_relative`
+- 实现位于 [`bot/services/user_favorites.py`](bot/services/user_favorites.py)
 
-### 26. 用户「📜 搜索历史」（user:search_history）增强
+### 26. ~~用户「📜 搜索历史」~~（Phase A0 已下线，2026-05-23）
 
-- 入口复用主菜单既有「📜 搜索历史」按钮（callback `user:search_history`），不新增入口
-- 展示每条搜索：编号 / 关键词 / 结果数（payload 缺失显示 N/A）/ 搜索时间（今天 HH:mm / 昨天 HH:mm / YYYY-MM-DD HH:mm）
-- 关键词点选：保留既有 FSM-state-indexed `user:search_history:pick:<idx>` 回放机制，绕开 callback_data 长度限制
-- 新增 `user:search_history:refresh` 刷新；刷新后同步更新 FSM queries 索引以保持 pick 一致
-- 空状态引导：`[🔎 条件筛选] [🔥 热门推荐] [🔙 返回主菜单]`
-- 数据源 `user_events` 中 `event_type='search'`（私聊搜索写入），**本阶段不纳入 `group_search`**；如需纳入需要产品确认口径
-- 不写 user_events、不做清空、不修改搜索算法 / 群关键词 / 条件筛选
-- 实现位于 [`bot/services/search_history.py`](bot/services/search_history.py)
+搜索历史功能已整体下线，详见 [`docs/DELETED-FEATURES.md`](docs/DELETED-FEATURES.md)。
 
 ---
 
@@ -265,7 +241,7 @@
 | aiogram | 3.13.1（Telegram Bot 异步框架） |
 | SQLite | 3.x，**已启用 WAL 模式** |
 | aiosqlite | 0.20.0（SQLite 异步访问） |
-| APScheduler | 3.10.4（每日发布 / 报表 / 抽奖调度） |
+| APScheduler | 3.10.4（每日发布 / 报表调度，Phase A0 后不再调度抽奖） |
 | python-dotenv | 1.0.1 |
 | 部署方式 | systemd 单进程 polling，**不推荐 Docker / Webhook**（详见稳定化报告） |
 
