@@ -464,61 +464,14 @@ journalctl -u chiyanlu-bot -n 100 --no-pager
 
 ---
 
-## 七、抽奖事故处理
+## 七、抽奖事故处理（Phase A0 已下线）
 
-> 政策原文见 [POLICY.md Part III](POLICY.md#part-iii抽奖规则)。
-
-### 触发场景
-- 到点没有发布抽奖
-- 到点没有开奖
-- 用户说无法参与
-- 用户积分被扣但没有参与成功
-- 中奖用户未收到通知
-- 频道开奖结果没发出来
-
-### 处理思路
-
-1. **结果以 DB 中 `lottery_entries.won` 为准**，不以群消息为准。
-2. **不要手工重抽**，除非产品 / 超管明确允许并写下书面依据。
-3. **不在群内承诺结果**，统一回复「已记录，正在核对」。
-
-### 只读 SQL 排查
-
-```bash
-cd /opt/Chiyanlu-Exclusive-Bot
-
-# 当前抽奖
-sqlite3 data/bot.db "SELECT id, status, draw_time, message_id FROM lotteries ORDER BY id DESC LIMIT 5;"
-
-# 某个抽奖的参与情况（把 <LID> 替换为抽奖 ID）
-sqlite3 data/bot.db "SELECT COUNT(*) FROM lottery_entries WHERE lottery_id=<LID>;"
-
-# 某个用户在某抽奖里的状态（替换 <UID> <LID>）
-sqlite3 data/bot.db "SELECT id, status, won, entry_cost, created_at FROM lottery_entries WHERE user_id=<UID> AND lottery_id=<LID>;"
-
-# 中奖名单
-sqlite3 data/bot.db "SELECT user_id, won FROM lottery_entries WHERE lottery_id=<LID> AND won=1;"
-
-# 必关频道配置
-sqlite3 data/bot.db "SELECT id, lottery_id, chat_id FROM required_chat_ids WHERE lottery_id=<LID>;"
-```
-
-### 日志侧
-
-```bash
-journalctl -u chiyanlu-bot --since "2 hours ago" | grep -i -E "lottery|apscheduler|draw"
-```
-
-### 对照处理
-
-| 现象 | 处置 |
-| --- | --- |
-| 到点没发布 | 查 APScheduler 日志、Bot 进程是否健康；不要手工补发，让开发者确认调度状态 |
-| 到点没开奖 | 同上 |
-| 用户说无法参与 | 检查必关频道（`required_chat_ids`）、用户积分、`lottery_entries` 是否已有记录 |
-| 扣分但没参与成功 | 查 `lottery_entries` 是否存在该用户；如确实异常，走第九节积分修正流程 |
-| 中奖未通知 | 查日志 Telegram API 错误；不要在群里二次广播中奖名单 |
-| 频道结果没发出 | 检查 Bot 在频道是否仍有管理员权限 |
+> **2026-05-23 Phase A0**：抽奖系统整体下线（详见 [`DELETED-FEATURES.md`](DELETED-FEATURES.md)）。
+>
+> - 用户侧、超管侧、调度器、deep link 全部移除；A0 后**不会**再产生新抽奖事故。
+> - 4 张 DB 表（`lotteries` / `lottery_entries` 等）保留无写入，待 Phase A0.1（≥ 30 天观察期后）通过迁移注册器 DROP。
+> - **历史抽奖事故追溯**：如需查询 A0 上线前的中奖名单 / 扣分流水，仍可对 `lottery_entries` / `point_transactions WHERE reason IN ('lottery_entry','lottery_refund')` 做只读 SQL；流水保留供审计。
+> - **用户申诉**：如收到 A0 前的抽奖中奖未领取诉求，回复"抽奖功能已下线，原中奖结果以历史频道公告为准"；如涉及积分异议走 [§九 积分事故处理](#九积分事故处理) 流程。
 
 ---
 
@@ -579,15 +532,15 @@ sqlite3 data/bot.db "SELECT COUNT(*) FROM reimbursements_new;"
 ### 触发场景
 - 用户说积分没加
 - 用户说积分被误扣
-- 抽奖扣分失败
 - `total_points` 与流水（积分明细）不一致
 - 需要人工修正积分
+- 历史抽奖扣分异议（A0 前数据追溯，见 [§七](#七抽奖事故处理phase-a0-已下线)）
 
 ### 处理思路
 
 1. **对照 POLICY.md Part I** 确认获取 / 消耗规则。
 2. **通过超管后台手动加扣分**，让系统写入流水，**不要直接 `UPDATE users SET total_points = ...`**。
-3. **每次修正必须写 note**：填写业务编号（review_id / lottery_id）和原因。
+3. **每次修正必须写 note**：填写业务编号（review_id 等；历史 lottery_id 仅用于 A0 前抽奖追溯）和原因。
 4. 保留用户提供的截图和聊天记录，作为修正依据。
 
 ### 只读 SQL 排查

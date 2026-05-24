@@ -821,7 +821,7 @@ ls -lh /opt/Chiyanlu-Exclusive-Bot/backups/
 ### 17.5 升级后
 
 - 跟 5 分钟日志确认无异常
-- 关键功能抽测（写评价 / 报销申请 / 抽奖参与 / 老师签到）
+- 关键功能抽测（写评价 / 报销申请 / 老师签到 / 群组关键词）
 - 异常立即 `./update.sh rollback`
 
 ---
