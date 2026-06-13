@@ -96,6 +96,8 @@ def test_module_level_migrations_is_baseline():
         "20260520_001_teacher_draft_states",
         "20260520_002_quick_entry_keywords",
         "20260521_001_teacher_reviews_gesture_nullable",
+        "20260613_001_teacher_is_deleted",
+        "20260613_002_remove_quick_entry_keywords",
     }
 
 

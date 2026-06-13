@@ -544,15 +544,16 @@ def test_favorites_rich_kb_supports_dict_input():
 
 
 def test_favorites_empty_kb_has_guide_callbacks():
-    """空收藏引导 keyboard：热门 / 条件搜索 / 主菜单（Phase A0 移除「最近看过」）。"""
+    """空收藏引导 keyboard：今日开课 / 搜索 / 主菜单（A0 后热门/筛选下线改向）。"""
     from bot.keyboards.user_kb import favorites_empty_kb
     kb = favorites_empty_kb()
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "user:hot" in callbacks
-    assert "user:filter" in callbacks
+    assert "user:today" in callbacks
+    assert "user:search" in callbacks
     assert "user:main" in callbacks
-    # Phase A0（2026-05-23）：最近看过已下线，不应再出现在引导
-    assert "user:recent" not in callbacks
+    # A0 后：热门 / 筛选已下线，不应再出现在引导
+    assert "user:hot" not in callbacks
+    assert "user:filter" not in callbacks
 
 
 def test_favorites_handlers_present_in_source():

@@ -417,7 +417,7 @@ def _similar_back_kb(teacher_id: int) -> types.InlineKeyboardMarkup:
 def _similar_empty_kb() -> types.InlineKeyboardMarkup:
     """相似推荐 0 结果时的兜底键盘"""
     return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
+        [types.InlineKeyboardButton(text="📚 今日开课", callback_data="user:today")],
         [types.InlineKeyboardButton(text="🏠 返回主菜单", callback_data="user:main")],
     ])
 

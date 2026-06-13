@@ -153,9 +153,10 @@ def test_subsystem_routers_all_registered():
 def test_total_router_count_matches_pre_split():
     """Phase A0（2026-05-23）：从 37 个 router 移除 4 个（admin_lottery /
     user_lottery / lottery_entry / teacher_daily_status），剩余 33 个。
+    A0 后：再移除 user_filter / user_recommend（热门/推荐/筛选下线），剩余 31 个。
     """
     calls = _include_router_calls(_read())
-    assert len(calls) == 33, f"期望 33 个 include_router，实际 {len(calls)}"
+    assert len(calls) == 31, f"期望 31 个 include_router，实际 {len(calls)}"
 
 
 def test_router_names_are_unique():

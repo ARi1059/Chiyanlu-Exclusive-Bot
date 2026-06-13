@@ -6,19 +6,7 @@ class SearchStates(StatesGroup):
     waiting_query = State()
 
 
-class FilterStates(StatesGroup):
-    """条件筛选器临时状态（Phase 7.2）
-
-    waiting_pick: 用户已选择"按地区/价格/标签"，等待从动态选项中点选一个。
-    state.data 结构:
-        {
-            "filter_type": "region" | "price" | "tag",
-            "options": ["天府一街", "金融城", ...]  # 与按钮 callback 的 index 对齐
-        }
-
-    把 options 放在 state 而不是 callback_data，避开中文长字符串和 Telegram 64 字节限制。
-    """
-    waiting_pick = State()
+# A0 后下线（条件筛选）：FilterStates —— 随 user_filter 功能移除，见 docs/DELETED-FEATURES.md
 
 
 # Phase A0（2026-05-23）已下线：SearchHistoryStates

@@ -9,6 +9,9 @@ from bot.database import (
     enable_teacher,
     get_teacher,
     get_all_teachers,
+    soft_delete_teacher,
+    restore_teacher,
+    get_deleted_teachers,
 )
 from bot.keyboards.admin_kb import (
     main_menu_kb,
@@ -20,6 +23,10 @@ from bot.keyboards.admin_kb import (
     enable_confirm_kb,
     teacher_enable_list_kb,
     teacher_list_kb,
+    teacher_purge_list_kb,
+    teacher_restore_list_kb,
+    purge_confirm_kb,
+    restore_confirm_kb,
     edit_field_kb,
 )
 from bot.middlewares.fsm_timeout import (
@@ -27,7 +34,7 @@ from bot.middlewares.fsm_timeout import (
     FSMTimeoutMiddleware,
 )
 from bot.states.teacher_states import AddTeacherStates, EditTeacherStates
-from bot.utils.permissions import admin_required
+from bot.utils.permissions import admin_required, super_admin_required
 from bot.utils.url import normalize_url
 
 router = Router(name="teacher_flow")
@@ -68,6 +75,13 @@ async def on_teacher_user_id(message: types.Message, state: FSMContext):
     user_id = int(text)
     existing_teacher = await get_teacher(user_id)
     if existing_teacher:
+        if existing_teacher.get("is_deleted"):
+            await message.reply(
+                f"⚠️ 该老师 ID 曾被删除：{existing_teacher['display_name']}\n"
+                "如需重新上架，请到「👩‍🏫 老师管理」点「♻️ 恢复老师」（仅超管），"
+                "或输入其他 Telegram 数字 ID。"
+            )
+            return
         status = "启用中" if existing_teacher["is_active"] else "已停用"
         await message.reply(
             f"⚠️ 该老师 ID 已存在：{existing_teacher['display_name']}（{status}）\n"
@@ -539,6 +553,121 @@ async def cb_teacher_confirm_enable(callback: types.CallbackQuery):
         await callback.message.edit_text(f"✅ 老师「{name}」已启用")
     else:
         await callback.message.edit_text("⚠️ 启用失败")
+
+    await callback.message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
+    await callback.answer()
+
+
+# ============ 删除老师（软删除：从所有列表彻底隐藏，数据保留可恢复） ============
+
+
+@router.callback_query(F.data == "teacher:purge")
+@admin_required
+async def cb_teacher_purge(callback: types.CallbackQuery, state: FSMContext):
+    """删除老师 - 展示列表（存活的启用+停用老师；已删除的不再出现）"""
+    await state.clear()
+    teachers = await get_all_teachers(active_only=False)
+    if not teachers:
+        await callback.answer("当前没有老师", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "🗑 选择要删除的老师：\n\n删除后该老师从所有列表彻底移除，但数据保留，可由超管恢复。",
+        reply_markup=teacher_purge_list_kb(teachers),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("teacher:purge_select:"))
+@admin_required
+async def cb_teacher_selected_for_purge(callback: types.CallbackQuery, state: FSMContext):
+    """选择老师后展示删除确认"""
+    await state.clear()
+    teacher_id = int(callback.data.split(":")[2])
+    teacher = await get_teacher(teacher_id)
+    if not teacher:
+        await callback.answer("老师不存在", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"⚠️ 确认删除老师「{teacher['display_name']}」？\n\n"
+        "删除后该老师从用户端和管理端所有列表彻底消失；\n"
+        "其评价 / 收藏 / 报销等历史数据保留，可由超管在「♻️ 恢复老师」中找回。",
+        reply_markup=purge_confirm_kb(teacher_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("teacher:confirm_purge:"))
+@admin_required
+async def cb_teacher_confirm_purge(callback: types.CallbackQuery):
+    """确认删除老师（软删除）"""
+    teacher_id = int(callback.data.split(":")[2])
+    teacher = await get_teacher(teacher_id)
+    success = await soft_delete_teacher(teacher_id)
+
+    if success:
+        name = teacher["display_name"] if teacher else str(teacher_id)
+        await callback.message.edit_text(f"🗑 老师「{name}」已删除（数据保留，可由超管恢复）")
+    else:
+        await callback.message.edit_text("⚠️ 删除失败")
+
+    await callback.message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
+    await callback.answer()
+
+
+# ============ 恢复老师（仅超管） ============
+
+
+@router.callback_query(F.data == "teacher:restore")
+@super_admin_required
+async def cb_teacher_restore(callback: types.CallbackQuery, state: FSMContext):
+    """恢复老师 - 展示已删除老师列表（仅超管）"""
+    await state.clear()
+    teachers = await get_deleted_teachers()
+    if not teachers:
+        await callback.answer("当前没有已删除的老师", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "♻️ 选择要恢复的老师：",
+        reply_markup=teacher_restore_list_kb(teachers),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("teacher:restore_select:"))
+@super_admin_required
+async def cb_teacher_selected_for_restore(callback: types.CallbackQuery):
+    """选择老师后展示恢复确认"""
+    teacher_id = int(callback.data.split(":")[2])
+    teacher = await get_teacher(teacher_id)
+    if not teacher:
+        await callback.answer("老师不存在", show_alert=True)
+        return
+    if not teacher.get("is_deleted"):
+        await callback.answer("该老师未被删除", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"确认恢复老师「{teacher['display_name']}」？\n\n"
+        "恢复后回到删除前的状态（删除前为停用的，恢复后仍需再点「启用老师」）。",
+        reply_markup=restore_confirm_kb(teacher_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("teacher:confirm_restore:"))
+@super_admin_required
+async def cb_teacher_confirm_restore(callback: types.CallbackQuery):
+    """确认恢复老师"""
+    teacher_id = int(callback.data.split(":")[2])
+    teacher = await get_teacher(teacher_id)
+    success = await restore_teacher(teacher_id)
+
+    if success:
+        name = teacher["display_name"] if teacher else str(teacher_id)
+        status = "启用中" if teacher and teacher["is_active"] else "停用中"
+        await callback.message.edit_text(f"♻️ 老师「{name}」已恢复（当前{status}）")
+    else:
+        await callback.message.edit_text("⚠️ 恢复失败")
 
     await callback.message.answer("👩‍🏫 老师管理", reply_markup=teacher_menu_kb())
     await callback.answer()

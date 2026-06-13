@@ -85,12 +85,6 @@ def test_user_search_does_not_call_reimburse_subreq():
     assert "reimburse_subreq" not in src
 
 
-def test_user_filter_does_not_call_reimburse_subreq():
-    import bot.handlers.user_filter as mod
-    src = _src(mod)
-    assert "check_user_subscribed_for_reimburse" not in src
-
-
 def test_user_history_does_not_call_reimburse_subreq():
     import bot.handlers.user_history as mod
     src = _src(mod)
@@ -221,7 +215,7 @@ def test_schema_migrations_baseline_unchanged():
 
 def test_migrations_list_still_empty():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable"}
+    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable", "20260613_001_teacher_is_deleted", "20260613_002_remove_quick_entry_keywords"}
 
 
 # ============ 28. 新增 callback 字面量锁定 ============

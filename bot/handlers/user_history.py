@@ -97,7 +97,7 @@ def _reminders_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
 def _reminders_empty_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search"),
-         InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
+         InlineKeyboardButton(text="📚 今日开课", callback_data="user:today")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
     ])
 

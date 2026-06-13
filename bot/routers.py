@@ -38,12 +38,12 @@ from bot.handlers.teacher_flow import router as teacher_flow_router
 from bot.handlers.teacher_profile import router as teacher_profile_router
 from bot.handlers.teacher_checkin import router as checkin_router
 from bot.handlers.teacher_self import router as teacher_self_router
-from bot.handlers.user_filter import router as user_filter_router
+# A0 后下线（热门/推荐/筛选）：user_filter_router —— 见 docs/DELETED-FEATURES.md
 from bot.handlers.user_history import router as user_history_router
 from bot.handlers.user_panel import router as user_panel_router
 from bot.handlers.user_points import router as user_points_router
 from bot.handlers.user_reimburse import router as user_reimburse_router
-from bot.handlers.user_recommend import router as user_recommend_router
+# A0 后下线（热门/推荐/筛选）：user_recommend_router —— 见 docs/DELETED-FEATURES.md
 from bot.handlers.user_search import router as user_search_router
 from bot.handlers.keyword import router as keyword_router
 
@@ -144,12 +144,9 @@ def register_routers(dp: Dispatcher) -> None:
     dp.include_router(user_reimburse_router)
     # Phase A0（2026-05-23）已下线：user_lottery_router（抽奖中心用户侧）
     # 删除原因：见 docs/DELETED-FEATURES.md。
-    # Phase 7.2：user_filter_router / user_recommend_router
-    # 注册在 user_panel 之后、user_search / keyword 之前。
-    #   - callback 命名空间独立：user:filter:* / user:recommend:*
-    #   - FilterStates 仅在该状态下截获 /cancel，不影响其他文字消息
-    dp.include_router(user_filter_router)
-    dp.include_router(user_recommend_router)
+    # A0 后下线（热门/推荐/筛选，见 docs/DELETED-FEATURES.md）：
+    # user_filter_router / user_recommend_router 已物理删除，
+    # 含 callback user:filter:* / user:recommend:* 与 FilterStates。
     # Phase 7.3：user_history_router
     #   - user:search_history / user:continue_last / user:reminders
     #   - SearchHistoryStates 仅在自身 FSM 状态下截获 /cancel

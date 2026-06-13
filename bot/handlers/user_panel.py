@@ -128,22 +128,7 @@ async def cb_onboarding_today(callback: types.CallbackQuery):
     await cb_today(callback)
 
 
-@router.callback_query(F.data == "user:onboarding:hot")
-async def cb_onboarding_hot(callback: types.CallbackQuery):
-    """新手引导 → 热门推荐：复用 hot_teachers.cb_user_hot；不存在时降级到主菜单"""
-    user_id = callback.from_user.id
-    await mark_user_onboarding_seen(user_id)
-    await _safe_log_event(user_id, "onboarding_done", {"path": "hot"})
-    try:
-        from bot.handlers.hot_teachers import cb_user_hot
-    except ImportError:
-        await callback.message.edit_text(
-            "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？",
-            reply_markup=user_main_menu_kb(),
-        )
-        await callback.answer()
-        return
-    await cb_user_hot(callback)
+# A0 后下线：cb_onboarding_hot（user:onboarding:hot）——新手引导"热门推荐"随热门功能下线。
 
 
 @router.callback_query(F.data == "user:onboarding:search")
