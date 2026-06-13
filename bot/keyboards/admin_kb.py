@@ -700,6 +700,10 @@ def teacher_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="停用老师", callback_data="teacher:delete"),
             InlineKeyboardButton(text="启用老师", callback_data="teacher:enable"),
         ],
+        [
+            InlineKeyboardButton(text="🗑 删除老师", callback_data="teacher:purge"),
+            InlineKeyboardButton(text="♻️ 恢复老师", callback_data="teacher:restore"),
+        ],
         [InlineKeyboardButton(text="📋 老师列表", callback_data="teacher:list")],
         [InlineKeyboardButton(text="⬅️ 返回老师管理", callback_data="admin:teachers")],
     ])
@@ -1144,6 +1148,57 @@ def teacher_list_kb(teachers: list[dict]) -> InlineKeyboardMarkup:
         ])
     keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="menu:teacher")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def teacher_purge_list_kb(teachers: list[dict]) -> InlineKeyboardMarkup:
+    """删除老师列表（选择要软删除的老师）。
+
+    专用 teacher:purge_select: 前缀，避免与 teacher:select:（停用/编辑双注册）冲突。
+    """
+    keyboard = []
+    for t in teachers:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{t['display_name']} (@{t['username']})",
+                callback_data=f"teacher:purge_select:{t['user_id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="menu:teacher")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def teacher_restore_list_kb(teachers: list[dict]) -> InlineKeyboardMarkup:
+    """已删除老师列表（选择要恢复的老师，仅超管）"""
+    keyboard = []
+    for t in teachers:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{t['display_name']} (@{t['username']})",
+                callback_data=f"teacher:restore_select:{t['user_id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="menu:teacher")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def purge_confirm_kb(teacher_id: int) -> InlineKeyboardMarkup:
+    """删除老师二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ 确认删除", callback_data=f"teacher:confirm_purge:{teacher_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data="teacher:purge"),
+        ],
+    ])
+
+
+def restore_confirm_kb(teacher_id: int) -> InlineKeyboardMarkup:
+    """恢复老师二次确认"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="♻️ 确认恢复", callback_data=f"teacher:confirm_restore:{teacher_id}"),
+            InlineKeyboardButton(text="🔙 取消", callback_data="teacher:restore"),
+        ],
+    ])
 
 
 def edit_field_kb(teacher_id: int) -> InlineKeyboardMarkup:

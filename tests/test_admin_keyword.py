@@ -95,13 +95,13 @@ def test_migration_creates_table_and_seeds_5_rows(temp_db):
     from bot.database import list_quick_entry_keywords
     rows = _run(list_quick_entry_keywords())
     triggers = {r["trigger"] for r in rows}
-    assert triggers == {"菜单", "今日", "热门", "推荐", "筛选"}
-    # 5 条都应 seeded=1 + enabled=1
+    # A0 后下线 菜单/热门/推荐/筛选，仅保留"今日"快捷词
+    assert triggers == {"今日"}
     for r in rows:
         assert r["seeded"] == 1
         assert r["enabled"] == 1
         assert isinstance(r["buttons"], list)
-        assert len(r["buttons"]) == 3  # 历史 _QUICK_ENTRY_CONFIG 每条 3 个按钮
+        assert len(r["buttons"]) == 1  # 今日项按钮精简为仅"打开今日开课"
 
 
 def test_seed_buttons_match_legacy_hardcoded(temp_db):
@@ -133,7 +133,7 @@ def test_migration_is_idempotent(temp_db):
             await db.close()
     _run(go())
     rows = _run(list_quick_entry_keywords())
-    assert len(rows) == 5  # 仍是 5，不是 10
+    assert len(rows) == 1  # A0 后仅"今日"一条；重跑不重复插入
 
 
 # ============================================================
@@ -143,11 +143,11 @@ def test_migration_is_idempotent(temp_db):
 
 def test_get_by_trigger_case_insensitive(temp_db):
     from bot.database import get_quick_entry_by_trigger
-    for input_ in ("菜单", "MENU", "menu"):
+    for input_ in ("今日", "TODAY", "today"):
         row = _run(get_quick_entry_by_trigger(input_))
-        # 中文 trigger "菜单"必中；英文 "menu" 不在 seed 中应返回 None
-        if input_ == "菜单":
-            assert row is not None and row["trigger"] == "菜单"
+        # 中文 trigger "今日"必中；英文 "today" 不在 seed 中应返回 None
+        if input_ == "今日":
+            assert row is not None and row["trigger"] == "今日"
         else:
             assert row is None
 
@@ -296,9 +296,9 @@ def test_list_enabled_only(temp_db):
 
 
 def test_handler_uses_db_when_available(temp_db):
-    """seed 5 条都应通过 _get_quick_entry_config 返回（含 id）。"""
+    """seed 的"今日"应通过 _get_quick_entry_config 返回（含 id）。"""
     from bot.handlers.keyword import _get_quick_entry_config
-    cfg = _run(_get_quick_entry_config("菜单"))
+    cfg = _run(_get_quick_entry_config("今日"))
     assert cfg is not None
     assert cfg["id"] is not None  # DB 命中
     assert cfg["banner"] and cfg["body"]
@@ -334,12 +334,12 @@ def test_handler_returns_none_when_disabled_and_no_fallback(temp_db):
 
 
 def test_handler_disabled_falls_back_to_hardcoded(temp_db):
-    """seed 的"菜单"被 disable → fallback 硬编码（仍命中）。"""
+    """seed 的"今日"被 disable → fallback 硬编码（仍命中）。"""
     from bot.database import get_quick_entry_by_trigger, toggle_quick_entry_enabled
     from bot.handlers.keyword import _get_quick_entry_config
-    row = _run(get_quick_entry_by_trigger("菜单"))
+    row = _run(get_quick_entry_by_trigger("今日"))
     _run(toggle_quick_entry_enabled(row["id"]))  # disable
-    cfg = _run(_get_quick_entry_config("菜单"))
+    cfg = _run(_get_quick_entry_config("今日"))
     assert cfg is not None
     assert cfg["id"] is None  # fallback 路径
 
@@ -468,12 +468,12 @@ def test_send_quick_entry_increments_hit_count_on_db_path(temp_db, monkeypatch):
     msg = MagicMock()
     msg.reply = AsyncMock(return_value=None)
 
-    cfg = _run(kw_mod._get_quick_entry_config("菜单"))
+    cfg = _run(kw_mod._get_quick_entry_config("今日"))
     assert cfg["id"] is not None  # DB 路径
-    before = _run(get_quick_entry_by_trigger("菜单"))["hit_count"]
-    sent = _run(kw_mod._send_quick_entry(msg, "菜单", cfg=cfg))
+    before = _run(get_quick_entry_by_trigger("今日"))["hit_count"]
+    sent = _run(kw_mod._send_quick_entry(msg, "今日", cfg=cfg))
     assert sent is True
-    after = _run(get_quick_entry_by_trigger("菜单"))["hit_count"]
+    after = _run(get_quick_entry_by_trigger("今日"))["hit_count"]
     assert after == before + 1
 
 
@@ -493,9 +493,9 @@ def test_send_quick_entry_no_increment_on_fallback_path(temp_db, monkeypatch):
     msg = MagicMock()
     msg.reply = AsyncMock(return_value=None)
 
-    cfg = _run(kw_mod._get_quick_entry_config("菜单"))
+    cfg = _run(kw_mod._get_quick_entry_config("今日"))
     assert cfg["id"] is None  # fallback 路径
-    sent = _run(kw_mod._send_quick_entry(msg, "菜单", cfg=cfg))
+    sent = _run(kw_mod._send_quick_entry(msg, "今日", cfg=cfg))
     assert sent is True  # 仍能发送
     # 列表仍是空（无 id 不写表）
     assert _run(list_quick_entry_keywords()) == []

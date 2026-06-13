@@ -20,17 +20,16 @@ from bot.utils.url import normalize_url
 #   白名单严格限制——任意字符串都不会被当作有效 source 使用。
 
 # Phase A0（2026-05-23）：移除 "history" / "recent" 两个 source（功能下线）
+# A0 后：再移除 "hot" / "filter"（热门 / 筛选功能下线）
 TEACHER_VIEW_SOURCES: frozenset[str] = frozenset({
-    "main", "hot", "today", "filter",
+    "main", "today",
     "search", "favorites", "similar",
 })
 
 # (按钮文案, 返回 callback) — 详情页底部"返回 X"按钮配置
 _BACK_BUTTON_BY_SOURCE: dict[str, tuple[str, str]] = {
     "main":      ("🔙 返回主菜单",   "user:main"),
-    "hot":       ("🔙 返回热门推荐", "user:hot"),
     "today":     ("🔙 返回今日可约", "user:today"),
-    "filter":    ("🔙 返回条件筛选", "user:filter"),
     "search":    ("🔙 返回搜索",     "user:search"),
     "favorites": ("🔙 返回我的收藏", "user:favorites"),
     # similar 比较特殊：相似推荐点击其它老师后的详情页，本批不引入"返回相似"
@@ -103,11 +102,6 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📚 今天能约谁", callback_data="user:today"),
-            InlineKeyboardButton(text="🎯 帮我推荐", callback_data="user:recommend"),
-        ],
-        [
-            InlineKeyboardButton(text="🔎 按条件找", callback_data="user:filter"),
-            InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot"),
         ],
         [
             InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites"),
@@ -132,23 +126,19 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
 
 
 def user_find_kb() -> InlineKeyboardMarkup:
-    """「🔎 找老师」二级页 keyboard（Phase A0 后 2026-05-23）。
+    """「🔎 找老师」二级页 keyboard。
 
-    聚合 3 个找老师入口（Phase A0 移除「📜 搜索历史」入口）：
+    A0 后下线热门/筛选入口，聚合保留的找老师入口：
 
-        🔥 热门推荐   → user:hot              当前热门老师
         📚 今天能约谁 → user:today            今日可约老师
-        🔎 按条件找   → user:filter           地区 / 价格 / 标签筛选
+        🔍 直接搜索   → user:search           关键词搜索
 
     返回按钮：⬅️ 返回主菜单 → user:main
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot"),
             InlineKeyboardButton(text="📚 今天能约谁", callback_data="user:today"),
-        ],
-        [
-            InlineKeyboardButton(text="🔎 按条件找", callback_data="user:filter"),
+            InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search"),
         ],
         [
             InlineKeyboardButton(text="⬅️ 返回主菜单", callback_data="user:main"),
@@ -218,7 +208,6 @@ def onboarding_kb() -> InlineKeyboardMarkup:
     """Phase 7.1：新手引导按钮组（仅普通用户首次 /start 时展示）"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📚 今日开课", callback_data="user:onboarding:today")],
-        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:onboarding:hot")],
         [InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:onboarding:search")],
         [InlineKeyboardButton(text="进入主菜单", callback_data="user:onboarding:main")],
     ])
@@ -525,8 +514,8 @@ def favorites_empty_kb() -> InlineKeyboardMarkup:
     Phase A0（2026-05-23）：移除「👀 最近看过」入口。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 热门推荐", callback_data="user:hot")],
-        [InlineKeyboardButton(text="🔎 条件搜索", callback_data="user:filter")],
+        [InlineKeyboardButton(text="📚 今日开课", callback_data="user:today")],
+        [InlineKeyboardButton(text="🔍 搜索老师", callback_data="user:search")],
         [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="user:main")],
     ])
 

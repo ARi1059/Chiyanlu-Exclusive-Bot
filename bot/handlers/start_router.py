@@ -53,15 +53,12 @@ from bot.keyboards.user_kb import onboarding_kb, user_main_menu_kb
 
 
 # Phase 7.3：群内快捷入口 deep link
-_QUICK_ENTRY_VALUES = {"menu", "today", "hot", "filter", "recommend"}
+_QUICK_ENTRY_VALUES = {"menu", "today"}  # A0 后下线 hot / filter / recommend
 
 # 群内快捷入口对应的私聊跳转目标 callback + 文案
 _QUICK_ENTRY_PAGES: dict[str, tuple[str, str, str]] = {
     # value: (banner, button_text, target_callback)
     "today":     ("📚 今日开课", "📚 打开今日开课", "user:today"),
-    "hot":       ("🔥 热门推荐", "🔥 打开热门推荐", "user:hot"),
-    "filter":    ("🔎 条件筛选", "🔎 打开条件筛选", "user:filter"),
-    "recommend": ("🎯 帮我推荐", "🎯 打开帮我推荐", "user:recommend"),
 }
 
 logger = logging.getLogger(__name__)

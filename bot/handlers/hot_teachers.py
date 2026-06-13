@@ -28,7 +28,6 @@ from pytz import timezone
 
 from bot.config import config
 from bot.database import (
-    get_hot_teachers,
     get_teacher,
     is_effective_featured,
     list_featured_teachers,
@@ -39,10 +38,6 @@ from bot.keyboards.admin_kb import (
     hot_manage_cancel_kb,
     hot_manage_menu_kb,
     main_menu_kb,
-)
-from bot.keyboards.user_kb import (
-    back_to_user_main_kb,
-    teacher_detail_list_kb,
 )
 from bot.states.teacher_states import HotManageStates
 from bot.utils.permissions import admin_required
@@ -74,43 +69,9 @@ async def _safe_log_admin_audit(
         logger.debug("log_admin_audit 调用失败 (action=%s): %s", action, e)
 
 
-# ============ 用户侧：🔥 热门老师 ============
-
-
-@router.callback_query(F.data == "user:hot")
-async def cb_user_hot(callback: types.CallbackQuery):
-    """普通用户主菜单的"🔥 热门老师"入口"""
-    if callback.message and callback.message.chat.type != "private":
-        await callback.answer("仅在私聊中可用", show_alert=True)
-        return
-
-    teachers = await get_hot_teachers(limit=10)
-    if not teachers:
-        await callback.message.edit_text(
-            "🔥 热门老师\n\n暂无热门老师数据，可以先去 🔍 搜索老师 看看。",
-            reply_markup=back_to_user_main_kb(),
-        )
-        await callback.answer()
-        return
-
-    today = _today_str()
-
-    def _label(t: dict) -> str:
-        prefix = "🔥 " if is_effective_featured(t, today) else ""
-        return f"{prefix}{t['display_name']} · {t['region']} · {t['price']}"
-
-    text = (
-        f"🔥 热门老师（TOP {len(teachers)}）\n\n"
-        "以下是近期热度较高的老师，点击查看详情。"
-    )
-    kb = teacher_detail_list_kb(
-        teachers,
-        per_row=1,
-        label_fn=_label,
-        source="hot",  # UX-3 第二批：详情页"返回"指向 user:hot
-    )
-    await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
+# ============ 用户侧"🔥 热门老师"已下线（A0 后，见 docs/DELETED-FEATURES.md）============
+# 仅保留下方管理员侧"热门推荐管理"——推荐位 is_featured / is_effective_featured
+# 仍是全站排序（搜索 / 今日开课）的基础设施，故后台管理保留。
 
 
 # ============ 管理员侧：🔥 热门推荐管理 ============

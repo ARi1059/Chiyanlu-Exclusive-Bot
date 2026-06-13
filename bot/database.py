@@ -64,6 +64,7 @@ async def init_db():
                 button_url TEXT NOT NULL,
                 button_text TEXT,
                 is_active INTEGER DEFAULT 1,
+                is_deleted INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -613,35 +614,12 @@ async def _migrate_001_teacher_draft_states(db: aiosqlite.Connection) -> None:
 # UX-9.1 quick_entry_keywords seed：与历史 _QUICK_ENTRY_CONFIG 一一对应
 # 保留为模块级常量，handler fallback 与 migration seed 共享同源数据
 _QUICK_ENTRY_SEED: tuple[tuple[str, str, str, list], ...] = (
-    (
-        "菜单",
-        "📌 痴颜录 Bot 菜单",
-        "你可以点击下方进入私聊使用：",
-        [("打开菜单", "menu"), ("今日开课", "today"), ("热门推荐", "hot")],
-    ),
+    # A0 后仅保留"今日"快捷词，按钮精简为仅"打开今日开课"（热门/筛选已下线）。
     (
         "今日",
         "📚 今日开课入口",
         "点击下方进入私聊查看今日开课老师。",
-        [("打开今日开课", "today"), ("按条件筛选", "filter"), ("热门推荐", "hot")],
-    ),
-    (
-        "热门",
-        "🔥 热门推荐入口",
-        "点击下方查看近期热门老师。",
-        [("热门推荐", "hot"), ("帮我推荐", "recommend"), ("按条件筛选", "filter")],
-    ),
-    (
-        "推荐",
-        "🎯 推荐入口",
-        "想让 Bot 根据你的浏览、搜索和收藏推荐老师，请进入私聊使用。",
-        [("为我推荐", "recommend"), ("热门推荐", "hot"), ("按条件筛选", "filter")],
-    ),
-    (
-        "筛选",
-        "🔎 条件筛选入口",
-        "可以按地区、价格、标签查找老师。",
-        [("按条件筛选", "filter"), ("今日开课", "today"), ("热门推荐", "hot")],
+        [("打开今日开课", "today")],
     ),
 )
 
@@ -846,6 +824,42 @@ async def _migrate_002_quick_entry_keywords(db: aiosqlite.Connection) -> None:
     await db.commit()
 
 
+async def _migrate_004_teacher_is_deleted(db: aiosqlite.Connection) -> None:
+    """软删除：teachers 表添加 is_deleted 列（与 is_active 正交）。
+
+    is_active 管"停用/启用"（可一键恢复，仍显示在管理列表）；
+    is_deleted 管"删除/恢复"（从所有用户端 + 管理端列表彻底隐藏，超管可恢复）。
+    SQLite 不支持 ADD COLUMN IF NOT EXISTS，PRAGMA 检测后再 ADD，幂等可重入。
+    """
+    cur = await db.execute("PRAGMA table_info(teachers)")
+    rows = await cur.fetchall()
+    existing = {row["name"] for row in rows}
+    if "is_deleted" not in existing:
+        try:
+            await db.execute(
+                "ALTER TABLE teachers ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
+    await db.commit()
+
+
+async def _migrate_005_remove_quick_entry_keywords(db: aiosqlite.Connection) -> None:
+    """A0 后下线群组快捷词 菜单(启动) / 热门(老师) / 推荐(老师) / 筛选(老师)，仅保留"今日开课"。
+
+    运营曾在 admin 界面把 seeded 行 trigger 改名（菜单→启动、今日→今日开课、
+    热门→热门老师 等），故按"保留式 + seeded 护栏"删除：只删 seeded=1 且
+    trigger 不属于"今日"白名单的行——抗改名，且绝不误删运营手建（seeded=0）行。
+    """
+    await db.execute(
+        """
+        DELETE FROM quick_entry_keywords
+        WHERE seeded = 1 AND trigger NOT IN ('今日', '今日开课')
+        """
+    )
+    await db.commit()
+
+
 # 未来新增迁移在此追加。
 MIGRATIONS: list[Migration] = [
     Migration(
@@ -867,6 +881,20 @@ MIGRATIONS: list[Migration] = [
         # 时报 NOT NULL 错；启动失败便于 update.sh rollback 比静默放过更安全
         kind="hard",
         func=_migrate_003_teacher_reviews_gesture_nullable,
+    ),
+    Migration(
+        version="20260613_001_teacher_is_deleted",
+        name="软删除：teachers.is_deleted 列",
+        # hard：用户/管理端全量查询都将引用 is_deleted，缺列会让 SELECT 报错；
+        # 启动失败便于 update.sh rollback，比静默放过更安全
+        kind="hard",
+        func=_migrate_004_teacher_is_deleted,
+    ),
+    Migration(
+        version="20260613_002_remove_quick_entry_keywords",
+        name="下线群组快捷词 菜单/热门/推荐/筛选，仅保留今日",
+        kind="soft",  # 删 seed 行失败不应阻断启动；与 002 同档
+        func=_migrate_005_remove_quick_entry_keywords,
     ),
 ]
 
@@ -1506,13 +1534,24 @@ async def get_teacher(user_id: int) -> Optional[dict]:
         await db.close()
 
 
-async def get_all_teachers(active_only: bool = True) -> list[dict]:
-    """获取所有老师"""
+async def get_all_teachers(
+    active_only: bool = True, include_deleted: bool = False
+) -> list[dict]:
+    """获取所有老师
+
+    active_only=True 仅返回启用（is_active=1）；include_deleted=False（默认）排除已软删除。
+    管理端停用列表/档案列表用默认值即自动排除已删；恢复列表用 get_deleted_teachers()。
+    """
     db = await get_db()
     try:
-        query = "SELECT * FROM teachers"
+        where: list[str] = []
         if active_only:
-            query += " WHERE is_active = 1"
+            where.append("is_active = 1")
+        if not include_deleted:
+            where.append("is_deleted = 0")
+        query = "SELECT * FROM teachers"
+        if where:
+            query += " WHERE " + " AND ".join(where)
         query += " ORDER BY created_at"
         cursor = await db.execute(query)
         rows = await cursor.fetchall()
@@ -1526,7 +1565,7 @@ async def get_teacher_by_name(display_name: str) -> Optional[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT * FROM teachers WHERE display_name = ? AND is_active = 1 COLLATE NOCASE",
+            "SELECT * FROM teachers WHERE display_name = ? AND is_active = 1 AND is_deleted = 0 COLLATE NOCASE",
             (display_name,),
         )
         row = await cursor.fetchone()
@@ -1542,7 +1581,7 @@ async def search_teachers_by_keyword(keyword: str) -> list[dict]:
         # 匹配 region、price，或 tags JSON 数组中包含该关键词
         cursor = await db.execute(
             """SELECT * FROM teachers
-            WHERE is_active = 1 AND (
+            WHERE is_active = 1 AND is_deleted = 0 AND (
                 region = ? COLLATE NOCASE
                 OR price = ? COLLATE NOCASE
                 OR EXISTS (
@@ -1589,7 +1628,7 @@ async def search_teachers_smart_and(
     try:
         # 1. 加载所有 active 老师的 region / price / tags，构造小写集合用于类型识别
         cursor = await db.execute(
-            "SELECT region, price, tags FROM teachers WHERE is_active = 1"
+            "SELECT region, price, tags FROM teachers WHERE is_active = 1 AND is_deleted = 0"
         )
         rows = await cursor.fetchall()
 
@@ -1660,7 +1699,7 @@ async def search_teachers_smart_and(
             conditions.append("(" + " OR ".join(sub) + ")")
 
         query = (
-            "SELECT * FROM teachers WHERE is_active = 1 AND "
+            "SELECT * FROM teachers WHERE is_active = 1 AND is_deleted = 0 AND "
             + " AND ".join(conditions)
             + " ORDER BY created_at"
         )
@@ -1707,7 +1746,7 @@ async def get_checked_in_teachers(date_str: str) -> list[dict]:
         cursor = await db.execute(
             """SELECT t.* FROM teachers t
             INNER JOIN checkins c ON t.user_id = c.teacher_id
-            WHERE c.checkin_date = ? AND t.is_active = 1
+            WHERE c.checkin_date = ? AND t.is_active = 1 AND t.is_deleted = 0
             ORDER BY c.created_at""",
             (date_str,),
         )
@@ -1723,7 +1762,7 @@ async def get_unchecked_teachers(date_str: str) -> list[dict]:
     try:
         cursor = await db.execute(
             """SELECT t.* FROM teachers t
-            WHERE t.is_active = 1
+            WHERE t.is_active = 1 AND t.is_deleted = 0
               AND NOT EXISTS (
                   SELECT 1 FROM checkins c
                   WHERE c.teacher_id = t.user_id AND c.checkin_date = ?
@@ -1746,7 +1785,7 @@ async def get_teacher_counts() -> dict:
                 COUNT(*) AS total,
                 SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active,
                 SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) AS inactive
-            FROM teachers"""
+            FROM teachers WHERE is_deleted = 0"""
         )
         row = await cursor.fetchone()
         return {
@@ -1780,6 +1819,44 @@ async def get_checkin_stats(date_str: str) -> dict:
 async def enable_teacher(user_id: int) -> bool:
     """启用老师"""
     return await update_teacher(user_id, "is_active", 1)
+
+
+async def soft_delete_teacher(user_id: int) -> bool:
+    """软删除老师：从所有用户端 + 管理端列表彻底隐藏，数据保留，可由超管恢复。
+
+    与 is_active（停用）正交：删除后不论原来启用/停用，一律隐藏。
+    """
+    db = await get_db()
+    try:
+        await db.execute("UPDATE teachers SET is_deleted = 1 WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def restore_teacher(user_id: int) -> bool:
+    """恢复软删除的老师（超管）。恢复后回到删除前的 is_active 态（原为停用的仍需再启用）。"""
+    db = await get_db()
+    try:
+        await db.execute("UPDATE teachers SET is_deleted = 0 WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
+async def get_deleted_teachers() -> list[dict]:
+    """已软删除的老师列表（供"恢复老师"使用）。"""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM teachers WHERE is_deleted = 1 ORDER BY created_at"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
 
 
 # ============ Config CRUD ============
@@ -2093,7 +2170,7 @@ async def list_user_favorites(user_id: int, active_only: bool = True) -> list[di
             """SELECT t.*, f.created_at AS favorited_at
                FROM favorites f
                INNER JOIN teachers t ON f.teacher_id = t.user_id
-               WHERE f.user_id = ?"""
+               WHERE f.user_id = ? AND t.is_deleted = 0"""
         )
         if active_only:
             query += " AND t.is_active = 1"
@@ -2139,6 +2216,7 @@ async def list_user_favorites_signed_in(
                WHERE f.user_id = ?
                  AND c.checkin_date = ?
                  AND t.is_active = 1
+                 AND t.is_deleted = 0
                ORDER BY c.created_at""",
             (date_str, user_id, date_str),
         )
@@ -2192,6 +2270,7 @@ async def get_notification_targets(date_str: str) -> list[dict]:
                  AND u.notify_enabled = 1
                  AND c.checkin_date = ?
                  AND t.is_active = 1
+                 AND t.is_deleted = 0
                ORDER BY u.user_id, c.created_at""",
             (date_str,),
         )
@@ -2574,7 +2653,7 @@ async def get_dashboard_metrics(today_str: str, since_str: str) -> dict:
             "SELECT "
             "SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS active, "
             "SUM(CASE WHEN is_active=0 THEN 1 ELSE 0 END) AS inactive "
-            "FROM teachers"
+            "FROM teachers WHERE is_deleted = 0"
         )
         row = await cur.fetchone()
         active_teachers = (row["active"] if row else 0) or 0
@@ -3084,7 +3163,7 @@ async def list_recent_teacher_views(user_id: int, limit: int = 10) -> list[dict]
             """SELECT t.*, v.viewed_at
                FROM user_teacher_views v
                INNER JOIN teachers t ON v.teacher_id = t.user_id
-               WHERE v.user_id = ? AND t.is_active = 1
+               WHERE v.user_id = ? AND t.is_active = 1 AND t.is_deleted = 0
                ORDER BY v.viewed_at DESC
                LIMIT ?""",
             (user_id, limit),
@@ -3106,7 +3185,7 @@ async def get_top_favorited_teachers(limit: int = 10) -> list[dict]:
             """SELECT t.*, COUNT(f.user_id) AS fav_count
                FROM teachers t
                LEFT JOIN favorites f ON t.user_id = f.teacher_id
-               WHERE t.is_active = 1
+               WHERE t.is_active = 1 AND t.is_deleted = 0
                GROUP BY t.user_id
                HAVING fav_count > 0
                ORDER BY fav_count DESC, t.created_at ASC
@@ -3180,7 +3259,8 @@ async def get_sorted_teachers(
     today_str = _today_str_local()
     sign_date = signed_in_date or today_str
 
-    where_clauses: list[str] = []
+    # is_deleted=0 无条件排除（软删除老师对所有列表彻底隐藏，不受 active_only 影响）
+    where_clauses: list[str] = ["t.is_deleted = 0"]
     if active_only:
         where_clauses.append("t.is_active = 1")
     if signed_in_date is not None:
@@ -3246,18 +3326,6 @@ async def get_sorted_teachers(
         await db.close()
 
 
-async def get_hot_teachers(limit: int = 10) -> list[dict]:
-    """普通用户"热门老师"列表：按统一排序取前 N 位 active 老师
-
-    不要求今日签到（与频道发布不同），目的是给用户提供长期可见的推荐。
-    """
-    return await get_sorted_teachers(
-        active_only=True,
-        signed_in_date=None,
-        limit=limit,
-    )
-
-
 async def list_featured_teachers() -> list[dict]:
     """列出所有 is_featured=1 的老师（含已过期），供管理员后台展示
 
@@ -3268,7 +3336,7 @@ async def list_featured_teachers() -> list[dict]:
     try:
         cur = await db.execute(
             "SELECT * FROM teachers "
-            "WHERE is_featured = 1 "
+            "WHERE is_featured = 1 AND is_deleted = 0 "
             "ORDER BY COALESCE(sort_weight, 0) DESC, created_at ASC"
         )
         rows = await cur.fetchall()
@@ -3549,9 +3617,9 @@ async def get_today_teacher_statuses(
        available_time 可显示'未设置'。"
     所以这里返回 daily_status 为 NULL 时上层把它当作 available 渲染即可。
     """
-    where = "1=1"
+    where = "t.is_deleted = 0"
     if active_only:
-        where = "t.is_active = 1"
+        where = "t.is_active = 1 AND t.is_deleted = 0"
 
     db = await get_db()
     try:
@@ -4024,325 +4092,6 @@ async def get_publish_template(template_id: int) -> Optional[dict]:
         await db.close()
 
 
-# ============ 条件筛选 / 智能推荐 (Phase 7.2) ============
-
-
-async def get_filter_options(
-    option_type: str,
-    limit: int = 12,
-) -> list[dict]:
-    """统计当前 active 老师的某维度可选值（Phase 7.2 §四）
-
-    支持类型：
-        - region : SELECT region, COUNT(*) GROUP BY region
-        - price  : SELECT price, COUNT(*) GROUP BY price
-        - tag    : 拆 tags JSON 后聚合
-
-    返回 [{"value": str, "count": int}, ...] 按 count DESC，limit 限制条数。
-    类型不支持、teachers 表缺失、SQL 异常 → 返回 []。
-    """
-    if option_type not in {"region", "price", "tag"}:
-        return []
-    if limit <= 0:
-        return []
-
-    db = await get_db()
-    try:
-        if option_type == "tag":
-            cur = await db.execute(
-                """SELECT LOWER(TRIM(je.value)) AS value, COUNT(*) AS n
-                   FROM teachers t, json_each(t.tags) je
-                   WHERE t.is_active = 1
-                     AND je.value IS NOT NULL
-                     AND TRIM(je.value) != ''
-                   GROUP BY LOWER(TRIM(je.value))
-                   ORDER BY n DESC, value ASC
-                   LIMIT ?""",
-                (limit,),
-            )
-        else:
-            col = option_type  # 已校验白名单
-            cur = await db.execute(
-                f"""SELECT {col} AS value, COUNT(*) AS n
-                    FROM teachers
-                    WHERE is_active = 1
-                      AND {col} IS NOT NULL
-                      AND TRIM({col}) != ''
-                    GROUP BY {col}
-                    ORDER BY n DESC, {col} ASC
-                    LIMIT ?""",
-                (limit,),
-            )
-        rows = await cur.fetchall()
-        return [
-            {"value": str(r["value"]), "count": int(r["n"] or 0)}
-            for r in rows if r["value"] is not None
-        ]
-    except Exception as e:
-        logger.warning("get_filter_options(%s) 失败: %s", option_type, e)
-        return []
-    finally:
-        await db.close()
-
-
-async def search_teachers_by_filter(
-    filter_type: str,
-    value: Optional[str] = None,
-    limit: int = 20,
-) -> list[dict]:
-    """根据筛选维度返回 active 老师列表（Phase 7.2 §四）
-
-    filter_type:
-        - region / price / tag : 需要 value，按值匹配（COLLATE NOCASE）
-        - today                : 当天已签到 + status != unavailable
-        - hot                  : 复用 get_hot_teachers
-        - new                  : 按 created_at DESC
-
-    返回项尽量带 daily_status / signed_in_today / fav_count，供结果页渲染。
-    任何异常路径都做兼容降级，不抛。
-    """
-    if limit <= 0:
-        return []
-
-    today_str = _today_str_local()
-
-    # --- hot ---
-    if filter_type == "hot":
-        try:
-            return await get_hot_teachers(limit=limit)
-        except Exception as e:
-            logger.warning("get_hot_teachers 失败，降级到 active 老师: %s", e)
-            try:
-                fallback = await get_all_teachers(active_only=True)
-                return fallback[:limit]
-            except Exception:
-                return []
-
-    # --- today ---
-    if filter_type == "today":
-        try:
-            return await get_sorted_teachers(
-                active_only=True,
-                signed_in_date=today_str,
-                exclude_unavailable=True,
-                limit=limit,
-            )
-        except Exception as e:
-            logger.warning("get_sorted_teachers(today) 失败，降级 checkins: %s", e)
-            try:
-                rows = await get_checked_in_teachers(today_str)
-                return rows[:limit]
-            except Exception:
-                return []
-
-    # --- new ---
-    if filter_type == "new":
-        db = await get_db()
-        try:
-            cur = await db.execute(
-                """SELECT t.*,
-                          (SELECT COUNT(*) FROM favorites f
-                           WHERE f.teacher_id = t.user_id) AS fav_count,
-                          CASE WHEN EXISTS (
-                              SELECT 1 FROM checkins c
-                              WHERE c.teacher_id = t.user_id
-                                AND c.checkin_date = ?
-                          ) THEN 1 ELSE 0 END AS signed_in_today,
-                          s.status AS daily_status,
-                          s.available_time AS daily_available_time,
-                          s.note AS daily_note
-                     FROM teachers t
-                     LEFT JOIN teacher_daily_status s
-                       ON s.teacher_id = t.user_id AND s.status_date = ?
-                    WHERE t.is_active = 1
-                    ORDER BY t.created_at DESC
-                    LIMIT ?""",
-                (today_str, today_str, limit),
-            )
-            return [dict(r) for r in await cur.fetchall()]
-        except Exception as e:
-            logger.warning("search by 'new' 失败，降级到 created_at: %s", e)
-            try:
-                cur = await db.execute(
-                    "SELECT * FROM teachers WHERE is_active = 1 "
-                    "ORDER BY created_at DESC LIMIT ?",
-                    (limit,),
-                )
-                return [dict(r) for r in await cur.fetchall()]
-            except Exception:
-                return []
-        finally:
-            await db.close()
-
-    # --- region / price / tag ---
-    if filter_type in ("region", "price", "tag"):
-        if value is None or not str(value).strip():
-            return []
-        v_lower = str(value).strip().lower()
-
-        # 拿全量带 daily_status 的排序结果，再 Python 端按 value 过滤
-        try:
-            all_sorted = await get_sorted_teachers(active_only=True)
-        except Exception as e:
-            logger.warning("get_sorted_teachers 失败，降级 get_all_teachers: %s", e)
-            try:
-                all_sorted = await get_all_teachers(active_only=True)
-            except Exception:
-                return []
-
-        results: list[dict] = []
-        for t in all_sorted:
-            if filter_type == "region":
-                if (t.get("region") or "").strip().lower() == v_lower:
-                    results.append(t)
-            elif filter_type == "price":
-                if (t.get("price") or "").strip().lower() == v_lower:
-                    results.append(t)
-            elif filter_type == "tag":
-                try:
-                    tags = json.loads(t.get("tags") or "[]")
-                    if isinstance(tags, list):
-                        for tag in tags:
-                            if str(tag).strip().lower() == v_lower:
-                                results.append(t)
-                                break
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    continue
-            if len(results) >= limit:
-                break
-        return results
-
-    return []
-
-
-async def get_recommended_teachers_for_user(
-    user_id: int,
-    limit: int = 5,
-) -> list[dict]:
-    """根据 user_tags 给用户推荐老师（Phase 7.2 §六）
-
-    评分构成：
-        + 用户标签命中：每命中一个老师 tag/region/price，加 (该用户标签 score * 10)
-        + 今日可约：+30（已签到且 daily_status != unavailable）
-        + is_effective_featured：+50
-        + hot_score：直接相加
-        + fav_count * 3
-
-    降级：
-        - 用户无 user_tags 记录 → get_hot_teachers(limit)
-        - get_hot_teachers 缺失 → get_all_teachers(active_only=True)[:limit]
-        - 全程异常 → []
-    """
-    if limit <= 0:
-        return []
-
-    today_str = _today_str_local()
-
-    # --- 读用户画像 ---
-    try:
-        raw_tags = await get_user_tags(user_id, limit=10)
-    except Exception as e:
-        logger.warning("get_user_tags(%s) 失败，降级到 hot: %s", user_id, e)
-        raw_tags = []
-
-    if not raw_tags:
-        # spec §六.9：无画像 → 回退 get_hot_teachers
-        try:
-            return await get_hot_teachers(limit=limit)
-        except Exception:
-            try:
-                fallback = await get_all_teachers(active_only=True)
-                return fallback[:limit]
-            except Exception:
-                return []
-
-    user_tag_map: dict[str, int] = {}
-    for r in raw_tags:
-        tag = (r.get("tag") or "").strip().lower()
-        if not tag:
-            continue
-        try:
-            user_tag_map[tag] = int(r.get("score") or 0)
-        except (ValueError, TypeError):
-            user_tag_map[tag] = 0
-
-    # --- 取所有 active 老师（带 daily_status / signed_in / fav_count） ---
-    try:
-        teachers = await get_sorted_teachers(active_only=True)
-    except Exception as e:
-        logger.warning("get_sorted_teachers 失败，降级 get_all_teachers: %s", e)
-        try:
-            teachers = await get_all_teachers(active_only=True)
-        except Exception:
-            return []
-
-    scored: list[tuple[float, dict]] = []
-    for t in teachers:
-        score = 0.0
-
-        # 1. 标签 / 地区 / 价格命中
-        try:
-            raw = t.get("tags") or "[]"
-            tags = json.loads(raw) if raw else []
-            if not isinstance(tags, list):
-                tags = []
-        except (json.JSONDecodeError, TypeError, ValueError):
-            tags = []
-        for tag in tags:
-            tl = str(tag).strip().lower()
-            if tl and tl in user_tag_map:
-                score += user_tag_map[tl] * 10
-
-        region_lower = (t.get("region") or "").strip().lower()
-        if region_lower and region_lower in user_tag_map:
-            score += user_tag_map[region_lower] * 10
-
-        price_lower = (t.get("price") or "").strip().lower()
-        if price_lower and price_lower in user_tag_map:
-            score += user_tag_map[price_lower] * 10
-
-        # 2. 今日可约 +30
-        try:
-            signed = bool(t.get("signed_in_today"))
-            d_status = t.get("daily_status")
-            if signed and d_status != "unavailable":
-                score += 30
-        except Exception:
-            pass
-
-        # 3. is_effective_featured +50
-        try:
-            if is_effective_featured(t, today_str):
-                score += 50
-        except Exception:
-            pass
-
-        # 4. hot_score
-        try:
-            score += float(t.get("hot_score") or 0)
-        except (ValueError, TypeError):
-            pass
-
-        # 5. fav_count * 3
-        try:
-            score += float(t.get("fav_count") or 0) * 3
-        except (ValueError, TypeError):
-            pass
-
-        scored.append((score, t))
-
-    # 排序：score DESC, signed_in_today DESC, created_at ASC
-    scored.sort(
-        key=lambda x: (
-            -x[0],
-            -(int(x[1].get("signed_in_today") or 0)),
-            str(x[1].get("created_at") or ""),
-        )
-    )
-
-    return [t for _, t in scored[:limit]]
-
-
 # ============ 相似推荐 / 搜索历史 (Phase 7.3) ============
 
 
@@ -4671,7 +4420,7 @@ async def get_report_stats(start_date: str, end_date: str) -> dict:
 
                 cur = await db.execute(
                     f"SELECT t.display_name, ({score_expr}) AS score "
-                    "FROM teachers t WHERE t.is_active = 1 "
+                    "FROM teachers t WHERE t.is_active = 1 AND t.is_deleted = 0 "
                     f"ORDER BY {order_sql} LIMIT 10"
                 )
                 rows = await cur.fetchall()

@@ -169,50 +169,14 @@ async def _handle_reimburse_pool(message: types.Message) -> bool:
 
 
 # 每条：banner / body / 3 个 (button_text, deep_link_target) 按钮
+# A0 后下线群组快捷词 菜单 / 热门 / 推荐 / 筛选，仅保留"今日"；其按钮精简为仅
+# "打开今日开课"（热门 / 筛选 deep link 已随功能下线）。见 docs/DELETED-FEATURES.md。
 _QUICK_ENTRY_CONFIG: dict[str, dict] = {
-    "菜单": {
-        "banner": "📌 痴颜录 Bot 菜单",
-        "body": "你可以点击下方进入私聊使用：",
-        "buttons": [
-            ("打开菜单", "menu"),
-            ("今日开课", "today"),
-            ("热门推荐", "hot"),
-        ],
-    },
     "今日": {
         "banner": "📚 今日开课入口",
         "body": "点击下方进入私聊查看今日开课老师。",
         "buttons": [
             ("打开今日开课", "today"),
-            ("按条件筛选", "filter"),
-            ("热门推荐", "hot"),
-        ],
-    },
-    "热门": {
-        "banner": "🔥 热门推荐入口",
-        "body": "点击下方查看近期热门老师。",
-        "buttons": [
-            ("热门推荐", "hot"),
-            ("帮我推荐", "recommend"),
-            ("按条件筛选", "filter"),
-        ],
-    },
-    "推荐": {
-        "banner": "🎯 推荐入口",
-        "body": "想让 Bot 根据你的浏览、搜索和收藏推荐老师，请进入私聊使用。",
-        "buttons": [
-            ("为我推荐", "recommend"),
-            ("热门推荐", "hot"),
-            ("按条件筛选", "filter"),
-        ],
-    },
-    "筛选": {
-        "banner": "🔎 条件筛选入口",
-        "body": "可以按地区、价格、标签查找老师。",
-        "buttons": [
-            ("按条件筛选", "filter"),
-            ("今日开课", "today"),
-            ("热门推荐", "hot"),
         ],
     },
 }

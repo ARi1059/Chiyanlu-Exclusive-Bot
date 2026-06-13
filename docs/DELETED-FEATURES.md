@@ -185,3 +185,51 @@ git checkout <Phase A0 commit>^ -- \
 - `docs/DESIGN.md` — 抽奖相关章节（待手动删除）
 - `docs/ROADMAP-PLAN.md` — 抽奖相关 Sprint（待手动删除）
 - 方案文档 — `C:\Users\Administrator\.claude\plans\linked-wobbling-dusk.md`（方案 A v2 § A.4 Phase A0 / 方案 B v2 § B.4 Phase 0）
+
+---
+
+# A0 后续下线（2026-06-13）：热门老师 / 帮我推荐 / 按条件找
+
+> **执行日期**：2026-06-13
+> **目的**：下线面向用户的「热门老师 / 推荐老师 / 筛选老师」三项私聊功能，并移除群内对应关键词自动回复。**保留「今日开课」**。
+
+## 下线范围
+
+| 功能 | 涉及 callback | 处理 |
+|---|---|---|
+| 热门老师（用户侧列表） | `user:hot` | 删 `hot_teachers.py` 的 `cb_user_hot` 及独占 helper `get_hot_teachers`；**保留后台 `admin:hot_manage` 推荐位管理**（`is_featured` 仍是全站排序基础设施） |
+| 帮我推荐 | `user:recommend` / `user:recommend:refresh` | 删整文件 `user_recommend.py` + DB `get_recommended_teachers_for_user` |
+| 按条件找 | `user:filter*` | 删整文件 `user_filter.py` + DB `get_filter_options` / `search_teachers_by_filter` + FSM `FilterStates` |
+| 群组快捷词 | 群内发「启动/热门老师/推荐老师/筛选老师」 | 删 `_QUICK_ENTRY_CONFIG` / `_QUICK_ENTRY_SEED` 四项 + 迁移 `20260613_002` 删 DB seeded 行；**保留「今日开课」** |
+
+## 删除 / 修改的文件
+
+**删除**：`bot/handlers/user_recommend.py`、`bot/handlers/user_filter.py`
+
+**修改**：
+- `bot/routers.py` — 取消 `user_filter_router` / `user_recommend_router` 注册（留注释），router 总数 33 → 31
+- `bot/handlers/hot_teachers.py` — 删用户侧 `cb_user_hot`，保留后台管理段
+- `bot/database.py` — 删 4 个独占 helper；`_QUICK_ENTRY_SEED` 仅留「今日」；新增迁移 `_migrate_005`
+- `bot/handlers/keyword.py` — `_QUICK_ENTRY_CONFIG` 仅留「今日」（按钮精简为仅「打开今日开课」）
+- `bot/handlers/start_router.py` — deep link 删 `hot`/`filter`/`recommend`，保留 `menu`/`today`
+- `bot/keyboards/user_kb.py` — 主菜单 / 找老师 / 空收藏 / 新手引导删按钮，死按钮改向 `user:today` / `user:search`
+- `bot/handlers/user_panel.py` — 删 `cb_onboarding_hot`
+- `bot/handlers/user_history.py` / `teacher_detail.py` — 空态死按钮改向今日开课
+- `bot/states/user_states.py` — 删 `FilterStates`
+
+## 迁移
+
+- `20260613_002_remove_quick_entry_keywords`（kind=soft）：`DELETE FROM quick_entry_keywords WHERE seeded=1 AND trigger NOT IN ('今日','今日开课')`。抗运营改名（`seeded=1` 护栏绝不误删运营手建行）。
+- 附：`20260613_001_teacher_is_deleted`（kind=hard）为同批「老师软删除」功能新增列，详见 README 老师管理章节。
+
+## 留存数据 / 回滚
+
+- `quick_entry_keywords` 表保留（仅删 seeded 行）；`teachers.is_featured` 等推荐位列保留（后台仍用）。
+- 历史老消息中的 `user:hot` / `user:recommend` / `user:filter` 按钮点击后无响应（aiogram 默认 warning，不抛错），与 Phase A0 一致，不动 `noop_handlers.py`。
+- 回滚：恢复上述文件 + 删迁移 `20260613_002` 注册即可；推荐位 / 今日开课数据未受影响。
+
+## 保留（易混淆，明确不动）
+
+- 后台「🔥 热门推荐管理」`admin:hot_manage`（推荐位 `is_featured`）。
+- 搜索 0 结果推荐子页 `search:suggest:today` / `search:suggest:hot`（搜索功能内置，独立于 `user:hot`）。
+- 「今日开课」全部（私聊 `user:today` / 群组「今日」快捷词 / deep link `today`）。
