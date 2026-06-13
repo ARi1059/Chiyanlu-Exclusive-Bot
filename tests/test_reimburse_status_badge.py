@@ -375,4 +375,5 @@ def test_user_overview_handles_over_used_pool_gracefully(temp_db):
 
 def test_no_schema_migration_added():
     from bot.database import MIGRATIONS
-    assert {m.version for m in MIGRATIONS} == {"20260520_001_teacher_draft_states", "20260520_002_quick_entry_keywords", "20260521_001_teacher_reviews_gesture_nullable", "20260613_001_teacher_is_deleted", "20260613_002_remove_quick_entry_keywords"}
+    from _migration_baseline import EXPECTED_MIGRATION_VERSIONS
+    assert {m.version for m in MIGRATIONS} == EXPECTED_MIGRATION_VERSIONS

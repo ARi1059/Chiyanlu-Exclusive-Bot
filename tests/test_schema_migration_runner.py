@@ -92,13 +92,8 @@ def test_module_level_migrations_is_baseline():
     UX-9.1（20260520_002_quick_entry_keywords）追加第二条；
     2026-05-21 评价前置改造追加第三条（teacher_reviews.gesture_photo_file_id 改可空）。"""
     assert isinstance(db_mod.MIGRATIONS, list)
-    assert {m.version for m in db_mod.MIGRATIONS} == {
-        "20260520_001_teacher_draft_states",
-        "20260520_002_quick_entry_keywords",
-        "20260521_001_teacher_reviews_gesture_nullable",
-        "20260613_001_teacher_is_deleted",
-        "20260613_002_remove_quick_entry_keywords",
-    }
+    from _migration_baseline import EXPECTED_MIGRATION_VERSIONS
+    assert {m.version for m in db_mod.MIGRATIONS} == EXPECTED_MIGRATION_VERSIONS
 
 
 # ============ 成功路径 ============
