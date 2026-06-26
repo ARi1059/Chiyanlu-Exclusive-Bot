@@ -14,7 +14,9 @@ import logging
 from aiohttp import web
 
 from bot.database import (
+    _today_str_local,
     add_favorite,
+    get_checked_in_teachers,
     get_teacher_channel_post,
     list_user_favorites,
     remove_favorite,
@@ -38,6 +40,7 @@ async def get_favorites(request: web.Request) -> web.Response:
     """当前用户收藏的老师（卡片字段，与 /api/teachers 同形）。"""
     uid = request["session"]["uid"]
     rows = await list_user_favorites(uid)  # 老师主键在 user_id 键上
+    checked_in = {t["user_id"] for t in await get_checked_in_teachers(_today_str_local())}
     items = []
     for t in rows:
         tid = t["user_id"]
@@ -49,7 +52,7 @@ async def get_favorites(request: web.Request) -> web.Response:
             "region": t.get("region") or "",
             "price": t.get("price") or "",
             "tags": _parse_tags(t.get("tags")),
-            "available": bool(t.get("is_active")),
+            "available": tid in checked_in,
             "rating": {
                 "avg": round(float((post or {}).get("avg_overall") or 0), 1),
                 "count": int((post or {}).get("review_count") or 0),

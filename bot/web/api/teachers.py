@@ -14,9 +14,12 @@ import logging
 from aiohttp import web
 
 from bot.database import (
+    _today_str_local,
     get_all_teachers,
+    get_checked_in_teachers,
     get_teacher_channel_post,
     get_teacher_full_profile,
+    is_checked_in,
     list_approved_reviews,
     list_user_favorites,
 )
@@ -61,10 +64,15 @@ def _has_photo(teacher: dict) -> bool:
 
 
 async def get_teachers(request: web.Request) -> web.Response:
-    """列出在册老师（is_active=1 且未删）。任意已登录角色可访问。"""
+    """列出在册老师（is_active=1 且未删）。任意已登录角色可访问。
+
+    available = 老师今日是否已签到（"今日可约/今日休息"），而非在册状态。
+    """
     uid = request["session"]["uid"]
     favs = await list_user_favorites(uid)
     fav_ids = {f["user_id"] for f in favs}  # 收藏列表里老师主键在 user_id 键
+    today = _today_str_local()
+    checked_in = {t["user_id"] for t in await get_checked_in_teachers(today)}
     teachers = await get_all_teachers(active_only=True, include_deleted=False)
     items = []
     for t in teachers:
@@ -76,7 +84,7 @@ async def get_teachers(request: web.Request) -> web.Response:
             "region": t.get("region") or "",
             "price": t.get("price") or "",
             "tags": _parse_tags(t.get("tags")),
-            "available": bool(t.get("is_active")),
+            "available": tid in checked_in,
             "rating": _rating(post),
             "has_photo": _has_photo(t),
             "photo_url": signed_photo_url(request, tid, _has_photo(t)),
@@ -119,13 +127,15 @@ async def get_teacher_detail(request: web.Request) -> web.Response:
         "created_at": r.get("created_at"),
     } for r in raw_reviews]
 
+    available = await is_checked_in(tid, _today_str_local())
+
     return web.json_response({
         "id": tid,
         "name": teacher.get("display_name") or "",
         "region": teacher.get("region") or "",
         "price": teacher.get("price") or "",
         "tags": _parse_tags(teacher.get("tags")),
-        "available": bool(teacher.get("is_active")),
+        "available": available,
         "rating": _rating(post),
         "dims": dims,
         "reviews": reviews,
