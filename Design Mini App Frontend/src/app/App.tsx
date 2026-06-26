@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import {
-  bootstrapAuth, getTeachers, getTeacherDetail, teacherPhotoUrl,
+  bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
 } from "../lib/api";
@@ -38,6 +38,7 @@ interface Teacher {
   available: boolean;
   rating: { avg: number; count: number };
   hasPhoto: boolean;
+  photoUrl: string | null;
   // UI-only（非数据库字段）
   colorFrom: string;
   colorTo: string;
@@ -67,6 +68,7 @@ function toTeacher(t: ApiTeacher): Teacher {
     available: t.available,
     rating: t.rating ?? { avg: 0, count: 0 },
     hasPhoto: t.has_photo,
+    photoUrl: t.photo_url ?? null,
     colorFrom, colorTo,
     favorited: t.favorited ?? false,
     notifyEnabled: false,
@@ -124,12 +126,12 @@ function RoleBadge({ role }: { role: Role }) {
  * 封面照片层：有照片则 <img> 覆盖在渐变+首字之上；无照片或加载失败回退渐变。
  * 放在渐变/首字之后、覆盖层 badge 之前；badge 用 z-10 压在照片上方。
  */
-function CoverPhoto({ id, name, hasPhoto }: { id: number; name: string; hasPhoto: boolean }) {
+function CoverPhoto({ url, name }: { url: string | null | undefined; name: string }) {
   const [failed, setFailed] = useState(false);
-  if (!hasPhoto || failed) return null;
+  if (!url || failed) return null;
   return (
     <img
-      src={teacherPhotoUrl(id)}
+      src={url}
       alt={name}
       loading="lazy"
       onError={() => setFailed(true)}
@@ -163,7 +165,7 @@ function TeacherCard({
         <span className="text-[72px] font-bold text-white/12 select-none z-0 leading-none">
           {teacher.name[0]}
         </span>
-        <CoverPhoto id={teacher.id} name={teacher.name} hasPhoto={teacher.hasPhoto} />
+        <CoverPhoto url={teacher.photoUrl} name={teacher.name} />
         <div className="absolute top-2 right-2 z-10">
           {teacher.available
             ? <span className="text-[10px] bg-[#4fc97a]/20 text-[#4fc97a] border border-[#4fc97a]/30 px-2 py-0.5 rounded-full">今日可约</span>
@@ -379,7 +381,8 @@ function ProfileView({
   const idText = profile ? `ID: ${profile.user_id}` : "ID: 123456789";
   const points = profile ? profile.points.toLocaleString() : "1,280";
   const reviewVal = profile ? String(profile.review_count) : "8";
-  const favVal = profile ? String(profile.favorite_count) : String(favCount);
+  // 收藏数用实时本地态（与收藏页一致，收藏后即时更新）；profile.favorite_count 仅启动快照。
+  const favVal = String(favCount);
 
   return (
     <div className="px-4 pt-4 pb-6 space-y-3">
@@ -680,7 +683,7 @@ function TeacherDetail({
         style={{ background: `linear-gradient(135deg, ${teacher.colorFrom}, ${teacher.colorTo})` }}
       >
         <span className="absolute inset-0 flex items-center justify-center text-[120px] font-bold text-white/8 select-none leading-none z-0">{teacher.name[0]}</span>
-        <CoverPhoto id={teacher.id} name={teacher.name} hasPhoto={teacher.hasPhoto} />
+        <CoverPhoto url={teacher.photoUrl} name={teacher.name} />
         <div className="flex items-center justify-between relative z-10">
           <button onClick={onBack} className="p-2 rounded-full bg-black/20 backdrop-blur-sm text-white">
             <ChevronLeft size={20} />

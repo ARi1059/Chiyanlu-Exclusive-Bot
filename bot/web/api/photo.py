@@ -14,9 +14,19 @@ from collections import OrderedDict
 from aiohttp import web
 
 from bot.database import get_teacher
-from bot.web.keys import APP_BOT
+from bot.web.auth import sign_photo, verify_photo
+from bot.web.keys import APP_BOT, APP_BOT_TOKEN
 
 logger = logging.getLogger(__name__)
+
+
+def signed_photo_url(request: web.Request, teacher_id: int, has_photo: bool):
+    """构造带签名的照片 URL（供老师/收藏端点放进响应）。无照片返回 None。"""
+    if not has_photo:
+        return None
+    sig = sign_photo(teacher_id, request.app[APP_BOT_TOKEN])
+    return f"/api/teachers/{teacher_id}/photo?sig={sig}"
+
 
 # file_id → (content_type, bytes)。OrderedDict 当简易 LRU，超额淘汰最旧。
 _CACHE: "OrderedDict[str, tuple[str, bytes]]" = OrderedDict()
@@ -39,6 +49,11 @@ async def get_teacher_photo(request: web.Request) -> web.Response:
         tid = int(request.match_info["id"])
     except (KeyError, ValueError):
         raise web.HTTPBadRequest(reason="invalid teacher id")
+
+    # 鉴权：URL 签名（中间件已放行本路径；<img> 无法带 Bearer）。
+    sig = request.query.get("sig") or ""
+    if not verify_photo(tid, sig, request.app[APP_BOT_TOKEN]):
+        raise web.HTTPForbidden(reason="invalid photo signature")
 
     teacher = await get_teacher(tid)
     file_id = (teacher or {}).get("photo_file_id")

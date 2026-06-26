@@ -20,6 +20,7 @@ from bot.database import (
     list_approved_reviews,
     list_user_favorites,
 )
+from bot.web.api.photo import signed_photo_url
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ async def get_teachers(request: web.Request) -> web.Response:
             "available": bool(t.get("is_active")),
             "rating": _rating(post),
             "has_photo": _has_photo(t),
+            "photo_url": signed_photo_url(request, tid, _has_photo(t)),
             "favorited": tid in fav_ids,
         })
     return web.json_response({"teachers": items})
@@ -128,4 +130,5 @@ async def get_teacher_detail(request: web.Request) -> web.Response:
         "dims": dims,
         "reviews": reviews,
         "has_photo": _has_photo(teacher),
+        "photo_url": signed_photo_url(request, tid, _has_photo(teacher)),
     })

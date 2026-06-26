@@ -19,6 +19,7 @@ from bot.database import (
     list_user_favorites,
     remove_favorite,
 )
+from bot.web.api.photo import signed_photo_url
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ async def get_favorites(request: web.Request) -> web.Response:
     for t in rows:
         tid = t["user_id"]
         post = await get_teacher_channel_post(tid)
+        has_photo = bool(t.get("photo_file_id"))
         items.append({
             "id": tid,
             "name": t.get("display_name") or "",
@@ -52,7 +54,8 @@ async def get_favorites(request: web.Request) -> web.Response:
                 "avg": round(float((post or {}).get("avg_overall") or 0), 1),
                 "count": int((post or {}).get("review_count") or 0),
             },
-            "has_photo": bool(t.get("photo_file_id")),
+            "has_photo": has_photo,
+            "photo_url": signed_photo_url(request, tid, has_photo),
         })
     return web.json_response({"teachers": items})
 

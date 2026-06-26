@@ -93,6 +93,7 @@ export interface ApiTeacher {
   available: boolean;
   rating: ApiRating;
   has_photo: boolean;
+  photo_url?: string | null;
   favorited?: boolean;
 }
 
