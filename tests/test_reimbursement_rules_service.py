@@ -311,7 +311,9 @@ async def _stub_required_chats():
 
 
 async def _stub_baselines():
-    return {"2026-05": {
+    # 用当前月 key（快照按 current_month_key() 查表），避免硬编码月份成为日期炸弹。
+    from bot.database import current_month_key
+    return {current_month_key(): {
         "baseline_amount": 200,
         "reset_at": "2026-05-01 00:00:00",
         "admin_id": 1,

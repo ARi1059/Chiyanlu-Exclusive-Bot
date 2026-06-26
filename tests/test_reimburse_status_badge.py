@@ -146,10 +146,18 @@ _review_id_counter: dict[str, int] = {"next": 1}
 
 async def _make_reimbursement(
     *, status="pending", amount=80, user_id=1001, teacher_id=99,
-    week_key="2026-21", month_key="2026-05",
+    week_key=None, month_key=None,
 ) -> int:
-    """便利：插入一条 reimbursement，自动准备 teacher + review 满足 FK。"""
-    from bot.database import get_db
+    """便利：插入一条 reimbursement，自动准备 teacher + review 满足 FK。
+
+    week_key / month_key 默认用当前周/月（current_week_key / current_month_key），
+    避免硬编码月份随时间变成日期炸弹（旧版固定 2026-05，过月即失效）。
+    """
+    from bot.database import current_month_key, current_week_key, get_db
+    if month_key is None:
+        month_key = current_month_key()
+    if week_key is None:
+        week_key = current_week_key()
 
     # 每次自动用一个新 review_id（UNIQUE 约束）
     review_id = _review_id_counter["next"]
@@ -191,9 +199,7 @@ def test_detail_renders_over_pool_badge(temp_db):
     _run(set_config("reimbursement_monthly_pool", "1000"))
     # 插入一条已 approved 凑出"已用 950"
     _run(_make_reimbursement(
-        status="approved", amount=950, user_id=9001,
-        week_key="2026-20", month_key="2026-05",
-    ))
+        status="approved", amount=950, user_id=9001,    ))
     rid = _run(_make_reimbursement(amount=80))
     reimb = _run(get_reimbursement(rid))
     text = _run(_render_reimbursement_detail(reimb))
@@ -312,9 +318,7 @@ def test_user_overview_warns_when_remaining_below_100(temp_db):
     _run(set_config("reimbursement_monthly_pool", "1000"))
     # 已用 950 → 剩 50（< 100）
     _run(_make_reimbursement(
-        status="approved", amount=950, user_id=9001,
-        week_key="2026-20", month_key="2026-05",
-    ))
+        status="approved", amount=950, user_id=9001,    ))
     cb = MagicMock()
     cb.from_user.id = 1001
     cb.message = MagicMock()
@@ -332,9 +336,7 @@ def test_user_overview_no_warning_when_remaining_at_or_above_100(temp_db):
 
     _run(set_config("reimbursement_monthly_pool", "1000"))
     _run(_make_reimbursement(
-        status="approved", amount=900, user_id=9001,
-        week_key="2026-20", month_key="2026-05",
-    ))
+        status="approved", amount=900, user_id=9001,    ))
     cb = MagicMock()
     cb.from_user.id = 1001
     cb.message = MagicMock()
@@ -352,9 +354,7 @@ def test_user_overview_handles_over_used_pool_gracefully(temp_db):
 
     _run(set_config("reimbursement_monthly_pool", "100"))
     _run(_make_reimbursement(
-        status="approved", amount=150, user_id=9001,
-        week_key="2026-20", month_key="2026-05",
-    ))
+        status="approved", amount=150, user_id=9001,    ))
     cb = MagicMock()
     cb.from_user.id = 1001
     cb.message = MagicMock()
