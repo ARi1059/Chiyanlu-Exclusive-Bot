@@ -66,16 +66,20 @@ def _has_photo(teacher: dict) -> bool:
 async def get_teachers(request: web.Request) -> web.Response:
     """列出在册老师（is_active=1 且未删）。任意已登录角色可访问。
 
+    排序：今日已签到（可约）老师在前，按签到先后；其余按入册顺序在后。
     available = 老师今日是否已签到（"今日可约/今日休息"），而非在册状态。
     """
     uid = request["session"]["uid"]
     favs = await list_user_favorites(uid)
     fav_ids = {f["user_id"] for f in favs}  # 收藏列表里老师主键在 user_id 键
     today = _today_str_local()
-    checked_in = {t["user_id"] for t in await get_checked_in_teachers(today)}
-    teachers = await get_all_teachers(active_only=True, include_deleted=False)
+    checked_in_rows = await get_checked_in_teachers(today)  # 已按签到时间(c.created_at)排序
+    checked_in_ids = {t["user_id"] for t in checked_in_rows}
+    all_active = await get_all_teachers(active_only=True, include_deleted=False)
+    unchecked = [t for t in all_active if t["user_id"] not in checked_in_ids]
+    ordered = checked_in_rows + unchecked  # 可约在前(签到序) + 其余在后(入册序)
     items = []
-    for t in teachers:
+    for t in ordered:
         tid = t["user_id"]
         post = await get_teacher_channel_post(tid)
         items.append({
@@ -84,7 +88,7 @@ async def get_teachers(request: web.Request) -> web.Response:
             "region": t.get("region") or "",
             "price": t.get("price") or "",
             "tags": _parse_tags(t.get("tags")),
-            "available": tid in checked_in,
+            "available": tid in checked_in_ids,
             "rating": _rating(post),
             "has_photo": _has_photo(t),
             "photo_url": signed_photo_url(request, tid, _has_photo(t)),
