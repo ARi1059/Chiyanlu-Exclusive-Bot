@@ -62,16 +62,42 @@ export async function exchangeSession(initData: string): Promise<boolean> {
   return true;
 }
 
-/** 带 session 的 fetch；401 时清 token（调用方可重新 bootstrap）。 */
+/** 带 session 的 fetch；401 时尝试用 initData 重新换 token 并重试一次（session 过期自愈）。 */
 export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...(opts.headers as Record<string, string> | undefined),
+  const send = (tok: string | null): Promise<Response> => {
+    const headers: Record<string, string> = {
+      ...(opts.headers as Record<string, string> | undefined),
+    };
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    return fetch(path, { ...opts, headers });
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const r = await fetch(path, { ...opts, headers });
-  if (r.status === 401) clearToken();
+
+  let r = await send(getToken());
+  if (r.status === 401) {
+    clearToken();
+    // token 过期/失效：用 initData 重新换 session 再试一次。
+    const ok = await reauth();
+    if (ok) {
+      r = await send(getToken());
+      if (r.status === 401) clearToken();
+    }
+  }
   return r;
+}
+
+// 重新鉴权：并发去重，多个 401 只触发一次换 token。非 Telegram（无 initData）返回 false。
+let _reauthInFlight: Promise<boolean> | null = null;
+
+function reauth(): Promise<boolean> {
+  if (!_reauthInFlight) {
+    _reauthInFlight = (async () => {
+      const initData = getInitData();
+      if (!initData) return false;
+      return await exchangeSession(initData);
+    })();
+    _reauthInFlight.finally(() => { _reauthInFlight = null; });
+  }
+  return _reauthInFlight;
 }
 
 export async function getMe(): Promise<Me | null> {

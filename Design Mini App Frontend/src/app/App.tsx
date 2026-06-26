@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
 } from "../lib/api";
-import { isInTelegram } from "../lib/tg";
+import { isInTelegram, showBackButton, hapticLight } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, BellOff, Home, BarChart2, Shield,
@@ -848,10 +848,27 @@ export default function App() {
   const [role, setRole] = useState<Role>("user");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [profile, setProfile] = useState<ApiProfile | null>(null);
+  const inTg = isInTelegram();
 
-  // 启动：先在 Telegram 内换 session（拿真实角色），再用 session 拉真实老师列表 + 档案。
-  // 非 Telegram（本地浏览器）无 token → getTeachers 返回 []，保留 mock 角色切换器。
+  // 拉老师列表 + 档案（重试也调它）。Telegram 内拿不到数据视为失败 → 给重试。
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const [list, prof] = await Promise.all([getTeachers(), getProfile()]);
+      setTeachers(list.map(toTeacher));
+      setProfile(prof);
+      if (isInTelegram() && list.length === 0) setLoadError(true);
+    } catch {
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 启动：先在 Telegram 内换 session（拿真实角色），再拉数据。
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -859,23 +876,24 @@ export default function App() {
         const me = await bootstrapAuth();
         if (alive && me) setRole(me.role);
       } catch { /* 鉴权失败：保留 mock 角色 */ }
-      const [list, prof] = await Promise.all([getTeachers(), getProfile()]);
-      if (alive) {
-        setTeachers(list.map(toTeacher));
-        setProfile(prof);
-        setLoading(false);
-      }
+      if (alive) await loadData();
     })();
     return () => { alive = false; };
-  }, []);
+  }, [loadData]);
+
+  // 详情打开时显示 Telegram 原生返回键；关闭/卸载时移除。
+  useEffect(() => {
+    if (selectedTeacherId == null) return;
+    return showBackButton(() => setSelectedTeacherId(null));
+  }, [selectedTeacherId]);
 
   const selectedTeacher = selectedTeacherId != null
     ? teachers.find((t) => t.id === selectedTeacherId) ?? null
     : null;
 
-  // 收藏：乐观更新 UI，再落库；失败回滚。非 Telegram（无 token）API 静默失败，
-  // 仍保留本地态不回滚（本地调试可用）。
+  // 收藏：轻触感 + 乐观更新 UI，再落库；真机失败回滚。
   const toggleFavorite = (id: number) => {
+    hapticLight();
     let nextState = false;
     setTeachers((prev) => prev.map((t) => {
       if (t.id !== id) return t;
@@ -885,7 +903,6 @@ export default function App() {
     const op = nextState ? addFavorite(id) : removeFavorite(id);
     op.then((ok) => {
       if (!ok && isInTelegram()) {
-        // 真机落库失败：回滚
         setTeachers((prev) => prev.map((t) => t.id === id ? { ...t, favorited: !nextState } : t));
       }
     }).catch(() => {
@@ -904,40 +921,66 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0d1117] flex items-center justify-center p-4">
-      {/* Watermark */}
-      <div className="fixed top-6 left-8 text-[#3a4a5c] text-xs hidden md:block select-none">
-        痴颜录 MiniApp — Telegram 前端原型
-      </div>
-      <div className="fixed bottom-6 right-8 text-[#3a4a5c] text-xs hidden md:block select-none">
-        P0–P3 交互演示
-      </div>
+    <div className={inTg
+      ? "h-[100dvh] w-full bg-[#17212b] flex flex-col overflow-hidden"
+      : "min-h-screen bg-[#0d1117] flex items-center justify-center p-4"
+    }>
+      {/* Watermark（仅本地预览） */}
+      {!inTg && (
+        <>
+          <div className="fixed top-6 left-8 text-[#3a4a5c] text-xs hidden md:block select-none">
+            痴颜录 MiniApp — Telegram 前端原型
+          </div>
+          <div className="fixed bottom-6 right-8 text-[#3a4a5c] text-xs hidden md:block select-none">
+            P0–P3 交互演示
+          </div>
+        </>
+      )}
 
-      {/* Phone frame */}
-      <div className="relative w-[390px] h-[844px] rounded-[40px] overflow-hidden shadow-[0_32px_80px_rgba(0,0,0,0.8)] ring-1 ring-white/8 flex flex-col bg-[#17212b]">
-        {/* Telegram-style status bar */}
-        <div className="flex-shrink-0 flex items-center justify-between px-7 pt-3.5 pb-1 bg-[#17212b]">
-          <span className="text-[#e8e8e8] text-[13px] font-medium">9:41</span>
-          <div className="flex items-center gap-1">
-            <div className="flex gap-[2px] items-end h-3">
-              {[3, 4, 5, 5, 4].map((h, i) => (
-                <div key={i} className="w-[3px] rounded-sm bg-[#e8e8e8]" style={{ height: `${h * 2}px` }} />
-              ))}
-            </div>
-            <div className="ml-1 w-5 h-2.5 border border-white/40 rounded-[2px] relative">
-              <div className="absolute inset-[1.5px] right-[3px] bg-white/70 rounded-[1px]" />
-              <div className="absolute right-[-2px] top-[3.5px] w-[3px] h-[5px] bg-white/40 rounded-r-[1px]" />
+      {/* 容器：Telegram 内填满视口；本地用手机框预览 */}
+      <div className={inTg
+        ? "relative flex-1 min-h-0 w-full flex flex-col bg-[#17212b]"
+        : "relative w-[390px] h-[844px] rounded-[40px] overflow-hidden shadow-[0_32px_80px_rgba(0,0,0,0.8)] ring-1 ring-white/8 flex flex-col bg-[#17212b]"
+      }>
+        {/* 模拟状态栏：仅本地预览显示（真机用 Telegram 自身状态栏） */}
+        {!inTg && (
+          <div className="flex-shrink-0 flex items-center justify-between px-7 pt-3.5 pb-1 bg-[#17212b]">
+            <span className="text-[#e8e8e8] text-[13px] font-medium">9:41</span>
+            <div className="flex items-center gap-1">
+              <div className="flex gap-[2px] items-end h-3">
+                {[3, 4, 5, 5, 4].map((h, i) => (
+                  <div key={i} className="w-[3px] rounded-sm bg-[#e8e8e8]" style={{ height: `${h * 2}px` }} />
+                ))}
+              </div>
+              <div className="ml-1 w-5 h-2.5 border border-white/40 rounded-[2px] relative">
+                <div className="absolute inset-[1.5px] right-[3px] bg-white/70 rounded-[1px]" />
+                <div className="absolute right-[-2px] top-[3.5px] w-[3px] h-[5px] bg-white/40 rounded-r-[1px]" />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto no-scrollbar">
-          {tab === "today"     && <TodayView     teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
-          {tab === "search"    && <SearchView    teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
-          {tab === "favorites" && <FavoritesView teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
-          {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} profile={profile} />}
-          {tab === "admin"     && <AdminView     role={role} />}
+          {loadError ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
+              <span className="text-[#7d8d9e] text-sm">加载失败，请检查网络后重试</span>
+              <button
+                onClick={loadData}
+                className="text-xs px-5 py-2 rounded-full bg-[#c4974a] text-[#0d1117] font-medium active:scale-95 transition-transform"
+              >
+                重试
+              </button>
+            </div>
+          ) : (
+            <>
+              {tab === "today"     && <TodayView     teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+              {tab === "search"    && <SearchView    teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+              {tab === "favorites" && <FavoritesView teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+              {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} profile={profile} />}
+              {tab === "admin"     && <AdminView     role={role} />}
+            </>
+          )}
         </div>
 
         {/* Bottom nav */}
