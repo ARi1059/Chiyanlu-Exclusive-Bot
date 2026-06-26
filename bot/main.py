@@ -15,6 +15,7 @@ import asyncio
 import logging
 
 from bot.app_factory import create_app
+from bot.config import config
 from bot.lifecycle import register_lifecycle_handlers
 from bot.routers import register_routers
 
@@ -39,9 +40,27 @@ async def main():
     register_routers(app.dp)
     register_lifecycle_handlers(app.dp, app.bot, app.scheduler)
 
+    # 同进程并起 MiniApp web 服务（§二）。默认 WEB_ENABLED=false → 行为与接入前
+    # 完全一致；显式开启后 web 在同一 loop 后台监听，与 polling 共存。
+    # web 启动失败绝不拖垮 polling（仅告警，回退纯 bot 模式）。
+    runner = None
+    if config.web_enabled:
+        try:
+            from bot.web.server import start_web
+            runner = await start_web(
+                app.bot, host=config.web_host, port=config.web_port,
+            )
+        except Exception:
+            logger.exception("Web 服务启动失败，回退仅 polling 模式")
+            runner = None
+
     # 启动轮询
     logger.info("开始轮询...")
-    await app.dp.start_polling(app.bot)
+    try:
+        await app.dp.start_polling(app.bot)
+    finally:
+        if runner is not None:
+            await runner.cleanup()
 
 
 if __name__ == "__main__":

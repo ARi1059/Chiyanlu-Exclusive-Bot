@@ -50,6 +50,9 @@ class Config:
     timezone: str
     publish_time: str
     cooldown_seconds: int
+    web_enabled: bool
+    web_host: str
+    web_port: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -64,6 +67,9 @@ class Config:
             timezone=_validate_timezone(os.getenv("TIMEZONE", "Asia/Shanghai")),
             publish_time=_validate_publish_time(os.getenv("PUBLISH_TIME", "14:00")),
             cooldown_seconds=_parse_int_env("COOLDOWN_SECONDS", "30", min_value=0),
+            web_enabled=os.getenv("WEB_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"),
+            web_host=os.getenv("WEB_HOST", "127.0.0.1"),
+            web_port=_parse_int_env("WEB_PORT", "8080", min_value=1),
         )
 
 
