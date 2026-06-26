@@ -204,7 +204,8 @@ def test_review_card_uses_get_reimbursement_min_points_helper():
 
 
 def test_rreview_admin_uses_get_reimbursement_min_points_helper():
-    import bot.handlers.rreview_admin as mod
+    # 审核报销门槛逻辑随业务核心搬到 bot.services.review_moderation（handler 委托调用）。
+    import bot.services.review_moderation as mod
     src = _src(mod)
     assert "get_reimbursement_min_points" in src
     assert "min_pts_raw = await get_config" not in src
@@ -228,8 +229,8 @@ def test_review_card_gates_zero_threshold_passes():
 
 
 def test_rreview_admin_gates_zero_threshold_passes():
-    """rreview_admin 应允许 min_pts=0 通过。"""
-    import bot.handlers.rreview_admin as mod
+    """审核流应允许 min_pts=0 通过（业务核心已搬到 review_moderation）。"""
+    import bot.services.review_moderation as mod
     src = _src(mod)
     # 形式应是 `min_pts == 0 or effective_pts >= min_pts`
     assert "min_pts == 0" in src
