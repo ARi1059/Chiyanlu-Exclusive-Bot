@@ -1,5 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
-import { bootstrapAuth } from "../lib/api";
+import {
+  bootstrapAuth, getTeachers, getTeacherDetail, teacherPhotoUrl,
+  type ApiTeacher, type ApiTeacherDetail,
+} from "../lib/api";
+import { isInTelegram } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, BellOff, Home, BarChart2, Shield,
@@ -23,121 +27,58 @@ interface Review {
   sig: string;
 }
 
+/** 卡片级老师：来自 /api/teachers，叠加前端 UI 字段（渐变占位 / 本地收藏态）。 */
 interface Teacher {
   id: number;
   name: string;
   region: string;
   price: string;
   tags: string[];
-  description: string;
   available: boolean;
   rating: { avg: number; count: number };
-  dims: Dim[];
+  hasPhoto: boolean;
+  // UI-only（非数据库字段）
   colorFrom: string;
   colorTo: string;
   favorited: boolean;
   notifyEnabled: boolean;
-  reviews: Review[];
 }
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
-const INITIAL_TEACHERS: Teacher[] = [
-  {
-    id: 1, name: "柔月", region: "上海·徐汇", price: "￥888",
-    tags: ["温柔体贴", "手法细腻", "回头必约"],
-    description: "从业五年，擅长放松解压，注重细节与舒适感。评价一贯优良，深受回头客喜爱，预约请提前一天。",
-    available: true, rating: { avg: 4.8, count: 47 },
-    dims: [
-      { subject: "人像", A: 9 }, { subject: "颜值", A: 9 },
-      { subject: "身材", A: 8 }, { subject: "服务", A: 9 },
-      { subject: "态度", A: 10 }, { subject: "环境", A: 8 },
-    ],
-    colorFrom: "#1a1535", colorTo: "#3a2a6a",
-    favorited: true, notifyEnabled: true,
-    reviews: [
-      { id: 1, rating: "positive", summary: "服务非常细心，全程体验感极佳，态度温柔，手法到位，完全超出预期，下次还会来。", sig: "****3456" },
-      { id: 2, rating: "positive", summary: "第二次预约依然保持高水准，沟通顺畅，配合度高，强烈推荐给大家。", sig: "****7890" },
-    ],
-  },
-  {
-    id: 2, name: "夕颜", region: "北京·朝阳", price: "￥666",
-    tags: ["清纯甜美", "声音动听", "专注全程"],
-    description: "形象清新，性格温和，善于营造轻松愉快的氛围，擅长让客人快速放松进入状态。",
-    available: true, rating: { avg: 4.6, count: 32 },
-    dims: [
-      { subject: "人像", A: 8 }, { subject: "颜值", A: 9 },
-      { subject: "身材", A: 8 }, { subject: "服务", A: 8 },
-      { subject: "态度", A: 9 }, { subject: "环境", A: 7 },
-    ],
-    colorFrom: "#2a0a1a", colorTo: "#5a1535",
-    favorited: false, notifyEnabled: false,
-    reviews: [
-      { id: 3, rating: "positive", summary: "颜值很高，性格温柔，全程轻松愉快，非常享受，下次还会预约。", sig: "****2345" },
-    ],
-  },
-  {
-    id: 3, name: "苏澜", region: "广州·天河", price: "￥999",
-    tags: ["气质出众", "经验丰富", "百分满意"],
-    description: "高端定制服务，注重品质与体验的完美融合。每次预约都经过精心准备，力求极致体验。",
-    available: true, rating: { avg: 4.9, count: 61 },
-    dims: [
-      { subject: "人像", A: 10 }, { subject: "颜值", A: 10 },
-      { subject: "身材", A: 9 }, { subject: "服务", A: 10 },
-      { subject: "态度", A: 9 }, { subject: "环境", A: 9 },
-    ],
-    colorFrom: "#0a2a1a", colorTo: "#154530",
-    favorited: true, notifyEnabled: true,
-    reviews: [
-      { id: 4, rating: "positive", summary: "完美无可挑剔！颜值、身材、服务三项满分，气质极佳，是最专业的一位。", sig: "****5678" },
-      { id: 5, rating: "positive", summary: "价格虽高但绝对物超所值，从头到尾都非常用心，专业度一流。", sig: "****1234" },
-    ],
-  },
-  {
-    id: 4, name: "锦绣", region: "成都·锦江", price: "￥588",
-    tags: ["活泼开朗", "幽默风趣", "互动感强"],
-    description: "成都本地美女，性格活泼，善于与客人互动，让整个过程充满乐趣与活力。",
-    available: false, rating: { avg: 4.5, count: 28 },
-    dims: [
-      { subject: "人像", A: 8 }, { subject: "颜值", A: 8 },
-      { subject: "身材", A: 7 }, { subject: "服务", A: 8 },
-      { subject: "态度", A: 9 }, { subject: "环境", A: 8 },
-    ],
-    colorFrom: "#2a1500", colorTo: "#503000",
-    favorited: false, notifyEnabled: false,
-    reviews: [],
-  },
-  {
-    id: 5, name: "冰蝶", region: "深圳·南山", price: "￥758",
-    tags: ["身材极佳", "摄影级颜值", "服务周到"],
-    description: "外形条件出众，从事模特行业多年，镜头感极强，每次体验都像一次视觉盛宴。",
-    available: true, rating: { avg: 4.7, count: 39 },
-    dims: [
-      { subject: "人像", A: 10 }, { subject: "颜值", A: 9 },
-      { subject: "身材", A: 10 }, { subject: "服务", A: 8 },
-      { subject: "态度", A: 8 }, { subject: "环境", A: 9 },
-    ],
-    colorFrom: "#0a1a35", colorTo: "#152850",
-    favorited: true, notifyEnabled: false,
-    reviews: [
-      { id: 6, rating: "positive", summary: "颜值和身材都是极品，拍照感极强，服务也很好，整体非常满意，已加入常去名单。", sig: "****8901" },
-    ],
-  },
-  {
-    id: 6, name: "晚霞", region: "杭州·西湖", price: "￥720",
-    tags: ["知性优雅", "气质文艺", "腹有诗书"],
-    description: "文艺气质浓厚，谈吐优雅，兴趣广泛，能聊文学、艺术与人生，让人在享受之余也能精神共鸣。",
-    available: true, rating: { avg: 4.7, count: 22 },
-    dims: [
-      { subject: "人像", A: 9 }, { subject: "颜值", A: 8 },
-      { subject: "身材", A: 8 }, { subject: "服务", A: 9 },
-      { subject: "态度", A: 10 }, { subject: "环境", A: 9 },
-    ],
-    colorFrom: "#1a0a2a", colorTo: "#35154a",
-    favorited: false, notifyEnabled: false,
-    reviews: [],
-  },
+// 照片缺失时的渐变占位色（按 id 取，稳定不跳色）
+const GRADIENTS: [string, string][] = [
+  ["#1a1535", "#3a2a6a"],
+  ["#2a0a1a", "#5a1535"],
+  ["#0a2a1a", "#154530"],
+  ["#2a1500", "#503000"],
+  ["#0a1a35", "#152850"],
+  ["#1a0a2a", "#35154a"],
 ];
 
+/** ApiTeacher → 前端 Teacher（补 UI 字段）。 */
+function toTeacher(t: ApiTeacher): Teacher {
+  const [colorFrom, colorTo] = GRADIENTS[Math.abs(Number(t.id)) % GRADIENTS.length];
+  return {
+    id: t.id,
+    name: t.name,
+    region: t.region,
+    price: t.price,
+    tags: t.tags ?? [],
+    available: t.available,
+    rating: t.rating ?? { avg: 0, count: 0 },
+    hasPhoto: t.has_photo,
+    colorFrom, colorTo,
+    favorited: false,
+    notifyEnabled: false,
+  };
+}
+
+function todayLabel(): string {
+  const d = new Date();
+  const wd = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · 周${wd}`;
+}
+
+// 管理台仍为演示数据（P3 接入），与老师主线解耦。
 const ANALYTICS = [
   { day: "6/20", reviews: 3, signins: 4 },
   { day: "6/21", reviews: 5, signins: 5 },
@@ -195,6 +136,24 @@ function RoleBadge({ role }: { role: Role }) {
   );
 }
 
+/**
+ * 封面照片层：有照片则 <img> 覆盖在渐变+首字之上；无照片或加载失败回退渐变。
+ * 放在渐变/首字之后、覆盖层 badge 之前；badge 用 z-10 压在照片上方。
+ */
+function CoverPhoto({ id, name, hasPhoto }: { id: number; name: string; hasPhoto: boolean }) {
+  const [failed, setFailed] = useState(false);
+  if (!hasPhoto || failed) return null;
+  return (
+    <img
+      src={teacherPhotoUrl(id)}
+      alt={name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="absolute inset-0 w-full h-full object-cover z-0"
+    />
+  );
+}
+
 // ── Teacher card ──────────────────────────────────────────────────────────────
 
 function TeacherCard({
@@ -220,14 +179,15 @@ function TeacherCard({
         <span className="text-[72px] font-bold text-white/12 select-none z-0 leading-none">
           {teacher.name[0]}
         </span>
-        <div className="absolute top-2 right-2">
+        <CoverPhoto id={teacher.id} name={teacher.name} hasPhoto={teacher.hasPhoto} />
+        <div className="absolute top-2 right-2 z-10">
           {teacher.available
             ? <span className="text-[10px] bg-[#4fc97a]/20 text-[#4fc97a] border border-[#4fc97a]/30 px-2 py-0.5 rounded-full">今日可约</span>
             : <span className="text-[10px] bg-white/5 text-[#7d8d9e] border border-white/10 px-2 py-0.5 rounded-full">今日休息</span>
           }
         </div>
         <button
-          className="absolute top-2 left-2 p-1.5 rounded-full bg-black/20 backdrop-blur-sm"
+          className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-black/20 backdrop-blur-sm"
           onClick={(e) => { e.stopPropagation(); onFavorite(); }}
         >
           <Heart size={13} className={teacher.favorited ? "fill-[#e05b7a] text-[#e05b7a]" : "text-white/50"} />
@@ -256,10 +216,15 @@ function TeacherCard({
 
 // ── Views ─────────────────────────────────────────────────────────────────────
 
+function EmptyState({ text }: { text: string }) {
+  return <div className="text-center py-14 text-[#7d8d9e] text-sm">{text}</div>;
+}
+
 function TodayView({
-  teachers, onSelect, onFavorite,
+  teachers, loading, onSelect, onFavorite,
 }: {
   teachers: Teacher[];
+  loading: boolean;
   onSelect: (t: Teacher) => void;
   onFavorite: (id: number) => void;
 }) {
@@ -269,35 +234,51 @@ function TodayView({
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-[#e8e8e8] text-lg font-medium">今日可约</h1>
-          <p className="text-[#7d8d9e] text-xs mt-0.5">2026年6月26日 · 周五</p>
+          <p className="text-[#7d8d9e] text-xs mt-0.5">{todayLabel()}</p>
         </div>
         <span className="text-xs bg-[#c4974a]/15 text-[#c4974a] border border-[#c4974a]/25 px-2.5 py-1 rounded-full font-mono">
           {available} 位可约
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        {teachers.map((t) => (
-          <TeacherCard key={t.id} teacher={t} onSelect={() => onSelect(t)} onFavorite={() => onFavorite(t.id)} />
-        ))}
-      </div>
+      {loading ? (
+        <EmptyState text="加载中…" />
+      ) : teachers.length === 0 ? (
+        <EmptyState text="暂无老师数据" />
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          {teachers.map((t) => (
+            <TeacherCard key={t.id} teacher={t} onSelect={() => onSelect(t)} onFavorite={() => onFavorite(t.id)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function SearchView({
-  teachers, onSelect, onFavorite,
+  teachers, loading, onSelect, onFavorite,
 }: {
   teachers: Teacher[];
+  loading: boolean;
   onSelect: (t: Teacher) => void;
   onFavorite: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [region, setRegion] = useState("全部");
-  const regions = ["全部", "上海", "北京", "广州", "成都", "深圳", "杭州"];
+
+  // 区域筛选项从真实老师数据动态提取（按出现次数降序），不再硬编码城市。
+  const regions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of teachers) {
+      if (t.region) counts.set(t.region, (counts.get(t.region) ?? 0) + 1);
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([r]) => r);
+    return ["全部", ...sorted];
+  }, [teachers]);
 
   const filtered = useMemo(() => teachers.filter((t) => {
     const q = !query || t.name.includes(query) || t.tags.some((g) => g.includes(query)) || t.region.includes(query);
-    const r = region === "全部" || t.region.includes(region);
+    const r = region === "全部" || t.region === region;
     return q && r;
   }), [teachers, query, region]);
 
@@ -332,8 +313,10 @@ function SearchView({
         ))}
       </div>
       <div className="px-4">
-        {filtered.length === 0 ? (
-          <div className="text-center py-14 text-[#7d8d9e] text-sm">未找到匹配的老师</div>
+        {loading ? (
+          <EmptyState text="加载中…" />
+        ) : filtered.length === 0 ? (
+          <EmptyState text="未找到匹配的老师" />
         ) : (
           <div className="grid grid-cols-2 gap-3">
             {filtered.map((t) => (
@@ -401,6 +384,8 @@ function ProfileView({
   const favCount = teachers.filter((t) => t.favorited).length;
   const roles: Role[] = ["user", "teacher", "admin", "superadmin"];
   const roleLabel: Record<Role, string> = { user: "用户", teacher: "老师", admin: "管理员", superadmin: "超管" };
+  // 角色来自后端鉴权；演示切换器仅在非 Telegram（本地调试）显示。
+  const showRoleSwitcher = !isInTelegram();
 
   return (
     <div className="px-4 pt-4 pb-6 space-y-3">
@@ -432,29 +417,31 @@ function ProfileView({
         </div>
       </div>
 
-      {/* Role switcher */}
-      <div className="bg-[#1e2c3a] rounded-2xl p-4">
-        <div className="text-[#7d8d9e] text-[10px] mb-3 uppercase tracking-widest">演示 · 切换角色</div>
-        <div className="flex gap-2 flex-wrap">
-          {roles.map((r) => (
-            <button
-              key={r}
-              onClick={() => onRoleChange(r)}
-              className={`text-xs px-3 py-1.5 rounded-full transition-all ${
-                role === r ? "bg-[#c4974a] text-[#0d1117] font-medium" : "bg-[#243447] text-[#7d8d9e]"
-              }`}
-            >
-              {roleLabel[r]}
-            </button>
-          ))}
+      {/* Role switcher（仅本地调试） */}
+      {showRoleSwitcher && (
+        <div className="bg-[#1e2c3a] rounded-2xl p-4">
+          <div className="text-[#7d8d9e] text-[10px] mb-3 uppercase tracking-widest">演示 · 切换角色</div>
+          <div className="flex gap-2 flex-wrap">
+            {roles.map((r) => (
+              <button
+                key={r}
+                onClick={() => onRoleChange(r)}
+                className={`text-xs px-3 py-1.5 rounded-full transition-all ${
+                  role === r ? "bg-[#c4974a] text-[#0d1117] font-medium" : "bg-[#243447] text-[#7d8d9e]"
+                }`}
+              >
+                {roleLabel[r]}
+              </button>
+            ))}
+          </div>
+          {(role === "admin" || role === "superadmin") && (
+            <p className="text-[#7d8d9e] text-xs mt-2.5 flex items-center gap-1.5">
+              <span className="text-[#c4974a]">✦</span>
+              底部已解锁「管理台」入口
+            </p>
+          )}
         </div>
-        {(role === "admin" || role === "superadmin") && (
-          <p className="text-[#7d8d9e] text-xs mt-2.5 flex items-center gap-1.5">
-            <span className="text-[#c4974a]">✦</span>
-            底部已解锁「管理台」入口
-          </p>
-        )}
-      </div>
+      )}
 
       {/* Menu items */}
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
@@ -497,7 +484,7 @@ function AdminView({ role }: { role: Role }) {
       <div className="flex items-center justify-between mb-1">
         <div>
           <h1 className="text-[#e8e8e8] text-lg font-medium">管理台</h1>
-          <p className="text-[#7d8d9e] text-xs mt-0.5">2026年6月26日</p>
+          <p className="text-[#7d8d9e] text-xs mt-0.5">{todayLabel()}</p>
         </div>
         <RoleBadge role={role} />
       </div>
@@ -646,6 +633,23 @@ function TeacherDetail({
   onNotify: () => void;
 }) {
   const [detailTab, setDetailTab] = useState<"info" | "reviews">("info");
+  const [detail, setDetail] = useState<ApiTeacherDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // 详情（雷达 6 维 + 已通过评价）按需拉取；头部先用卡片数据即时渲染。
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setDetail(null);
+    getTeacherDetail(teacher.id)
+      .then((d) => { if (alive) { setDetail(d); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [teacher.id]);
+
+  const dims: Dim[] = detail?.dims ?? [];
+  const reviews: Review[] = detail?.reviews ?? [];
+  const reviewCount = teacher.rating.count;
 
   return (
     <div className="flex flex-col h-full bg-[#17212b]">
@@ -654,6 +658,8 @@ function TeacherDetail({
         className="relative flex-shrink-0 h-52 flex flex-col justify-between p-4"
         style={{ background: `linear-gradient(135deg, ${teacher.colorFrom}, ${teacher.colorTo})` }}
       >
+        <span className="absolute inset-0 flex items-center justify-center text-[120px] font-bold text-white/8 select-none leading-none z-0">{teacher.name[0]}</span>
+        <CoverPhoto id={teacher.id} name={teacher.name} hasPhoto={teacher.hasPhoto} />
         <div className="flex items-center justify-between relative z-10">
           <button onClick={onBack} className="p-2 rounded-full bg-black/20 backdrop-blur-sm text-white">
             <ChevronLeft size={20} />
@@ -669,9 +675,6 @@ function TeacherDetail({
               <Heart size={15} className={teacher.favorited ? "fill-[#e05b7a] text-[#e05b7a]" : "text-white/50"} />
             </button>
           </div>
-        </div>
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span className="text-[120px] font-bold text-white/8 select-none leading-none">{teacher.name[0]}</span>
         </div>
         <div className="relative z-10 flex items-end justify-between">
           <div>
@@ -703,7 +706,7 @@ function TeacherDetail({
               detailTab === t ? "text-[#c4974a] border-b-2 border-[#c4974a]" : "text-[#7d8d9e]"
             }`}
           >
-            {t === "info" ? "详情" : `评价 (${teacher.reviews.length})`}
+            {t === "info" ? "详情" : `评价 (${reviewCount})`}
           </button>
         ))}
       </div>
@@ -719,38 +722,44 @@ function TeacherDetail({
             </div>
 
             <div className="bg-[#1e2c3a] rounded-xl p-4">
-              <p className="text-[#aebac8] text-sm leading-relaxed">{teacher.description}</p>
-            </div>
-
-            <div className="bg-[#1e2c3a] rounded-xl p-4">
               <div className="text-[#e8e8e8] text-sm font-medium mb-3">综合评分雷达</div>
-              <ResponsiveContainer width="100%" height={180}>
-                <RadarChart data={teacher.dims} cx="50%" cy="50%" outerRadius="68%">
-                  <PolarGrid stroke="rgba(255,255,255,0.06)" />
-                  <PolarAngleAxis dataKey="subject" tick={{ fill: "#7d8d9e", fontSize: 11 }} />
-                  <Radar dataKey="A" stroke="#c4974a" fill="#c4974a" fillOpacity={0.22} strokeWidth={1.5} />
-                </RadarChart>
-              </ResponsiveContainer>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3">
-                {teacher.dims.map(({ subject, A }) => (
-                  <div key={subject} className="flex items-center gap-2">
-                    <span className="text-[#7d8d9e] text-xs w-7">{subject}</span>
-                    <div className="flex-1 h-1 bg-[#243447] rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-[#c4974a] transition-all" style={{ width: `${A * 10}%` }} />
-                    </div>
-                    <span className="text-[#c4974a] text-xs font-mono w-4 text-right">{A}</span>
+              {loading ? (
+                <div className="text-center py-10 text-[#7d8d9e] text-sm">加载中…</div>
+              ) : dims.length === 0 || dims.every((d) => d.A === 0) ? (
+                <div className="text-center py-10 text-[#7d8d9e] text-sm">暂无评分</div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <RadarChart data={dims} cx="50%" cy="50%" outerRadius="68%">
+                      <PolarGrid stroke="rgba(255,255,255,0.06)" />
+                      <PolarAngleAxis dataKey="subject" tick={{ fill: "#7d8d9e", fontSize: 11 }} />
+                      <Radar dataKey="A" stroke="#c4974a" fill="#c4974a" fillOpacity={0.22} strokeWidth={1.5} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3">
+                    {dims.map(({ subject, A }) => (
+                      <div key={subject} className="flex items-center gap-2">
+                        <span className="text-[#7d8d9e] text-xs w-7">{subject}</span>
+                        <div className="flex-1 h-1 bg-[#243447] rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-[#c4974a] transition-all" style={{ width: `${A * 10}%` }} />
+                        </div>
+                        <span className="text-[#c4974a] text-xs font-mono w-4 text-right">{A}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
             </div>
           </div>
         ) : (
           <div className="p-4">
-            {teacher.reviews.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-14 text-[#7d8d9e] text-sm">加载中…</div>
+            ) : reviews.length === 0 ? (
               <div className="text-center py-14 text-[#7d8d9e] text-sm">暂无评价</div>
             ) : (
               <div className="space-y-3">
-                {teacher.reviews.map((rv) => (
+                {reviews.map((rv) => (
                   <div key={rv.id} className="bg-[#1e2c3a] rounded-xl p-4">
                     <div className="flex items-center justify-between mb-2">
                       <RatingPill rating={rv.rating} />
@@ -761,9 +770,6 @@ function TeacherDetail({
                 ))}
               </div>
             )}
-            <button className="w-full mt-4 bg-[#c4974a] text-[#0d1117] py-3 rounded-xl text-sm font-medium">
-              ✏️  写评价
-            </button>
           </div>
         )}
       </div>
@@ -816,14 +822,25 @@ export default function App() {
   const [tab, setTab] = useState<NavTab>("today");
   const [selectedTeacherId, setSelectedTeacherId] = useState<number | null>(null);
   const [role, setRole] = useState<Role>("user");
-  const [teachers, setTeachers] = useState<Teacher[]>(INITIAL_TEACHERS);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // T7：在 Telegram 内启动鉴权 —— initData 换 session，用真实角色覆盖 mock 默认。
-  // 非 Telegram（本地浏览器）bootstrapAuth 返回 null，保留下方 mock 角色切换器。
+  // 启动：先在 Telegram 内换 session（拿真实角色），再用 session 拉真实老师列表。
+  // 非 Telegram（本地浏览器）无 token → getTeachers 返回 []，保留 mock 角色切换器。
   useEffect(() => {
-    bootstrapAuth()
-      .then((me) => { if (me) setRole(me.role); })
-      .catch(() => { /* 鉴权失败：保留 mock 角色 */ });
+    let alive = true;
+    (async () => {
+      try {
+        const me = await bootstrapAuth();
+        if (alive && me) setRole(me.role);
+      } catch { /* 鉴权失败：保留 mock 角色 */ }
+      const list = await getTeachers();
+      if (alive) {
+        setTeachers(list.map(toTeacher));
+        setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
   }, []);
 
   const selectedTeacher = selectedTeacherId != null
@@ -871,8 +888,8 @@ export default function App() {
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto no-scrollbar">
-          {tab === "today"     && <TodayView     teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
-          {tab === "search"    && <SearchView    teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+          {tab === "today"     && <TodayView     teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+          {tab === "search"    && <SearchView    teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
           {tab === "favorites" && <FavoritesView teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
           {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} />}
           {tab === "admin"     && <AdminView     role={role} />}

@@ -80,6 +80,54 @@ export async function getMe(): Promise<Me | null> {
   return (await r.json()) as Me;
 }
 
+// ── 老师数据（P1）──────────────────────────────────────────────────────────────
+
+export interface ApiRating { avg: number; count: number }
+
+export interface ApiTeacher {
+  id: number;
+  name: string;
+  region: string;
+  price: string;
+  tags: string[];
+  available: boolean;
+  rating: ApiRating;
+  has_photo: boolean;
+}
+
+export interface ApiReview {
+  id: number;
+  rating: "positive" | "neutral" | "negative";
+  summary: string;
+  sig: string;
+  created_at?: string;
+}
+
+export interface ApiTeacherDetail extends ApiTeacher {
+  dims: { subject: string; A: number }[];
+  reviews: ApiReview[];
+}
+
+/** 在册老师列表；失败返回 []。 */
+export async function getTeachers(): Promise<ApiTeacher[]> {
+  const r = await apiFetch("/api/teachers");
+  if (!r.ok) return [];
+  const data = (await r.json()) as { teachers?: ApiTeacher[] };
+  return data.teachers ?? [];
+}
+
+/** 单个老师详情（含雷达 + 评价）；失败返回 null。 */
+export async function getTeacherDetail(id: number): Promise<ApiTeacherDetail | null> {
+  const r = await apiFetch(`/api/teachers/${id}`);
+  if (!r.ok) return null;
+  return (await r.json()) as ApiTeacherDetail;
+}
+
+/** 老师照片 URL（后端代理 Telegram file_id）。 */
+export function teacherPhotoUrl(id: number): string {
+  return `/api/teachers/${id}/photo`;
+}
+
 /**
  * 启动鉴权：Telegram 内则换 session 并取角色；非 Telegram（本地）返回 null，
  * 调用方降级到 mock 角色。

@@ -9,9 +9,16 @@ from aiohttp import web
 
 from bot.web.api.auth import post_session
 from bot.web.api.me import get_me
+from bot.web.api.photo import get_teacher_photo
+from bot.web.api.teachers import get_teacher_detail, get_teachers
 
 
 def register_api_routes(app: web.Application) -> None:
-    """挂载 P0 端点。"""
+    """挂载 API 端点。"""
+    # P0：鉴权
     app.router.add_post("/api/auth/session", post_session)
     app.router.add_get("/api/me", get_me)
+    # P1：老师数据（MiniApp）
+    app.router.add_get("/api/teachers", get_teachers)
+    app.router.add_get("/api/teachers/{id}", get_teacher_detail)
+    app.router.add_get("/api/teachers/{id}/photo", get_teacher_photo)
