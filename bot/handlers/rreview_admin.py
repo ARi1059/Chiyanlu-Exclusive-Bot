@@ -22,17 +22,10 @@ from aiogram.types import InputMediaPhoto
 
 from bot.config import config
 from bot.database import (
-    add_point_transaction,
-    approve_teacher_review,
-    compute_reimbursement_amount,
     count_pending_reviews,
-    create_reimbursement,
-    current_month_key,
-    current_week_key,
     get_config,
     get_teacher,
     get_teacher_review,
-    get_user,
     get_user_total_points,
     is_super_admin,
     list_pending_reviews,
@@ -40,7 +33,6 @@ from bot.database import (
     POINT_CUSTOM_MAX,
     POINT_CUSTOM_MIN,
     POINT_PACKAGE_OPTIONS,
-    reject_teacher_review,
     REVIEW_RATINGS,
 )
 from bot.keyboards.admin_kb import (
@@ -55,10 +47,8 @@ from bot.states.teacher_states import (
     RReviewApprovePointsStates,
     RReviewRejectStates,
 )
-from bot.utils.rreview_notify import (
-    notify_review_approved,
-    notify_review_rejected,
-)
+# 审核业务核心（含 add_point/approve/reject/通知/报销联动）已抽到
+# bot.services.review_moderation；本 handler 仅保留 Telegram UI，按需在函数内 import。
 
 
 # 4 条驳回预设原因（与 rreview_reject_choice_kb 顺序一致）
@@ -383,209 +373,23 @@ async def _do_approve_inner(
     callback: Optional[types.CallbackQuery] = None,
     message: Optional[types.Message] = None,
 ):
-    """审核通过 + 加分一次性执行链（spec §1.1）
+    """审核通过 + 加分（callback/FSM 驱动）。
 
-    顺序：
-        1. approve_teacher_review (9.4)
-        2. add_point_transaction (P.1)
-        3. recalc + edit_caption (9.5)
-        4. publish_review_comment (9.5)
-        5. notify_review_approved (P.1 文案含积分)
-        6. 清旧审核消息 + 推下一条 / 队列空
+    业务副作用链（approve → 加分 → 审计 → 锁 → 报销联动 → recalc → 频道/讨论群/
+    私聊通知）已抽到 bot.services.review_moderation.approve_review（bot/web 共用）；
+    本函数只负责 Telegram UI：失败 alert，成功后清旧审核消息 + 推下一条 / 队列空。
     """
-    review = await get_teacher_review(review_id)
-    if not review:
-        await _alert(callback, "评价不存在")
-        return
-    if review["status"] != "pending":
-        await _alert(callback, f"该评价已是 {review['status']}")
-        return
-
-    # 1. approve
-    ok = await approve_teacher_review(review_id, reviewer_id=reviewer_id)
-    if not ok:
-        await _alert(callback, "通过失败")
-        return
-
-    # 2. 加分（P.1）
-    user_id = review["user_id"]
-    new_total: Optional[int] = None
-    try:
-        tx_id = await add_point_transaction(
-            user_id,
-            delta=delta,
-            reason="review_approved",
-            related_id=review_id,
-            operator_id=reviewer_id,
-            note=package_label or None,
-        )
-        new_total = await get_user_total_points(user_id)
-        if tx_id is None:
-            logger.warning("add_point_transaction 返回 None review=%s delta=%s", review_id, delta)
-    except Exception as e:
-        logger.warning("add_point_transaction 失败 review=%s delta=%s: %s", review_id, delta, e)
-
-    # audit
-    await log_admin_audit(
-        admin_id=reviewer_id,
-        action="rreview_approve",
-        target_type="teacher_review",
-        target_id=str(review_id),
-        detail={
-            "teacher_id": review["teacher_id"],
-            "user_id": user_id,
-            "delta": delta,
-            "package": package_label,
-            "new_total": new_total,
-        },
+    from bot.services.review_moderation import approve_review
+    result = await approve_review(
+        bot,
+        review_id=review_id,
+        reviewer_id=reviewer_id,
+        delta=delta,
+        package_label=package_label,
     )
-    # UX-7.1：处理完成后释放 claim 锁
-    try:
-        from bot.utils.review_claim import release_claim
-        release_claim("teacher_review", review_id, reviewer_id)
-    except Exception:
-        pass
-
-    # 2.5 报销联动：
-    #   request_reimbursement=1 (用户勾选) → status='pending'（admin 审批）
-    #   request_reimbursement=2 (功能关闭时静默录入) → status='queued'（admin 名单）
-    #   request_reimbursement=0 → 不创建
-    #   两种情况都需要满足实时积分门槛 + 老师价位 > 0
-    reimb_created_id: Optional[int] = None
-    reimb_amount: int = 0
-    reimb_status: str = ""
-    try:
-        teacher_id_for_reimb = review["teacher_id"]
-        req_flag = int(review.get("request_reimbursement") or 0)
-        if req_flag in (1, 2):
-            teacher_obj = await get_teacher(teacher_id_for_reimb)
-            reimb_amount = compute_reimbursement_amount(
-                teacher_obj.get("price") if teacher_obj else None
-            )
-            # 2026-05：使用统一 get_reimbursement_min_points helper（0 = 不启用门槛）
-            from bot.database import get_reimbursement_min_points
-            min_pts = await get_reimbursement_min_points()
-            effective_pts = new_total if new_total is not None else 0
-            # min_pts=0 时任意积分通过；min_pts>0 时 effective_pts ≥ min_pts 才通过
-            if reimb_amount > 0 and (min_pts == 0 or effective_pts >= min_pts):
-                reimb_status = "pending" if req_flag == 1 else "queued"
-                reimb_created_id = await create_reimbursement(
-                    user_id=user_id,
-                    review_id=review_id,
-                    teacher_id=teacher_id_for_reimb,
-                    amount=reimb_amount,
-                    week_key=current_week_key(),
-                    month_key=current_month_key(),
-                    status=reimb_status,
-                )
-                if reimb_created_id:
-                    action_label = (
-                        "reimburse_created" if reimb_status == "pending"
-                        else "reimburse_queued"
-                    )
-                    await log_admin_audit(
-                        admin_id=reviewer_id,
-                        action=action_label,
-                        target_type="reimbursement",
-                        target_id=str(reimb_created_id),
-                        detail={
-                            "user_id": user_id,
-                            "review_id": review_id,
-                            "amount": reimb_amount,
-                            "status": reimb_status,
-                        },
-                    )
-                    # 2026-05 新增：通知所有超管去审核报销（pending / queued 都通知）
-                    # 通知失败不影响主流程，仅 logger.warning（safe_helper 内部容错）
-                    try:
-                        from bot.utils.reimburse_notify import (
-                            notify_supers_reimburse_pending,
-                        )
-                        teacher_obj = await get_teacher(teacher_id_for_reimb)
-                        teacher_label = (
-                            teacher_obj.get("display_name")
-                            if teacher_obj else f"#{teacher_id_for_reimb}"
-                        )
-                        try:
-                            user_obj = await get_user(int(user_id))
-                        except Exception:
-                            user_obj = None
-                        if user_obj and user_obj.get("username"):
-                            user_label = f"@{user_obj['username']}"
-                        elif user_obj and user_obj.get("first_name"):
-                            user_label = user_obj["first_name"]
-                        else:
-                            user_label = str(user_id)
-                        await notify_supers_reimburse_pending(
-                            bot,
-                            reimb_id=reimb_created_id,
-                            user_id=int(user_id),
-                            user_label=user_label,
-                            teacher_label=teacher_label,
-                            review_id=review_id,
-                            amount=reimb_amount,
-                            status=reimb_status,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            "通知超管报销待审核失败 reimb=%s: %s",
-                            reimb_created_id, e,
-                        )
-    except Exception as e:
-        logger.warning("报销联动失败 review=%s: %s", review_id, e)
-
-    # 3-4. 9.5 链：recalc + caption + 讨论群评论
-    teacher_id = review["teacher_id"]
-    try:
-        from bot.database import recalculate_teacher_review_stats
-        await recalculate_teacher_review_stats(teacher_id)
-    except Exception as e:
-        logger.warning("recalculate_teacher_review_stats 失败 teacher=%s: %s", teacher_id, e)
-    try:
-        from bot.utils.teacher_channel_publish import update_teacher_post_caption
-        await update_teacher_post_caption(bot, teacher_id, force=True)
-    except Exception as e:
-        logger.warning("update_teacher_post_caption 失败 teacher=%s: %s", teacher_id, e)
-    try:
-        from bot.utils.review_comment import publish_review_comment, CommentError
-        await publish_review_comment(bot, review_id)
-    except CommentError as e:
-        logger.warning(
-            "publish_review_comment failed review=%s reason=%s: %s",
-            review_id, getattr(e, "reason", "?"), e,
-        )
-    except Exception as e:
-        logger.warning("publish_review_comment 异常 review=%s: %s", review_id, e)
-
-    # 4b. 推送评价到老师私聊（2026-05 新增）：复用同一 render，含
-    # 3 按钮可转发；失败仅 warning 不阻塞主流程
-    try:
-        from bot.utils.rreview_notify import notify_teacher_review_approved
-        await notify_teacher_review_approved(bot, review_id)
-    except Exception as e:
-        logger.warning(
-            "notify_teacher_review_approved 异常 review=%s: %s", review_id, e,
-        )
-
-    # 5. 通知评价者（附积分）
-    teacher = await get_teacher(teacher_id)
-    teacher_name = teacher["display_name"] if teacher else None
-    try:
-        # 静默 queued 不向用户提示报销（用户也没勾选/没见到选项）
-        notify_reimb_pending = (
-            reimb_created_id is not None and reimb_status == "pending"
-        )
-        await notify_review_approved(
-            bot, review_id,
-            teacher_name=teacher_name,
-            delta=delta,
-            new_total=new_total,
-            package_label=package_label,
-            reimb_amount=reimb_amount,
-            reimb_pending=notify_reimb_pending,
-        )
-    except Exception as e:
-        logger.warning("notify_review_approved 失败 review=%s: %s", review_id, e)
+    if not result.ok:
+        await _alert(callback, result.error or "通过失败")
+        return
 
     # 6. 清旧 + 推下一条
     if state is not None:
@@ -1169,36 +973,14 @@ async def _do_reject(
                 pass
         return
 
-    ok = await reject_teacher_review(review_id, reviewer_id=reviewer_id, reason=reason)
-    if not ok:
-        return
-
-    await log_admin_audit(
-        admin_id=reviewer_id,
-        action="rreview_reject",
-        target_type="teacher_review",
-        target_id=str(review_id),
-        detail={
-            "teacher_id": review["teacher_id"],
-            "user_id": review["user_id"],
-            "reason": reason or "",
-        },
+    # 业务核心已抽到 bot.services.review_moderation.reject_review（bot/web 共用）；
+    # 守卫(不存在/非 pending 提示)保留在上方，本处仅委托核心 + 并发失败静默返回。
+    from bot.services.review_moderation import reject_review
+    result = await reject_review(
+        bot, review_id=review_id, reviewer_id=reviewer_id, reason=reason,
     )
-    # UX-7.1：处理完成后释放 claim 锁
-    try:
-        from bot.utils.review_claim import release_claim
-        release_claim("teacher_review", review_id, reviewer_id)
-    except Exception:
-        pass
-
-    teacher = await get_teacher(review["teacher_id"])
-    teacher_name = teacher["display_name"] if teacher else None
-    try:
-        await notify_review_rejected(
-            bot, review_id, teacher_name=teacher_name, reason=reason,
-        )
-    except Exception as e:
-        logger.warning("notify_review_rejected 失败 review=%s: %s", review_id, e)
+    if not result.ok:
+        return
 
     # 清旧消息 + 推下一条 / 队列空
     await _cleanup_messages(bot, chat_id, state)

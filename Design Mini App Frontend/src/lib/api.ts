@@ -212,6 +212,8 @@ export interface ApiReimbursePool {
   remaining: number | null;
 }
 
+export interface ApiPointPackage { key: string; label: string; delta: number }
+
 export interface ApiAdminStats {
   today_checkins: number;
   today_new_users: number;
@@ -221,6 +223,7 @@ export interface ApiAdminStats {
   active_teachers: number;
   trend: ApiTrendPoint[];
   pending_queue: ApiPendingReview[];
+  point_packages?: ApiPointPackage[];
   reimburse_pool?: ApiReimbursePool | null;
 }
 
@@ -229,6 +232,32 @@ export async function getAdminStats(): Promise<ApiAdminStats | null> {
   const r = await apiFetch("/api/admin/stats");
   if (!r.ok) return null;
   return (await r.json()) as ApiAdminStats;
+}
+
+export interface ModResult { ok: boolean; error?: string; new_total?: number; delta?: number }
+
+/** 审核通过（仅超管）：package_key 选预设套餐，或 delta 自定义。 */
+export async function approveReview(
+  id: number, body: { package_key?: string; delta?: number },
+): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/reviews/${id}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
+/** 审核驳回（仅超管）：reason 可选。 */
+export async function rejectReview(id: number, reason?: string): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/reviews/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
 }
 
 /**

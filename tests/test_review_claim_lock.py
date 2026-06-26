@@ -279,18 +279,20 @@ def test_rreview_force_claim_handler_writes_audit():
 
 
 def test_do_approve_inner_releases_claim():
-    import bot.handlers.rreview_admin as mod
+    # 审核业务核心已抽到 bot.services.review_moderation（handler 委托调用），
+    # release_claim 现位于 service 的 approve_review 内。
+    import bot.services.review_moderation as mod
     src = _src(mod)
-    idx = src.find("async def _do_approve_inner(")
+    idx = src.find("async def approve_review(")
     end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 12000]
     assert "release_claim" in body
 
 
 def test_do_reject_releases_claim():
-    import bot.handlers.rreview_admin as mod
+    import bot.services.review_moderation as mod
     src = _src(mod)
-    idx = src.find("async def _do_reject(")
+    idx = src.find("async def reject_review(")
     end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 5000]
     assert "release_claim" in body

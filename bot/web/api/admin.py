@@ -118,6 +118,7 @@ async def get_admin_stats(request: web.Request) -> web.Response:
     trend = await _trend_7d()
     queue = await _pending_queue()
 
+    from bot.database import POINT_PACKAGE_OPTIONS
     resp = {
         "today_checkins": overview.today_checkin_teachers or 0,
         "today_new_users": overview.today_new_users or 0,
@@ -127,6 +128,11 @@ async def get_admin_stats(request: web.Request) -> web.Response:
         "active_teachers": counts.get("active", 0),
         "trend": trend,
         "pending_queue": queue,
+        # 审核加分套餐（前端 ✓ 选套餐用，与 bot 同源）
+        "point_packages": [
+            {"key": o["key"], "label": o["label"], "delta": o["delta"]}
+            for o in POINT_PACKAGE_OPTIONS
+        ],
     }
 
     # 报销池仅超管可见

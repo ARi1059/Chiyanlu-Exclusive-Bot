@@ -96,8 +96,11 @@ def test_function_uses_html_parse_mode():
 
 
 def test_rreview_admin_calls_notify_teacher():
-    """_handle_approve 中必须有 notify_teacher_review_approved 调用。"""
-    import bot.handlers.rreview_admin as mod
+    """审核通过流程中必须有 notify_teacher_review_approved 调用（在 try 块内容错）。
+
+    审核业务核心已抽到 bot.services.review_moderation（handler 委托调用）。
+    """
+    import bot.services.review_moderation as mod
     src = inspect.getsource(mod)
     assert "notify_teacher_review_approved" in src
     # 在 try 块内（失败容错）

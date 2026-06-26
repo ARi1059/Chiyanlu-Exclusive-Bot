@@ -182,20 +182,23 @@ def test_notify_supers_failure_does_not_raise(temp_db):
 
 
 def test_rreview_admin_calls_notify_supers_after_create_reimbursement():
-    """_do_approve_inner 在 create_reimbursement 成功后调用 notify_supers_reimburse_pending。"""
-    import bot.handlers.rreview_admin as mod
+    """approve_review 在 create_reimbursement 成功后调用 notify_supers_reimburse_pending。
+
+    审核业务核心已抽到 bot.services.review_moderation（handler 委托调用）。
+    """
+    import bot.services.review_moderation as mod
     src = _src(mod)
-    idx = src.find("async def _do_approve_inner(")
+    idx = src.find("async def approve_review(")
     assert idx > 0
     body = src[idx:idx + 12000]
     assert "notify_supers_reimburse_pending" in body, (
-        "_do_approve_inner 应在 create_reimbursement 成功后调用 notify_supers_reimburse_pending"
+        "approve_review 应在 create_reimbursement 成功后调用 notify_supers_reimburse_pending"
     )
 
 
 def test_rreview_admin_notify_inside_reimb_created_id_branch():
     """通知逻辑应在 if reimb_created_id: 分支内（即报销创建成功后才通知）。"""
-    import bot.handlers.rreview_admin as mod
+    import bot.services.review_moderation as mod
     src = _src(mod)
     idx = src.find("if reimb_created_id:")
     assert idx > 0

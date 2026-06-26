@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
+  approveReview, rejectReview,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
+  type ApiPointPackage, type ApiPendingReview,
 } from "../lib/api";
 import { isInTelegram, showBackButton, hapticLight } from "../lib/tg";
 import {
@@ -471,11 +473,112 @@ function ProfileView({
   );
 }
 
+// 待审评价队列项：超管可 ✓ 选加分套餐 / ✗ 选原因，直接落库。
+const REJECT_REASONS = ["证据不充分", "内容违规", "重复提交", "评分明显不合理"];
+
+function PendingReviewItem({
+  item, packages, isSuper, onResolved,
+}: {
+  item: ApiPendingReview;
+  packages: ApiPointPackage[];
+  isSuper: boolean;
+  onResolved: (id: number) => void;
+}) {
+  const [mode, setMode] = useState<"idle" | "approve" | "reject">("idle");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const doApprove = async (packageKey: string) => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await approveReview(item.id, { package_key: packageKey });
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "通过失败");
+  };
+  const doReject = async (reason?: string) => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await rejectReview(item.id, reason);
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "驳回失败");
+  };
+
+  const chip = "text-xs px-2.5 py-1 rounded-full disabled:opacity-40 transition-colors";
+
+  return (
+    <div className="px-4 py-3 border-b border-white/5 last:border-b-0">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[#e8e8e8] text-sm">{item.teacher}</span>
+            <RatingPill rating={item.rating} />
+          </div>
+          <span className="text-[#7d8d9e] text-xs">{item.user} · {item.time}</span>
+        </div>
+        {isSuper && mode === "idle" && (
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => setMode("approve")}
+              className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors"
+            >
+              <CheckCircle size={16} />
+            </button>
+            <button
+              onClick={() => setMode("reject")}
+              className="p-1.5 rounded-lg bg-[#e05b7a]/15 text-[#e05b7a] hover:bg-[#e05b7a]/25 transition-colors"
+            >
+              <XCircle size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {mode === "approve" && (
+        <div className="mt-2.5">
+          <div className="text-[#7d8d9e] text-[10px] mb-1.5">选加分套餐通过</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {packages.map((p) => (
+              <button key={p.key} disabled={busy} onClick={() => doApprove(p.key)}
+                className={`${chip} bg-[#243447] text-[#c4974a] hover:bg-[#2c4156]`}>
+                {p.label}{p.delta > 0 ? ` +${p.delta}` : ""}
+              </button>
+            ))}
+            <button disabled={busy} onClick={() => setMode("idle")}
+              className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {mode === "reject" && (
+        <div className="mt-2.5">
+          <div className="text-[#7d8d9e] text-[10px] mb-1.5">选驳回原因</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {REJECT_REASONS.map((r) => (
+              <button key={r} disabled={busy} onClick={() => doReject(r)}
+                className={`${chip} bg-[#243447] text-[#e05b7a] hover:bg-[#3a2230]`}>{r}</button>
+            ))}
+            <button disabled={busy} onClick={() => doReject(undefined)}
+              className={`${chip} bg-[#243447] text-[#aebac8]`}>跳过原因</button>
+            <button disabled={busy} onClick={() => setMode("idle")}
+              className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {busy && <div className="text-[#7d8d9e] text-xs mt-2">处理中…</div>}
+      {err && <div className="text-[#e05b7a] text-xs mt-2">{err}（可刷新管理台重试）</div>}
+    </div>
+  );
+}
+
 function AdminView({ role }: { role: Role }) {
   const [stats, setStats] = useState<ApiAdminStats | null>(null);
   const [loading, setLoading] = useState(true);
-  // 本地审核态：审过的从队列移除（乐观；写库 API 属后续，先做展示+本地消队列）。
+  // 审过的本地即时移出队列；同时后台 refresh 拉新统计（已审的服务端不再返回）。
   const [handledIds, setHandledIds] = useState<number[]>([]);
+
+  const refresh = useCallback(async () => {
+    const s = await getAdminStats();
+    if (s) setStats(s);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -485,9 +588,16 @@ function AdminView({ role }: { role: Role }) {
     return () => { alive = false; };
   }, []);
 
+  const onResolved = (id: number) => {
+    setHandledIds((p) => [...p, id]);
+    void refresh();
+  };
+
   const trend = stats?.trend ?? [];
   const queue = (stats?.pending_queue ?? []).filter((p) => !handledIds.includes(p.id));
   const pool = stats?.reimburse_pool ?? null;
+  const packages = stats?.point_packages ?? [];
+  const isSuper = role === "superadmin";
 
   const cards = [
     { label: "今日签到", val: String(stats?.today_checkins ?? 0), sub: `今日新增 ${stats?.today_new_users ?? 0} 用户`, icon: CheckCircle, color: "#4fc97a" },
@@ -576,33 +686,14 @@ function AdminView({ role }: { role: Role }) {
         {queue.length === 0 ? (
           <div className="px-4 py-5 text-center text-[#7d8d9e] text-xs">全部处理完毕 ✓</div>
         ) : (
-          queue.map((item, i) => (
-            <div
+          queue.map((item) => (
+            <PendingReviewItem
               key={item.id}
-              className={`flex items-center justify-between px-4 py-3 ${i < queue.length - 1 ? "border-b border-white/5" : ""}`}
-            >
-              <div>
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-[#e8e8e8] text-sm">{item.teacher}</span>
-                  <RatingPill rating={item.rating} />
-                </div>
-                <span className="text-[#7d8d9e] text-xs">{item.user} · {item.time}</span>
-              </div>
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => setHandledIds((p) => [...p, item.id])}
-                  className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors"
-                >
-                  <CheckCircle size={16} />
-                </button>
-                <button
-                  onClick={() => setHandledIds((p) => [...p, item.id])}
-                  className="p-1.5 rounded-lg bg-[#e05b7a]/15 text-[#e05b7a] hover:bg-[#e05b7a]/25 transition-colors"
-                >
-                  <XCircle size={16} />
-                </button>
-              </div>
-            </div>
+              item={item}
+              packages={packages}
+              isSuper={isSuper}
+              onResolved={onResolved}
+            />
           ))
         )}
       </div>
