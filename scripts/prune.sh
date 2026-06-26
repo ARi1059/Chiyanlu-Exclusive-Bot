@@ -475,16 +475,19 @@ audit_detail="{\"days\": ${DAYS}, \"tables\": {${detail_tables}}, \"total_delete
 sql_db_path=$(printf "%s" "${DB_PATH}" | sed "s/'/''/g")
 sql_audit_detail=$(printf "%s" "${audit_detail}" | sed "s/'/''/g")
 
-# 用 INSERT ... RETURNING id 拿到 audit log id（SQLite 3.35+；Debian 12 sqlite3 满足）
+# INSERT 后用 SELECT last_insert_rowid() 取 audit log id（同一 sqlite3 连接）。
+# 不用 RETURNING：旧版 sqlite3（< 3.35，VPS 实测 3.34.1）不支持，叠加 set -e 会令
+# 整脚本在此 exit 1（删除已成功却报失败）。结尾 || audit_id="" 防 sqlite3 异常时
+# 触发 set -e 中止，改走下方 guard 继续运行。
 audit_id=$(sqlite3 "${DB_PATH}" <<SQL 2>/dev/null
 INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, detail, created_at)
 VALUES (0, 'prune_confirm', 'database', '${sql_db_path}',
-        '${sql_audit_detail}', CURRENT_TIMESTAMP)
-RETURNING id;
+        '${sql_audit_detail}', CURRENT_TIMESTAMP);
+SELECT last_insert_rowid();
 SQL
-)
+) || audit_id=""
 if [[ -z "${audit_id}" ]]; then
-    warn "admin_audit_logs 写入未返回 id（可能 sqlite3 不支持 RETURNING）；继续运行"
+    warn "admin_audit_logs 写入未返回 id（sqlite3 异常或无 last_insert_rowid）；继续运行"
     audit_id="?"
 fi
 
