@@ -1,0 +1,8 @@
+# 前端构建产物 / 依赖（纳入 repo 前补充，避免 npm install 后污染）
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+*.tsbuildinfo
+.DS_Store
