@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect } from "react";
 import {
   bootstrapAuth, getTeachers, getTeacherDetail, teacherPhotoUrl,
-  type ApiTeacher, type ApiTeacherDetail,
+  addFavorite, removeFavorite, getProfile, getAdminStats,
+  type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
 } from "../lib/api";
 import { isInTelegram } from "../lib/tg";
 import {
@@ -67,7 +68,7 @@ function toTeacher(t: ApiTeacher): Teacher {
     rating: t.rating ?? { avg: 0, count: 0 },
     hasPhoto: t.has_photo,
     colorFrom, colorTo,
-    favorited: false,
+    favorited: t.favorited ?? false,
     notifyEnabled: false,
   };
 }
@@ -77,23 +78,6 @@ function todayLabel(): string {
   const wd = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · 周${wd}`;
 }
-
-// 管理台仍为演示数据（P3 接入），与老师主线解耦。
-const ANALYTICS = [
-  { day: "6/20", reviews: 3, signins: 4 },
-  { day: "6/21", reviews: 5, signins: 5 },
-  { day: "6/22", reviews: 2, signins: 3 },
-  { day: "6/23", reviews: 7, signins: 6 },
-  { day: "6/24", reviews: 4, signins: 5 },
-  { day: "6/25", reviews: 6, signins: 7 },
-  { day: "6/26", reviews: 8, signins: 5 },
-];
-
-const PENDING_QUEUE = [
-  { id: 1, teacher: "柔月", user: "****3456", rating: "positive" as const, time: "14:23" },
-  { id: 2, teacher: "苏澜", user: "****9012", rating: "neutral" as const, time: "12:41" },
-  { id: 3, teacher: "冰蝶", user: "****5678", rating: "positive" as const, time: "11:05" },
-];
 
 // ── Shared small components ────────────────────────────────────────────────────
 
@@ -375,17 +359,27 @@ function FavoritesView({
 }
 
 function ProfileView({
-  role, onRoleChange, teachers,
+  role, onRoleChange, teachers, profile,
 }: {
   role: Role;
   onRoleChange: (r: Role) => void;
   teachers: Teacher[];
+  profile: ApiProfile | null;
 }) {
   const favCount = teachers.filter((t) => t.favorited).length;
   const roles: Role[] = ["user", "teacher", "admin", "superadmin"];
   const roleLabel: Record<Role, string> = { user: "用户", teacher: "老师", admin: "管理员", superadmin: "超管" };
   // 角色来自后端鉴权；演示切换器仅在非 Telegram（本地调试）显示。
   const showRoleSwitcher = !isInTelegram();
+
+  // 身份/统计优先用后端 profile；本地调试（无 profile）回退占位。
+  const handle = profile
+    ? (profile.username ? `@${profile.username}` : (profile.first_name || "用户"))
+    : "@user_9527";
+  const idText = profile ? `ID: ${profile.user_id}` : "ID: 123456789";
+  const points = profile ? profile.points.toLocaleString() : "1,280";
+  const reviewVal = profile ? String(profile.review_count) : "8";
+  const favVal = profile ? String(profile.favorite_count) : String(favCount);
 
   return (
     <div className="px-4 pt-4 pb-6 space-y-3">
@@ -397,17 +391,17 @@ function ProfileView({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[#e8e8e8] font-medium text-sm">@user_9527</span>
+              <span className="text-[#e8e8e8] font-medium text-sm">{handle}</span>
               <RoleBadge role={role} />
             </div>
-            <span className="text-[#7d8d9e] text-xs">ID: 123456789</span>
+            <span className="text-[#7d8d9e] text-xs">{idText}</span>
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2">
           {[
-            { label: "积分", val: "1,280" },
-            { label: "评价", val: "8" },
-            { label: "收藏", val: String(favCount) },
+            { label: "积分", val: points },
+            { label: "评价", val: reviewVal },
+            { label: "收藏", val: favVal },
           ].map(({ label, val }) => (
             <div key={label} className="bg-[#243447] rounded-xl p-2.5 text-center">
               <div className="text-[#c4974a] font-mono font-semibold text-base">{val}</div>
@@ -475,9 +469,33 @@ function ProfileView({
 }
 
 function AdminView({ role }: { role: Role }) {
-  const [approvedIds, setApprovedIds] = useState<number[]>([]);
-  const [rejectedIds, setRejectedIds] = useState<number[]>([]);
-  const pending = PENDING_QUEUE.filter((p) => !approvedIds.includes(p.id) && !rejectedIds.includes(p.id));
+  const [stats, setStats] = useState<ApiAdminStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  // 本地审核态：审过的从队列移除（乐观；写库 API 属后续，先做展示+本地消队列）。
+  const [handledIds, setHandledIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    getAdminStats()
+      .then((s) => { if (alive) { setStats(s); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const trend = stats?.trend ?? [];
+  const queue = (stats?.pending_queue ?? []).filter((p) => !handledIds.includes(p.id));
+  const pool = stats?.reimburse_pool ?? null;
+
+  const cards = [
+    { label: "今日签到", val: String(stats?.today_checkins ?? 0), sub: `今日新增 ${stats?.today_new_users ?? 0} 用户`, icon: CheckCircle, color: "#4fc97a" },
+    { label: "待审评价", val: String(stats?.pending_reviews ?? 0), sub: "待处理",        icon: ClipboardList, color: "#e8a857" },
+    { label: "待审报销", val: String(stats?.pending_reimbursements ?? 0), sub: "待处理", icon: Wallet,       color: "#c4974a" },
+    { label: "活跃老师", val: String(stats?.active_teachers ?? 0), sub: "全部在册",      icon: Award,        color: "#6b9ee8" },
+  ];
+
+  const poolPct = pool && pool.monthly_pool && pool.monthly_pool > 0
+    ? Math.min(100, Math.round(((pool.used ?? 0) / pool.monthly_pool) * 100))
+    : 0;
 
   return (
     <div className="px-4 pt-4 pb-6 space-y-3">
@@ -489,14 +507,15 @@ function AdminView({ role }: { role: Role }) {
         <RoleBadge role={role} />
       </div>
 
+      {loading && (
+        <div className="text-center py-14 text-[#7d8d9e] text-sm">加载中…</div>
+      )}
+
+      {!loading && (
+        <>
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: "今日签到", val: "5",  sub: "+2 今日",     icon: CheckCircle, color: "#4fc97a" },
-          { label: "待审评价", val: String(pending.length), sub: "待处理", icon: ClipboardList, color: "#e8a857" },
-          { label: "待审报销", val: "2",  sub: "￥1,530",     icon: Wallet,      color: "#c4974a" },
-          { label: "活跃老师", val: "6",  sub: "全部在册",    icon: Award,       color: "#6b9ee8" },
-        ].map(({ label, val, sub, icon: Icon, color }) => (
+        {cards.map(({ label, val, sub, icon: Icon, color }) => (
           <div key={label} className="bg-[#1e2c3a] rounded-2xl p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[#7d8d9e] text-xs">{label}</span>
@@ -518,7 +537,7 @@ function AdminView({ role }: { role: Role }) {
           </div>
         </div>
         <ResponsiveContainer width="100%" height={90}>
-          <AreaChart data={ANALYTICS} margin={{ top: 0, right: 0, bottom: 0, left: -28 }}>
+          <AreaChart data={trend} margin={{ top: 0, right: 0, bottom: 0, left: -28 }}>
             <defs>
               <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#c4974a" stopOpacity={0.3} />
@@ -545,19 +564,19 @@ function AdminView({ role }: { role: Role }) {
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
           <span className="text-[#e8e8e8] text-sm font-medium">待审评价</span>
-          {pending.length > 0 && (
+          {queue.length > 0 && (
             <span className="text-xs bg-[#e8a857]/15 text-[#e8a857] px-2 py-0.5 rounded-full font-mono">
-              {pending.length} 条
+              {queue.length} 条
             </span>
           )}
         </div>
-        {pending.length === 0 ? (
+        {queue.length === 0 ? (
           <div className="px-4 py-5 text-center text-[#7d8d9e] text-xs">全部处理完毕 ✓</div>
         ) : (
-          pending.map((item, i) => (
+          queue.map((item, i) => (
             <div
               key={item.id}
-              className={`flex items-center justify-between px-4 py-3 ${i < pending.length - 1 ? "border-b border-white/5" : ""}`}
+              className={`flex items-center justify-between px-4 py-3 ${i < queue.length - 1 ? "border-b border-white/5" : ""}`}
             >
               <div>
                 <div className="flex items-center gap-2 mb-0.5">
@@ -568,13 +587,13 @@ function AdminView({ role }: { role: Role }) {
               </div>
               <div className="flex gap-1.5">
                 <button
-                  onClick={() => setApprovedIds((p) => [...p, item.id])}
+                  onClick={() => setHandledIds((p) => [...p, item.id])}
                   className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors"
                 >
                   <CheckCircle size={16} />
                 </button>
                 <button
-                  onClick={() => setRejectedIds((p) => [...p, item.id])}
+                  onClick={() => setHandledIds((p) => [...p, item.id])}
                   className="p-1.5 rounded-lg bg-[#e05b7a]/15 text-[#e05b7a] hover:bg-[#e05b7a]/25 transition-colors"
                 >
                   <XCircle size={16} />
@@ -586,7 +605,7 @@ function AdminView({ role }: { role: Role }) {
       </div>
 
       {/* Reimbursement pool (superadmin only) */}
-      {role === "superadmin" && (
+      {role === "superadmin" && pool && pool.enabled && (
         <div className="bg-[#1e2c3a] rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-[#e8e8e8] text-sm font-medium">报销池状态</span>
@@ -597,26 +616,28 @@ function AdminView({ role }: { role: Role }) {
               <svg viewBox="0 0 64 64" className="w-full h-full -rotate-90">
                 <circle cx="32" cy="32" r="24" fill="none" stroke="#243447" strokeWidth="6" />
                 <circle cx="32" cy="32" r="24" fill="none" stroke="#c4974a" strokeWidth="6"
-                  strokeDasharray={`${(4200 / 6000) * 150.8} 150.8`} strokeLinecap="round" />
+                  strokeDasharray={`${(poolPct / 100) * 150.8} 150.8`} strokeLinecap="round" />
               </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-[#c4974a] font-semibold">70%</span>
+              <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-[#c4974a] font-semibold">{poolPct}%</span>
             </div>
             <div className="flex-1 space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="text-[#7d8d9e]">已用</span>
-                <span className="text-[#c4974a] font-mono">￥4,200</span>
+                <span className="text-[#c4974a] font-mono">￥{(pool.used ?? 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-[#7d8d9e]">剩余</span>
-                <span className="text-[#e8e8e8] font-mono">￥1,800</span>
+                <span className="text-[#e8e8e8] font-mono">￥{(pool.remaining ?? 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-[#7d8d9e]">月池上限</span>
-                <span className="text-[#7d8d9e] font-mono">￥6,000</span>
+                <span className="text-[#7d8d9e] font-mono">{pool.monthly_pool ? `￥${pool.monthly_pool.toLocaleString()}` : "不限"}</span>
               </div>
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
@@ -824,8 +845,9 @@ export default function App() {
   const [role, setRole] = useState<Role>("user");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<ApiProfile | null>(null);
 
-  // 启动：先在 Telegram 内换 session（拿真实角色），再用 session 拉真实老师列表。
+  // 启动：先在 Telegram 内换 session（拿真实角色），再用 session 拉真实老师列表 + 档案。
   // 非 Telegram（本地浏览器）无 token → getTeachers 返回 []，保留 mock 角色切换器。
   useEffect(() => {
     let alive = true;
@@ -834,9 +856,10 @@ export default function App() {
         const me = await bootstrapAuth();
         if (alive && me) setRole(me.role);
       } catch { /* 鉴权失败：保留 mock 角色 */ }
-      const list = await getTeachers();
+      const [list, prof] = await Promise.all([getTeachers(), getProfile()]);
       if (alive) {
         setTeachers(list.map(toTeacher));
+        setProfile(prof);
         setLoading(false);
       }
     })();
@@ -847,8 +870,27 @@ export default function App() {
     ? teachers.find((t) => t.id === selectedTeacherId) ?? null
     : null;
 
-  const toggleFavorite = (id: number) =>
-    setTeachers((prev) => prev.map((t) => t.id === id ? { ...t, favorited: !t.favorited } : t));
+  // 收藏：乐观更新 UI，再落库；失败回滚。非 Telegram（无 token）API 静默失败，
+  // 仍保留本地态不回滚（本地调试可用）。
+  const toggleFavorite = (id: number) => {
+    let nextState = false;
+    setTeachers((prev) => prev.map((t) => {
+      if (t.id !== id) return t;
+      nextState = !t.favorited;
+      return { ...t, favorited: nextState };
+    }));
+    const op = nextState ? addFavorite(id) : removeFavorite(id);
+    op.then((ok) => {
+      if (!ok && isInTelegram()) {
+        // 真机落库失败：回滚
+        setTeachers((prev) => prev.map((t) => t.id === id ? { ...t, favorited: !nextState } : t));
+      }
+    }).catch(() => {
+      if (isInTelegram()) {
+        setTeachers((prev) => prev.map((t) => t.id === id ? { ...t, favorited: !nextState } : t));
+      }
+    });
+  };
 
   const toggleNotify = (id: number) =>
     setTeachers((prev) => prev.map((t) => t.id === id ? { ...t, notifyEnabled: !t.notifyEnabled } : t));
@@ -891,7 +933,7 @@ export default function App() {
           {tab === "today"     && <TodayView     teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
           {tab === "search"    && <SearchView    teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
           {tab === "favorites" && <FavoritesView teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
-          {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} />}
+          {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} profile={profile} />}
           {tab === "admin"     && <AdminView     role={role} />}
         </div>
 

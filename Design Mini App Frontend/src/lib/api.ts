@@ -93,6 +93,7 @@ export interface ApiTeacher {
   available: boolean;
   rating: ApiRating;
   has_photo: boolean;
+  favorited?: boolean;
 }
 
 export interface ApiReview {
@@ -126,6 +127,81 @@ export async function getTeacherDetail(id: number): Promise<ApiTeacherDetail | n
 /** 老师照片 URL（后端代理 Telegram file_id）。 */
 export function teacherPhotoUrl(id: number): string {
   return `/api/teachers/${id}/photo`;
+}
+
+// ── 收藏（P1）──────────────────────────────────────────────────────────────────
+
+/** 收藏一个老师；成功返回 true。非 Telegram（无 token）返回 false。 */
+export async function addFavorite(teacherId: number): Promise<boolean> {
+  const r = await apiFetch("/api/favorites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ teacher_id: teacherId }),
+  });
+  return r.ok;
+}
+
+/** 取消收藏；成功返回 true。 */
+export async function removeFavorite(teacherId: number): Promise<boolean> {
+  const r = await apiFetch(`/api/favorites/${teacherId}`, { method: "DELETE" });
+  return r.ok;
+}
+
+// ── 个人主页（P1）──────────────────────────────────────────────────────────────
+
+export interface ApiProfile {
+  user_id: number;
+  role: Role;
+  username: string;
+  first_name: string;
+  points: number;
+  review_count: number;
+  favorite_count: number;
+}
+
+/** 当前用户档案；非 Telegram（无 token）返回 null。 */
+export async function getProfile(): Promise<ApiProfile | null> {
+  const r = await apiFetch("/api/profile");
+  if (!r.ok) return null;
+  return (await r.json()) as ApiProfile;
+}
+
+// ── 管理台（P1）────────────────────────────────────────────────────────────────
+
+export interface ApiTrendPoint { day: string; reviews: number; signins: number }
+
+export interface ApiPendingReview {
+  id: number;
+  teacher: string;
+  user: string;
+  rating: "positive" | "neutral" | "negative";
+  time: string;
+}
+
+export interface ApiReimbursePool {
+  enabled: boolean;
+  monthly_pool: number | null;
+  used: number | null;
+  remaining: number | null;
+}
+
+export interface ApiAdminStats {
+  today_checkins: number;
+  today_new_users: number;
+  today_new_reviews: number;
+  pending_reviews: number;
+  pending_reimbursements: number;
+  active_teachers: number;
+  trend: ApiTrendPoint[];
+  pending_queue: ApiPendingReview[];
+  reimburse_pool?: ApiReimbursePool | null;
+}
+
+/** 管理台统计；非管理员或失败返回 null。 */
+export async function getAdminStats(): Promise<ApiAdminStats | null> {
+  const r = await apiFetch("/api/admin/stats");
+  if (!r.ok) return null;
+  return (await r.json()) as ApiAdminStats;
 }
 
 /**

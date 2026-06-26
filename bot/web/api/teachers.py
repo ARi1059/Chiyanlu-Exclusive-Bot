@@ -18,6 +18,7 @@ from bot.database import (
     get_teacher_channel_post,
     get_teacher_full_profile,
     list_approved_reviews,
+    list_user_favorites,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ def _has_photo(teacher: dict) -> bool:
 
 async def get_teachers(request: web.Request) -> web.Response:
     """列出在册老师（is_active=1 且未删）。任意已登录角色可访问。"""
+    uid = request["session"]["uid"]
+    favs = await list_user_favorites(uid)
+    fav_ids = {f["user_id"] for f in favs}  # 收藏列表里老师主键在 user_id 键
     teachers = await get_all_teachers(active_only=True, include_deleted=False)
     items = []
     for t in teachers:
@@ -74,6 +78,7 @@ async def get_teachers(request: web.Request) -> web.Response:
             "available": bool(t.get("is_active")),
             "rating": _rating(post),
             "has_photo": _has_photo(t),
+            "favorited": tid in fav_ids,
         })
     return web.json_response({"teachers": items})
 
