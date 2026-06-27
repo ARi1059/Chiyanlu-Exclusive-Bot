@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
@@ -15,10 +15,9 @@ import {
   Star, MapPin, Bell, Home, BarChart2,
   CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList,
 } from "lucide-react";
-import {
-  RadarChart, Radar, PolarGrid, PolarAngleAxis,
-  ResponsiveContainer, AreaChart, Area, XAxis, Tooltip,
-} from "recharts";
+// recharts 重(~157KB gzip)且只在管理台/详情用 → 懒加载，普通用户首屏不下载。
+const TrendChart = lazy(() => import("./charts/TrendChart"));
+const RadarChartBox = lazy(() => import("./charts/RadarChartBox"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
@@ -946,28 +945,9 @@ function AdminView({ role }: { role: Role }) {
             <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-[#6b9ee8] inline-block rounded" />签到</span>
           </div>
         </div>
-        <ResponsiveContainer width="100%" height={90}>
-          <AreaChart data={trend} margin={{ top: 0, right: 0, bottom: 0, left: -28 }}>
-            <defs>
-              <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#c4974a" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#c4974a" stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="gS" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#6b9ee8" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#6b9ee8" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="day" tick={{ fill: "#7d8d9e", fontSize: 9 }} axisLine={false} tickLine={false} />
-            <Tooltip
-              contentStyle={{ background: "#243447", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 11 }}
-              labelStyle={{ color: "#e8e8e8" }}
-              itemStyle={{ color: "#aebac8" }}
-            />
-            <Area type="monotone" dataKey="reviews" stroke="#c4974a" strokeWidth={1.5} fill="url(#gR)" name="评价" />
-            <Area type="monotone" dataKey="signins"  stroke="#6b9ee8" strokeWidth={1.5} fill="url(#gS)" name="签到" />
-          </AreaChart>
-        </ResponsiveContainer>
+        <Suspense fallback={<div className="h-[90px] flex items-center justify-center text-[#7d8d9e] text-xs">图表加载中…</div>}>
+          <TrendChart data={trend} />
+        </Suspense>
       </div>
 
       {/* Pending reviews queue */}
@@ -1159,13 +1139,9 @@ function TeacherDetail({
                 <div className="text-center py-10 text-[#7d8d9e] text-sm">暂无评分</div>
               ) : (
                 <>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <RadarChart data={dims} cx="50%" cy="50%" outerRadius="68%">
-                      <PolarGrid stroke="rgba(255,255,255,0.06)" />
-                      <PolarAngleAxis dataKey="subject" tick={{ fill: "#7d8d9e", fontSize: 11 }} />
-                      <Radar dataKey="A" stroke="#c4974a" fill="#c4974a" fillOpacity={0.22} strokeWidth={1.5} />
-                    </RadarChart>
-                  </ResponsiveContainer>
+                  <Suspense fallback={<div className="h-[180px] flex items-center justify-center text-[#7d8d9e] text-xs">雷达图加载中…</div>}>
+                    <RadarChartBox data={dims} />
+                  </Suspense>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3">
                     {dims.map(({ subject, A }) => (
                       <div key={subject} className="flex items-center gap-2">
