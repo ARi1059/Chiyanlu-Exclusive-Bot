@@ -184,6 +184,7 @@ export interface ApiProfile {
   points: number;
   review_count: number;
   favorite_count: number;
+  notify_enabled: boolean;
 }
 
 /** 当前用户档案；非 Telegram（无 token）返回 null。 */
@@ -191,6 +192,53 @@ export async function getProfile(): Promise<ApiProfile | null> {
   const r = await apiFetch("/api/profile");
   if (!r.ok) return null;
   return (await r.json()) as ApiProfile;
+}
+
+// ── 个人页子项（P1 Tier1）────────────────────────────────────────────────────
+
+export interface ApiPointTx {
+  delta: number;
+  reason: string;
+  label: string;
+  note: string;
+  created_at: string | null;
+}
+
+/** 积分流水 + 当前总分。 */
+export async function getMyPoints(): Promise<{ total: number; transactions: ApiPointTx[] }> {
+  const r = await apiFetch("/api/me/points");
+  if (!r.ok) return { total: 0, transactions: [] };
+  return (await r.json()) as { total: number; transactions: ApiPointTx[] };
+}
+
+export interface ApiMyReview {
+  id: number;
+  teacher: string;
+  rating: "positive" | "neutral" | "negative";
+  status: "pending" | "approved" | "rejected";
+  overall_score: number;
+  summary: string;
+  created_at: string | null;
+}
+
+/** 我提交的评价（含审核状态）。 */
+export async function getMyReviews(): Promise<ApiMyReview[]> {
+  const r = await apiFetch("/api/me/reviews");
+  if (!r.ok) return [];
+  const data = (await r.json()) as { reviews?: ApiMyReview[] };
+  return data.reviews ?? [];
+}
+
+/** 设置开课提醒通知开关；返回最终状态（失败返回 null）。 */
+export async function setNotify(enabled: boolean): Promise<boolean | null> {
+  const r = await apiFetch("/api/me/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!r.ok) return null;
+  const data = (await r.json()) as { notify_enabled?: boolean };
+  return data.notify_enabled ?? enabled;
 }
 
 // ── 管理台（P1）────────────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ from bot.web.api.admin_reviews import post_approve_review, post_reject_review
 from bot.web.api.favorites import delete_favorite, get_favorites, post_favorite
 from bot.web.api.me import get_me
 from bot.web.api.photo import get_teacher_photo
-from bot.web.api.profile import get_profile
+from bot.web.api.profile import get_my_points, get_my_reviews, get_profile, post_notify
 from bot.web.api.teachers import get_teacher_detail, get_teachers
 
 
@@ -23,6 +23,9 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/auth/session", post_session)
     app.router.add_get("/api/me", get_me)
     app.router.add_get("/api/profile", get_profile)
+    app.router.add_get("/api/me/points", get_my_points)
+    app.router.add_get("/api/me/reviews", get_my_reviews)
+    app.router.add_post("/api/me/notify", post_notify)
     # P1：老师数据（MiniApp）
     app.router.add_get("/api/teachers", get_teachers)
     app.router.add_get("/api/teachers/{id}", get_teacher_detail)

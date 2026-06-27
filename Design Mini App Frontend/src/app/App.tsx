@@ -3,13 +3,14 @@ import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   approveReview, rejectReview,
+  getMyPoints, getMyReviews, setNotify,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
-  type ApiPointPackage, type ApiPendingReview,
+  type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
 } from "../lib/api";
 import { isInTelegram, showBackButton, hapticLight } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
-  Star, MapPin, Bell, BellOff, Home, BarChart2, Shield,
+  Star, MapPin, Bell, Home, BarChart2,
   CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList,
 } from "lucide-react";
 import {
@@ -45,7 +46,6 @@ interface Teacher {
   colorFrom: string;
   colorTo: string;
   favorited: boolean;
-  notifyEnabled: boolean;
 }
 
 // 照片缺失时的渐变占位色（按 id 取，稳定不跳色）
@@ -73,7 +73,6 @@ function toTeacher(t: ApiTeacher): Teacher {
     photoUrl: t.photo_url ?? null,
     colorFrom, colorTo,
     favorited: t.favorited ?? false,
-    notifyEnabled: false,
   };
 }
 
@@ -362,6 +361,105 @@ function FavoritesView({
   );
 }
 
+// 短日期：'2026-06-20 14:23:45'(UTC) → '06-20 14:23'
+function shortDate(s: string | null): string {
+  if (!s || s.length < 16) return s || "";
+  return s.slice(5, 16);
+}
+
+// 个人页滑出子弹层：积分明细 / 我的评价。复用详情页 overlay 模式 + Telegram 原生返回键。
+function ProfileSheet({ kind, onClose }: { kind: "points" | "reviews"; onClose: () => void }) {
+  const [points, setPoints] = useState<{ total: number; transactions: ApiPointTx[] } | null>(null);
+  const [reviews, setReviews] = useState<ApiMyReview[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (kind === "points") return showBackButton(onClose);
+    return showBackButton(onClose);
+  }, [kind, onClose]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      if (kind === "points") {
+        const p = await getMyPoints();
+        if (alive) setPoints(p);
+      } else {
+        const r = await getMyReviews();
+        if (alive) setReviews(r);
+      }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [kind]);
+
+  const title = kind === "points" ? "积分明细" : "我的评价";
+  const statusCfg: Record<ApiMyReview["status"], { label: string; cls: string }> = {
+    pending: { label: "待审核", cls: "bg-[#e8a857]/15 text-[#e8a857]" },
+    approved: { label: "已通过", cls: "bg-[#4fc97a]/15 text-[#4fc97a]" },
+    rejected: { label: "已驳回", cls: "bg-[#e05b7a]/15 text-[#e05b7a]" },
+  };
+
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col bg-[#17212b]">
+      <div className="flex-shrink-0 flex items-center gap-2 px-3 py-3 border-b border-white/8 bg-[#1e2c3a]">
+        <button onClick={onClose} className="p-1.5 rounded-full text-[#e8e8e8] active:bg-white/10">
+          <ChevronLeft size={20} />
+        </button>
+        <span className="text-[#e8e8e8] text-sm font-medium">{title}</span>
+        {kind === "points" && points && (
+          <span className="ml-auto text-[#c4974a] text-sm font-mono font-semibold">{points.total.toLocaleString()} 分</span>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto no-scrollbar p-4">
+        {loading ? (
+          <div className="text-center py-14 text-[#7d8d9e] text-sm">加载中…</div>
+        ) : kind === "points" ? (
+          (points?.transactions.length ?? 0) === 0 ? (
+            <div className="text-center py-14 text-[#7d8d9e] text-sm">暂无积分记录</div>
+          ) : (
+            <div className="space-y-2">
+              {points!.transactions.map((t, i) => (
+                <div key={i} className="flex items-center justify-between bg-[#1e2c3a] rounded-xl px-4 py-3">
+                  <div>
+                    <div className="text-[#e8e8e8] text-sm">{t.label}{t.note ? ` · ${t.note}` : ""}</div>
+                    <div className="text-[#7d8d9e] text-xs mt-0.5">{shortDate(t.created_at)}</div>
+                  </div>
+                  <span className={`font-mono font-semibold text-sm ${t.delta >= 0 ? "text-[#4fc97a]" : "text-[#e05b7a]"}`}>
+                    {t.delta >= 0 ? `+${t.delta}` : t.delta}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )
+        ) : (reviews?.length ?? 0) === 0 ? (
+          <div className="text-center py-14 text-[#7d8d9e] text-sm">还没有提交过评价</div>
+        ) : (
+          <div className="space-y-2">
+            {reviews!.map((rv) => (
+              <div key={rv.id} className="bg-[#1e2c3a] rounded-xl px-4 py-3">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#e8e8e8] text-sm">{rv.teacher}</span>
+                    <RatingPill rating={rv.rating} />
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${statusCfg[rv.status].cls}`}>
+                    {statusCfg[rv.status].label}
+                  </span>
+                </div>
+                {rv.summary && <p className="text-[#aebac8] text-xs leading-relaxed line-clamp-2">{rv.summary}</p>}
+                <div className="text-[#7d8d9e] text-xs mt-1">{shortDate(rv.created_at)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProfileView({
   role, onRoleChange, teachers, profile,
 }: {
@@ -375,6 +473,21 @@ function ProfileView({
   const roleLabel: Record<Role, string> = { user: "用户", teacher: "老师", admin: "管理员", superadmin: "超管" };
   // 角色来自后端鉴权；演示切换器仅在非 Telegram（本地调试）显示。
   const showRoleSwitcher = !isInTelegram();
+
+  const [sheet, setSheet] = useState<"points" | "reviews" | null>(null);
+  const [notify, setNotifyState] = useState<boolean>(profile?.notify_enabled ?? true);
+  const [notifyBusy, setNotifyBusy] = useState(false);
+  // profile 异步到达后同步通知开关初值
+  useEffect(() => { if (profile) setNotifyState(profile.notify_enabled); }, [profile]);
+
+  const toggleNotify = async () => {
+    if (notifyBusy) return;
+    const next = !notify;
+    setNotifyState(next); setNotifyBusy(true); hapticLight();
+    const res = await setNotify(next);
+    setNotifyBusy(false);
+    if (res === null && isInTelegram()) setNotifyState(!next); // 失败回滚
+  };
 
   // 身份/统计优先用后端 profile；本地调试（无 profile）回退占位。
   const handle = profile
@@ -444,31 +557,63 @@ function ProfileView({
 
       {/* Menu items */}
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
-        {[
-          { icon: Award, label: "积分明细", sub: "查看积分收支记录" },
-          { icon: Clock, label: "预约历史", sub: "近期评价记录" },
-          { icon: Bell, label: "通知设置", sub: "开课提醒与系统通知" },
-          { icon: Shield, label: "隐私安全", sub: "账号安全设置" },
-        ].map(({ icon: Icon, label, sub }, i, arr) => (
-          <button
-            key={label}
-            className={`w-full flex items-center justify-between p-4 text-left hover:bg-[#243447] active:bg-[#243447] transition-colors ${
-              i < arr.length - 1 ? "border-b border-white/5" : ""
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
-                <Icon size={15} className="text-[#c4974a]" />
-              </div>
-              <div>
-                <div className="text-[#e8e8e8] text-sm">{label}</div>
-                <div className="text-[#7d8d9e] text-xs">{sub}</div>
-              </div>
+        {/* 积分明细 */}
+        <button
+          onClick={() => setSheet("points")}
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-[#243447] active:bg-[#243447] transition-colors border-b border-white/5"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
+              <Award size={15} className="text-[#c4974a]" />
             </div>
-            <ChevronRight size={15} className="text-[#7d8d9e]" />
+            <div>
+              <div className="text-[#e8e8e8] text-sm">积分明细</div>
+              <div className="text-[#7d8d9e] text-xs">查看积分收支记录</div>
+            </div>
+          </div>
+          <ChevronRight size={15} className="text-[#7d8d9e]" />
+        </button>
+
+        {/* 我的评价 */}
+        <button
+          onClick={() => setSheet("reviews")}
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-[#243447] active:bg-[#243447] transition-colors border-b border-white/5"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
+              <Clock size={15} className="text-[#c4974a]" />
+            </div>
+            <div>
+              <div className="text-[#e8e8e8] text-sm">我的评价</div>
+              <div className="text-[#7d8d9e] text-xs">我提交的评价与审核状态</div>
+            </div>
+          </div>
+          <ChevronRight size={15} className="text-[#7d8d9e]" />
+        </button>
+
+        {/* 通知设置（开关） */}
+        <div className="w-full flex items-center justify-between p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
+              <Bell size={15} className="text-[#c4974a]" />
+            </div>
+            <div>
+              <div className="text-[#e8e8e8] text-sm">开课提醒</div>
+              <div className="text-[#7d8d9e] text-xs">收藏老师上线时通知我</div>
+            </div>
+          </div>
+          <button
+            onClick={toggleNotify}
+            disabled={notifyBusy}
+            className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${notify ? "bg-[#c4974a]" : "bg-[#243447]"} ${notifyBusy ? "opacity-60" : ""}`}
+          >
+            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${notify ? "left-[22px]" : "left-0.5"}`} />
           </button>
-        ))}
+        </div>
       </div>
+
+      {/* 子弹层 */}
+      {sheet && <ProfileSheet kind={sheet} onClose={() => setSheet(null)} />}
     </div>
   );
 }
@@ -740,12 +885,11 @@ function AdminView({ role }: { role: Role }) {
 // ── Teacher detail overlay ────────────────────────────────────────────────────
 
 function TeacherDetail({
-  teacher, onBack, onFavorite, onNotify,
+  teacher, onBack, onFavorite,
 }: {
   teacher: Teacher;
   onBack: () => void;
   onFavorite: () => void;
-  onNotify: () => void;
 }) {
   const [detailTab, setDetailTab] = useState<"info" | "reviews">("info");
   const [detail, setDetail] = useState<ApiTeacherDetail | null>(null);
@@ -779,17 +923,9 @@ function TeacherDetail({
           <button onClick={onBack} className="p-2 rounded-full bg-black/20 backdrop-blur-sm text-white">
             <ChevronLeft size={20} />
           </button>
-          <div className="flex gap-2">
-            <button onClick={onNotify} className="p-2 rounded-full bg-black/20 backdrop-blur-sm">
-              {teacher.notifyEnabled
-                ? <Bell size={15} className="text-[#c4974a]" />
-                : <BellOff size={15} className="text-white/50" />
-              }
-            </button>
-            <button onClick={onFavorite} className="p-2 rounded-full bg-black/20 backdrop-blur-sm">
-              <Heart size={15} className={teacher.favorited ? "fill-[#e05b7a] text-[#e05b7a]" : "text-white/50"} />
-            </button>
-          </div>
+          <button onClick={onFavorite} className="p-2 rounded-full bg-black/20 backdrop-blur-sm">
+            <Heart size={15} className={teacher.favorited ? "fill-[#e05b7a] text-[#e05b7a]" : "text-white/50"} />
+          </button>
         </div>
         <div className="relative z-10 flex items-end justify-between">
           <div>
@@ -1003,9 +1139,6 @@ export default function App() {
     });
   };
 
-  const toggleNotify = (id: number) =>
-    setTeachers((prev) => prev.map((t) => t.id === id ? { ...t, notifyEnabled: !t.notifyEnabled } : t));
-
   const handleRoleChange = (r: Role) => {
     setRole(r);
     if (tab === "admin" && r !== "admin" && r !== "superadmin") setTab("today");
@@ -1088,7 +1221,6 @@ export default function App() {
               teacher={selectedTeacher}
               onBack={() => setSelectedTeacherId(null)}
               onFavorite={() => toggleFavorite(selectedTeacher.id)}
-              onNotify={() => toggleNotify(selectedTeacher.id)}
             />
           )}
         </div>
