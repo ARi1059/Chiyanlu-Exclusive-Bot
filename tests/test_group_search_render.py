@@ -369,7 +369,7 @@ def test_teacher_card_v2_kb_unchanged():
     for row in kb.inline_keyboard:
         for b in row:
             callbacks_and_urls.append(b.callback_data or b.url or "")
-    # 应含 contact url + group:fav callback + 私聊详情 deep link
+    # 应含 contact url + group:fav callback + 私聊详情 deep link（startapp 直达 MiniApp）
     assert any("example.com/contact" in c for c in callbacks_and_urls)
     assert any("group:fav:100" in c for c in callbacks_and_urls)
-    assert any("?start=teacher_100" in c for c in callbacks_and_urls)
+    assert any("?startapp=teacher_100" in c for c in callbacks_and_urls)

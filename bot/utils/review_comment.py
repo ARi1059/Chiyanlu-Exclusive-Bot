@@ -167,7 +167,8 @@ def render_review_comment(
     )
     rating_btn_text = f"{rating_meta['emoji']} {rating_meta['label']}"
     contact_url = teacher.get("button_url") or ""
-    write_url = f"https://t.me/{bot_username}?start=write_{teacher_id}"
+    # startapp 直达 MiniApp 写评价表单（P4 §16.2）
+    write_url = f"https://t.me/{bot_username}?startapp=write_{teacher_id}"
 
     rows: list[list[InlineKeyboardButton]] = []
     if contact_url:

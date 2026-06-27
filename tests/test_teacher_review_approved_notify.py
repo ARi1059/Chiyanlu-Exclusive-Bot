@@ -272,8 +272,8 @@ def test_keyboard_has_three_rows_same_as_discussion(monkeypatch):
     assert rows[0][0].url == "https://t.me/example"
     # 2 评级徽章 noop
     assert rows[1][0].callback_data == "noop:rating"
-    # 3 写报告 deep link （t.me/{bot}?start=write_{teacher_id}）
-    assert "?start=write_99" in (rows[2][0].url or "")
+    # 3 写报告 deep link （t.me/{bot}?startapp=write_{teacher_id} 直达 MiniApp）
+    assert "?startapp=write_99" in (rows[2][0].url or "")
 
 
 def test_footer_skipped_when_promo_text_empty(monkeypatch):

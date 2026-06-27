@@ -121,8 +121,9 @@ def build_teacher_group_card_v2_kb(
         [⭐ 收藏/提醒] [🔍 私聊详情]
 
     收藏/提醒：callback group:fav:<teacher_id>（不 toggle，只加收藏+开提醒）
-    私聊详情：URL deep link → t.me/<bot_username>?start=teacher_<teacher_id>
-              bot_username 缺失时退化为 callback teacher:view:<id>（极端兜底）
+    私聊详情：URL deep link → t.me/<bot_username>?startapp=teacher_<teacher_id>
+              （startapp 直达 MiniApp 详情页；bot_username 缺失时退化为 callback
+              teacher:view:<id> 极端兜底）
 
     群组场景按钮恒定，不显示个性化收藏状态（消息对所有人可见）。
     """
@@ -144,7 +145,7 @@ def build_teacher_group_card_v2_kb(
     if bot_username:
         second_row.append(InlineKeyboardButton(
             text="🔍 私聊详情",
-            url=f"https://t.me/{bot_username}?start=teacher_{teacher_id}",
+            url=f"https://t.me/{bot_username}?startapp=teacher_{teacher_id}",
         ))
     else:
         # 极端兜底：拿不到 bot username 时用 callback（仅私聊场景能工作；

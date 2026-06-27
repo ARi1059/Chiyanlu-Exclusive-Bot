@@ -227,8 +227,8 @@ def test_keyboard_buttons_unchanged():
     assert rows[0][0].url == "https://t.me/example"
     # 第二行：noop:rating
     assert rows[1][0].callback_data == "noop:rating"
-    # 第三行：写报告 deep link
-    assert "?start=write_99" in (rows[2][0].url or "")
+    # 第三行：写报告 deep link（startapp 直达 MiniApp）
+    assert "?startapp=write_99" in (rows[2][0].url or "")
 
 
 # ============================================================
