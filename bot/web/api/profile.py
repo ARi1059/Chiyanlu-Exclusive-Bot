@@ -1,9 +1,11 @@
 """个人主页端点（P1·MiniApp）。
 
     GET  /api/profile      当前用户：用户名 / id / 角色 / 积分 / 评价数 / 收藏数 / 通知开关
+                           老师额外带 is_teacher / checked_in_today；并带 bot_username（深链用）
     GET  /api/me/points    积分流水（分页）
     GET  /api/me/reviews   我提交的评价（含状态）
     POST /api/me/notify    设置开课提醒通知开关（body: {enabled}）
+    POST /api/me/checkin   老师自助签到（角色→active→时间窗口→幂等）
 
 身份取自 session（中间件注入）。评价数只算 approved（与详情页口径一致）。
 """
@@ -13,16 +15,23 @@ import logging
 
 from aiohttp import web
 
+from bot.config import config
 from bot.database import (
+    _today_str_local,
+    checkin_teacher,
     count_user_reviews,
+    get_config,
     get_teacher,
     get_user,
     get_user_total_points,
+    is_checked_in,
     list_user_favorites,
     list_user_point_transactions,
     list_user_reviews_paged,
     set_user_notify_enabled,
 )
+from bot.web.keys import get_bot_username
+from bot.web.roles import ROLE_TEACHER
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +59,7 @@ async def get_profile(request: web.Request) -> web.Response:
     review_count = await count_user_reviews(uid, status_filter="approved")
     fav_count = len(await list_user_favorites(uid))
 
-    return web.json_response({
+    resp = {
         "user_id": uid,
         "role": session["role"],
         "username": username,
@@ -59,7 +68,61 @@ async def get_profile(request: web.Request) -> web.Response:
         "review_count": review_count,
         "favorite_count": fav_count,
         "notify_enabled": notify_enabled,
-    })
+        "bot_username": await get_bot_username(request.app),
+    }
+
+    # 老师额外带签到态（前端给「今日签到」按钮）
+    if session["role"] == ROLE_TEACHER:
+        teacher = await get_teacher(uid)
+        resp["is_teacher"] = bool(teacher and teacher.get("is_active"))
+        resp["checked_in_today"] = await is_checked_in(uid, _today_str_local())
+    else:
+        resp["is_teacher"] = False
+        resp["checked_in_today"] = False
+
+    return web.json_response(resp)
+
+
+async def post_checkin(request: web.Request) -> web.Response:
+    """老师自助签到。校验链对齐 teacher_checkin handler：
+    角色=teacher → is_active → 时间窗口(publish_time 截止) → 幂等(已签)。"""
+    session = request["session"]
+    uid = session["uid"]
+
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    teacher = await get_teacher(uid)
+    if not teacher:
+        raise web.HTTPForbidden(reason="not a registered teacher")
+    if not teacher.get("is_active"):
+        return web.json_response({"ok": False, "error": "账号已停用，请联系管理员"})
+
+    # 时间窗口：现在 ≥ publish_time → 截止
+    from datetime import datetime
+    try:
+        from pytz import timezone
+        now = datetime.now(timezone(config.timezone))
+    except Exception:
+        now = datetime.now()
+    publish_time = await get_config("publish_time") or config.publish_time
+    try:
+        hour, minute = map(int, str(publish_time).split(":"))
+    except (ValueError, AttributeError):
+        hour, minute = 14, 0
+    if now.hour > hour or (now.hour == hour and now.minute >= minute):
+        return web.json_response({
+            "ok": False,
+            "error": f"今日签到已截止（截止 {publish_time}），请明天再来",
+        })
+
+    today = _today_str_local()
+    if await is_checked_in(uid, today):
+        return web.json_response({"ok": True, "checked_in": True, "already": True})
+
+    success = await checkin_teacher(uid, today)
+    if not success:
+        return web.json_response({"ok": False, "error": "签到失败，请稍后重试"})
+    return web.json_response({"ok": True, "checked_in": True, "already": False})
 
 
 async def get_my_points(request: web.Request) -> web.Response:

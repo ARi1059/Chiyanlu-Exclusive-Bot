@@ -3,7 +3,7 @@ import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   approveReview, rejectReview,
-  getMyPoints, getMyReviews, setNotify,
+  getMyPoints, getMyReviews, setNotify, checkinTeacher,
   getReimbursements, rejectReimbursement, activateReimbursement,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
@@ -491,6 +491,25 @@ function ProfileView({
     if (res === null && isInTelegram()) setNotifyState(!next); // 失败回滚
   };
 
+  // 老师签到（仅注册老师）
+  const [checkedIn, setCheckedIn] = useState<boolean>(profile?.checked_in_today ?? false);
+  const [checkinBusy, setCheckinBusy] = useState(false);
+  const [checkinMsg, setCheckinMsg] = useState<string | null>(null);
+  useEffect(() => { if (profile) setCheckedIn(profile.checked_in_today ?? false); }, [profile]);
+
+  const doCheckin = async () => {
+    if (checkinBusy || checkedIn) return;
+    setCheckinBusy(true); setCheckinMsg(null); hapticLight();
+    const r = await checkinTeacher();
+    setCheckinBusy(false);
+    if (r.ok) {
+      setCheckedIn(true);
+      setCheckinMsg(r.already ? "今日已签到" : "✅ 签到成功");
+    } else {
+      setCheckinMsg(r.error || "签到失败");
+    }
+  };
+
   // 身份/统计优先用后端 profile；本地调试（无 profile）回退占位。
   const handle = profile
     ? (profile.username ? `@${profile.username}` : (profile.first_name || "用户"))
@@ -530,6 +549,31 @@ function ProfileView({
           ))}
         </div>
       </div>
+
+      {/* 老师签到（仅注册老师） */}
+      {profile?.is_teacher && (
+        <div className="bg-[#1e2c3a] rounded-2xl p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[#e8e8e8] text-sm font-medium">今日签到</div>
+              <div className="text-[#7d8d9e] text-xs mt-0.5">
+                {checkinMsg || (checkedIn ? "今日已签到 ✓" : "签到后进入今日可约名单")}
+              </div>
+            </div>
+            <button
+              onClick={doCheckin}
+              disabled={checkedIn || checkinBusy}
+              className={`text-sm px-4 py-2 rounded-xl font-medium transition-transform active:scale-95 ${
+                checkedIn
+                  ? "bg-[#243447] text-[#4fc97a]"
+                  : "bg-[#c4974a] text-[#0d1117]"
+              } ${checkinBusy ? "opacity-60" : ""}`}
+            >
+              {checkedIn ? "已签到" : checkinBusy ? "签到中…" : "签到"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Role switcher（仅本地调试） */}
       {showRoleSwitcher && (
@@ -1019,11 +1063,12 @@ function AdminView({ role }: { role: Role }) {
 // ── Teacher detail overlay ────────────────────────────────────────────────────
 
 function TeacherDetail({
-  teacher, onBack, onFavorite,
+  teacher, onBack, onFavorite, botUsername,
 }: {
   teacher: Teacher;
   onBack: () => void;
   onFavorite: () => void;
+  botUsername?: string;
 }) {
   const [detailTab, setDetailTab] = useState<"info" | "reviews">("info");
   const [detail, setDetail] = useState<ApiTeacherDetail | null>(null);
@@ -1141,7 +1186,7 @@ function TeacherDetail({
             {loading ? (
               <div className="text-center py-14 text-[#7d8d9e] text-sm">加载中…</div>
             ) : reviews.length === 0 ? (
-              <div className="text-center py-14 text-[#7d8d9e] text-sm">暂无评价</div>
+              <div className="text-center py-10 text-[#7d8d9e] text-sm">暂无评价</div>
             ) : (
               <div className="space-y-3">
                 {reviews.map((rv) => (
@@ -1154,6 +1199,18 @@ function TeacherDetail({
                   </div>
                 ))}
               </div>
+            )}
+            {/* 写评价：深链回 bot 现有卡片 FSM（含约课截图上传 + 6 维打分） */}
+            {botUsername && (
+              <button
+                onClick={() => {
+                  hapticLight();
+                  openTelegramLink(`https://t.me/${botUsername}?start=write_${teacher.id}`);
+                }}
+                className="w-full mt-4 py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
+              >
+                ✍️ 写评价（去 bot 完成）
+              </button>
             )}
           </div>
         )}
@@ -1355,6 +1412,7 @@ export default function App() {
               teacher={selectedTeacher}
               onBack={() => setSelectedTeacherId(null)}
               onFavorite={() => toggleFavorite(selectedTeacher.id)}
+              botUsername={profile?.bot_username}
             />
           )}
         </div>

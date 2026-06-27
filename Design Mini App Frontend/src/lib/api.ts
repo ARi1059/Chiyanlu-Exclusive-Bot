@@ -185,6 +185,9 @@ export interface ApiProfile {
   review_count: number;
   favorite_count: number;
   notify_enabled: boolean;
+  bot_username?: string;
+  is_teacher?: boolean;
+  checked_in_today?: boolean;
 }
 
 /** 当前用户档案；非 Telegram（无 token）返回 null。 */
@@ -192,6 +195,13 @@ export async function getProfile(): Promise<ApiProfile | null> {
   const r = await apiFetch("/api/profile");
   if (!r.ok) return null;
   return (await r.json()) as ApiProfile;
+}
+
+/** 老师自助签到。返回 {ok, checked_in?, already?, error?}。 */
+export async function checkinTeacher(): Promise<{ ok: boolean; checked_in?: boolean; already?: boolean; error?: string }> {
+  const r = await apiFetch("/api/me/checkin", { method: "POST" });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return await r.json();
 }
 
 // ── 个人页子项（P1 Tier1）────────────────────────────────────────────────────
