@@ -71,13 +71,20 @@ export function isInTelegram(): boolean {
   return getInitData().length > 0;
 }
 
-/** startapp 深链参数（t.me/<bot>?startapp=<param>）；无则空串。 */
+/** startapp 深链参数（t.me/<bot>?startapp=<param>）；无则空串。
+ * 优先 SDK 的 initDataUnsafe.start_param；兜底从 URL hash 的 tgWebAppStartParam 读
+ * （部分客户端 SDK 未填充 start_param，但 hash 里有）。 */
 export function getStartParam(): string {
   try {
-    return tg()?.initDataUnsafe?.start_param || "";
+    const fromSdk = tg()?.initDataUnsafe?.start_param;
+    if (fromSdk) return fromSdk;
+    const hash = (typeof window !== "undefined" && window.location.hash) || "";
+    const m = hash.match(/[#&]tgWebAppStartParam=([^&]+)/);
+    if (m) return decodeURIComponent(m[1]);
   } catch {
-    return "";
+    /* ignore */
   }
+  return "";
 }
 
 /** 显示 Telegram 原生返回键并绑定回调；返回解绑函数。非 Telegram 环境为 no-op。 */
