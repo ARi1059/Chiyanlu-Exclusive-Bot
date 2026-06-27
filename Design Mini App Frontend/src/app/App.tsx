@@ -1232,6 +1232,24 @@ function TeacherDetail({
                 </>
               )}
             </div>
+
+            {/* 私信老师（主）+ 写评价（次）—— 放详情 Tab，方便约课 */}
+            <div className="space-y-2">
+              {dmUrl && (
+                <button
+                  onClick={() => { hapticLight(); openTelegramLink(dmUrl); }}
+                  className="w-full py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
+                >
+                  💬 私信老师
+                </button>
+              )}
+              <button
+                onClick={() => { hapticLight(); setWriting(true); }}
+                className="w-full py-3 rounded-xl border border-[#c4974a] text-[#c4974a] text-sm font-medium active:scale-[0.98] transition-transform"
+              >
+                ✍️ 写评价
+              </button>
+            </div>
           </div>
         ) : (
           <div className="p-4">
@@ -1252,23 +1270,6 @@ function TeacherDetail({
                 ))}
               </div>
             )}
-            {/* 私信老师（主）+ 写评价（次） */}
-            <div className="mt-4 space-y-2">
-              {dmUrl && (
-                <button
-                  onClick={() => { hapticLight(); openTelegramLink(dmUrl); }}
-                  className="w-full py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
-                >
-                  💬 私信老师
-                </button>
-              )}
-              <button
-                onClick={() => { hapticLight(); setWriting(true); }}
-                className="w-full py-3 rounded-xl border border-[#c4974a] text-[#c4974a] text-sm font-medium active:scale-[0.98] transition-transform"
-              >
-                ✍️ 写评价
-              </button>
-            </div>
           </div>
         )}
       </div>
