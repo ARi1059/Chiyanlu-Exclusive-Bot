@@ -119,3 +119,86 @@ def test_photo_valid_sig_passes_gate(monkeypatch):
             assert r.status == 404                            # 过了签名门，只是无照片
 
     _run(_t())
+
+
+# ============ 老师详情 GET /api/teachers/{id} ============
+
+def test_teacher_detail_no_token_401():
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/teachers/1")
+            assert r.status == 401
+
+    _run(_t())
+
+
+def test_teacher_detail_not_found_404(monkeypatch):
+    async def fake_profile(tid):
+        return None                                           # 不存在
+
+    monkeypatch.setattr(mod, "get_teacher_full_profile", fake_profile)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/teachers/999", headers={"Authorization": f"Bearer {_super()}"})
+            assert r.status == 404
+
+    _run(_t())
+
+
+def test_teacher_detail_deleted_404(monkeypatch):
+    async def fake_profile(tid):
+        return {"user_id": tid, "display_name": "X", "is_deleted": 1, "tags": []}
+
+    monkeypatch.setattr(mod, "get_teacher_full_profile", fake_profile)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/teachers/5", headers={"Authorization": f"Bearer {_super()}"})
+            assert r.status == 404                            # 软删除也视为不存在
+
+    _run(_t())
+
+
+def test_teacher_detail_shape(monkeypatch):
+    async def fake_profile(tid):
+        return {
+            "user_id": tid, "display_name": "晚棠", "region": "天府一街",
+            "price": "900P", "tags": ["御姐", "大长腿"], "is_active": 1,
+            "is_deleted": 0, "photo_file_id": "PH",
+        }
+
+    async def fake_post(tid):
+        return {"avg_overall": 9.2, "review_count": 7}
+
+    async def fake_reviews(tid, limit=20):
+        return [
+            {"id": 11, "rating": "positive", "summary": "很好", "user_id": 123456, "anonymous": 0, "created_at": "2026-06-20 10:00:00"},
+            {"id": 12, "rating": "neutral", "summary": "一般", "user_id": 0, "anonymous": 1, "created_at": "2026-06-21 11:00:00"},
+        ]
+
+    async def fake_checked(tid, date_str):
+        return True                                           # 今日已签到 → 可约
+
+    monkeypatch.setattr(mod, "get_teacher_full_profile", fake_profile)
+    monkeypatch.setattr(mod, "get_teacher_channel_post", fake_post)
+    monkeypatch.setattr(mod, "list_approved_reviews", fake_reviews)
+    monkeypatch.setattr(mod, "is_checked_in", fake_checked)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.get("/api/teachers/7", headers={"Authorization": f"Bearer {_super()}"})
+            assert r.status == 200
+            d = await r.json()
+            assert d["id"] == 7 and d["name"] == "晚棠"
+            assert d["region"] == "天府一街" and d["price"] == "900P"
+            assert d["available"] is True                     # is_checked_in → 可约
+            assert d["rating"] == {"avg": 9.2, "count": 7}
+            assert isinstance(d["dims"], list) and len(d["dims"]) > 0
+            assert d["photo_url"] and "sig=" in d["photo_url"]  # 有照片 → 签名 URL
+            assert len(d["reviews"]) == 2
+            sigs = {rv["id"]: rv["sig"] for rv in d["reviews"]}
+            assert sigs[11] == "****3456"                     # 实名末4位脱敏
+            assert sigs[12] == "匿名"                          # 匿名
+
+    _run(_t())

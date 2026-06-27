@@ -178,3 +178,59 @@ def test_favorite_delete(monkeypatch):
 
     _run(_t())
     assert rec == {"uid": 42, "tid": 9}
+
+
+# ============ GET /api/me/reviews ============
+
+def test_my_reviews_no_token_401():
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/reviews")
+            assert r.status == 401
+
+    _run(_t())
+
+
+def test_my_reviews_shape(monkeypatch):
+    async def fake_list(uid, limit=30):
+        return [
+            {"id": 1, "teacher_id": 100, "rating": "positive", "status": "approved",
+             "overall_score": 9.0, "summary": "好", "created_at": "2026-06-20 10:00:00"},
+            {"id": 2, "teacher_id": 200, "rating": "neutral", "status": "pending",
+             "overall_score": 7.5, "summary": "", "created_at": "2026-06-21 11:00:00"},
+        ]
+
+    async def fake_teacher(tid):
+        return {"display_name": f"老师{tid}"} if tid == 100 else None
+
+    monkeypatch.setattr(prof_mod, "list_user_reviews_paged", fake_list)
+    monkeypatch.setattr(prof_mod, "get_teacher", fake_teacher)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/reviews", headers=_hdr(uid=42))
+            assert r.status == 200
+            revs = (await r.json())["reviews"]
+            assert len(revs) == 2
+            by = {x["id"]: x for x in revs}
+            assert by[1]["teacher"] == "老师100" and by[1]["status"] == "approved"
+            assert by[1]["overall_score"] == 9.0 and by[1]["rating"] == "positive"
+            assert by[2]["teacher"] == "未知"        # 老师不存在 → 兜底
+            assert by[2]["status"] == "pending"
+
+    _run(_t())
+
+
+def test_my_reviews_empty(monkeypatch):
+    async def fake_list(uid, limit=30):
+        return []
+
+    monkeypatch.setattr(prof_mod, "list_user_reviews_paged", fake_list)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/reviews", headers=_hdr(uid=42))
+            assert r.status == 200
+            assert (await r.json())["reviews"] == []
+
+    _run(_t())
