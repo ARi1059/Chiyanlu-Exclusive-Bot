@@ -31,6 +31,7 @@ interface TgWebApp {
   HapticFeedback?: TgHaptic;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
+  openTelegramLink?: (url: string) => void;
 }
 
 function tg(): TgWebApp | null {
@@ -94,6 +95,16 @@ export function showBackButton(onBack: () => void): () => void {
 export function hapticLight(): void {
   try {
     tg()?.HapticFeedback?.impactOccurred?.("light");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 在 Telegram 内打开 t.me 深链（如报销「同意」跳回 bot）。非 Telegram 环境 no-op。 */
+export function openTelegramLink(url: string): void {
+  try {
+    const w = tg();
+    if (w?.openTelegramLink) w.openTelegramLink(url);
   } catch {
     /* ignore */
   }

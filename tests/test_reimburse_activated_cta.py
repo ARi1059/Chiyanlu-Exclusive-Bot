@@ -154,27 +154,27 @@ def test_safe_notify_activated_swallows_exceptions_returns_false():
 
 def test_activate_handler_uses_safe_notify():
     """cb_reimburse_activate 必须调用 safe_notify_user_reimburse_activated。"""
-    import bot.handlers.admin_reimburse as mod
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def cb_reimburse_activate(")
+    idx = src.find("async def activate_reimbursement_core(")
     assert idx > 0
-    end = src.find("\n@router", idx + 1)
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 3000]
     assert "safe_notify_user_reimburse_activated" in body
 
 
 def test_safe_notify_activated_imported_in_admin_reimburse():
-    import bot.handlers.admin_reimburse as mod
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
     assert "safe_notify_user_reimburse_activated" in src
 
 
 def test_activate_handler_still_writes_audit_log():
     """UX-4.4 不改 reimburse_activate audit log。"""
-    import bot.handlers.admin_reimburse as mod
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def cb_reimburse_activate(")
-    end = src.find("\n@router", idx + 1)
+    idx = src.find("async def activate_reimbursement_core(")
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 3000]
     assert 'action="reimburse_activate"' in body
     assert "log_admin_audit" in body
@@ -183,20 +183,20 @@ def test_activate_handler_still_writes_audit_log():
 def test_activate_handler_does_not_mark_notified():
     """关键约束：激活通知不应写入 mark_reimbursement_notified
     （POLICY §12.7 该字段语义是"已通过/驳回 终态通知"）。"""
-    import bot.handlers.admin_reimburse as mod
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def cb_reimburse_activate(")
-    end = src.find("\n@router", idx + 1)
+    idx = src.find("async def activate_reimbursement_core(")
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 3000]
     assert "mark_reimbursement_notified" not in body
 
 
 def test_activate_handler_still_calls_activate_queued():
     """业务逻辑保护：仍调用 activate_queued_reimbursement 切换状态。"""
-    import bot.handlers.admin_reimburse as mod
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def cb_reimburse_activate(")
-    end = src.find("\n@router", idx + 1)
+    idx = src.find("async def activate_reimbursement_core(")
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 3000]
     assert "activate_queued_reimbursement" in body
 
@@ -204,10 +204,10 @@ def test_activate_handler_still_calls_activate_queued():
 def test_activate_handler_notification_after_db_success():
     """通知应在 activate_queued_reimbursement 成功之后才发；
     否则会出现"数据库未切换但用户已收到 '已激活' 通知"的不一致。"""
-    import bot.handlers.admin_reimburse as mod
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def cb_reimburse_activate(")
-    end = src.find("\n@router", idx + 1)
+    idx = src.find("async def activate_reimbursement_core(")
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 3000]
     activate_pos = body.find("activate_queued_reimbursement")
     notify_pos = body.find("safe_notify_user_reimburse_activated")

@@ -18,7 +18,6 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.database import (
-    activate_queued_reimbursement,
     approve_reimbursement,
     consume_reimbursement_reset,
     count_approved_reimbursements_in_week,
@@ -37,7 +36,6 @@ from bot.database import (
     list_pending_reimbursements,
     list_queued_reimbursements_paged,
     log_admin_audit,
-    reject_reimbursement,
 )
 from bot.keyboards.admin_kb import (
     admin_review_done_next_kb,
@@ -59,8 +57,6 @@ from bot.utils.reimburse_notify import (
     format_payout_done_text,
     format_payout_waiting_token_text,
     mask_token,
-    safe_notify_user_reimburse_activated,
-    safe_notify_user_reimburse_reject,
     safe_send_user_payout,
 )
 
@@ -608,33 +604,16 @@ async def on_reimburse_reject_reason(message: types.Message, state: FSMContext):
         await state.clear()
         await message.reply("⚠️ 会话失效。")
         return
-    reimb = await get_reimbursement(int(rid))
-    if not reimb or reimb["status"] != "pending":
-        await state.clear()
-        await message.reply("⚠️ 报销状态已变更。")
-        return
-
-    ok = await reject_reimbursement(int(rid), message.from_user.id, text)
-    if not ok:
-        await state.clear()
-        await message.reply("⚠️ 驳回失败。")
-        return
-
-    await log_admin_audit(
-        admin_id=message.from_user.id,
-        action="reimburse_reject",
-        target_type="reimbursement",
-        target_id=str(rid),
-        detail={"user_id": reimb["user_id"], "reason": text},
+    # 业务核心（落库 + 审计 + 通知）已抽到 bot.services.reimbursement_moderation，
+    # bot/web 共用；本 handler 仅保留 FSM 输入校验 + 队列 UI。
+    from bot.services.reimbursement_moderation import reject_reimbursement_core
+    res = await reject_reimbursement_core(
+        message.bot, reimb_id=int(rid), admin_id=message.from_user.id, reason=text,
     )
-    # UX-4.1：驳回通知附 CTA 按钮（联系客服申诉 / 我的报销）
-    await safe_notify_user_reimburse_reject(
-        message.bot,
-        user_id=int(reimb["user_id"]),
-        reimb_id=int(rid),
-        amount=int(reimb["amount"]),
-        reason=text,
-    )
+    if not res.ok:
+        await state.clear()
+        await message.reply(f"⚠️ {res.error or '驳回失败'}。")
+        return
 
     await state.clear()
     # UX-5.3：非空队列只发简短 ack；空队列时显示 done_next_kb 给出口
@@ -822,34 +801,14 @@ async def cb_reimburse_activate(callback: types.CallbackQuery, state: FSMContext
     except (IndexError, ValueError):
         await callback.answer("参数错误", show_alert=True)
         return
-    reimb = await get_reimbursement(rid)
-    if not reimb:
-        await callback.answer("报销不存在", show_alert=True)
-        return
-    if reimb["status"] != "queued":
-        await callback.answer(f"当前状态 {reimb['status']}，无法激活", show_alert=True)
-        return
-    ok = await activate_queued_reimbursement(rid)
-    if not ok:
-        await callback.answer("⚠️ 激活失败", show_alert=True)
-        return
-    await log_admin_audit(
-        admin_id=callback.from_user.id,
-        action="reimburse_activate",
-        target_type="reimbursement",
-        target_id=str(rid),
-        detail={
-            "user_id": reimb["user_id"],
-            "amount": reimb["amount"],
-        },
+    # 业务核心（落库 + 审计 + 通知）已抽到 bot.services.reimbursement_moderation，bot/web 共用。
+    from bot.services.reimbursement_moderation import activate_reimbursement_core
+    res = await activate_reimbursement_core(
+        callback.bot, reimb_id=rid, admin_id=callback.from_user.id,
     )
-    # UX-4.4：激活后通知用户"已进入审核队列"（POLICY §9.6 标注的缺失通知）
-    await safe_notify_user_reimburse_activated(
-        callback.bot,
-        user_id=int(reimb["user_id"]),
-        reimb_id=int(rid),
-        amount=int(reimb["amount"]),
-    )
+    if not res.ok:
+        await callback.answer(res.error or "激活失败", show_alert=True)
+        return
     await callback.answer(f"✅ 已激活 #{rid}（status → pending）", show_alert=True)
     # 刷新名单
     await cb_reimburse_queued(

@@ -317,6 +317,12 @@ async def cmd_start_with_arg(
     await upsert_user(user_id, user.username, user.first_name)
     await mark_user_started(user_id)
 
+    # reimb_<id>：MiniApp 报销「同意=打款」深链跳回 bot —— 超管直达该报销详情，
+    # 点同意即进现有口令 FSM（口令/真钱只在此私聊通道走）。处理则结束，不再展示菜单。
+    if raw_args.startswith("reimb_"):
+        if await _handle_reimb_deep_link(message, user_id, raw_args[len("reimb_"):]):
+            return
+
     parsed = parse_start_args(raw_args)
     extras: list[str] = []
 
@@ -348,6 +354,30 @@ async def cmd_start_with_arg(
         search_query=parsed.get("search_query"),
         state=state,
     )
+
+
+async def _handle_reimb_deep_link(message: types.Message, user_id: int, raw_id: str) -> bool:
+    """?start=reimb_<id>：超管报销审核深链。渲染报销详情 + 操作键盘到私聊，
+    超管点「同意」即进现有口令 FSM。非超管 / 无效 id 返回 False（走常规分流）。"""
+    from bot.database import get_reimbursement, is_super_admin
+    if not (user_id == config.super_admin_id or await is_super_admin(user_id)):
+        return False
+    try:
+        rid = int(raw_id)
+    except ValueError:
+        return False
+    reimb = await get_reimbursement(rid)
+    if not reimb:
+        await message.answer("⚠️ 报销不存在或已被处理")
+        return True
+    from bot.handlers.admin_reimburse import _render_reimbursement_detail
+    from bot.keyboards.admin_kb import reimburse_action_kb
+    text = await _render_reimbursement_detail(reimb)
+    await message.answer(
+        text,
+        reply_markup=reimburse_action_kb(reimb["id"], reimb["user_id"]),
+    )
+    return True
 
 
 async def _handle_fav_deep_link(user_id: int, raw_teacher_id: str) -> str:

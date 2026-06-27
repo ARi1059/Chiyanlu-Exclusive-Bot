@@ -10,6 +10,11 @@ from aiohttp import web
 from bot.web.api.auth import post_session
 from bot.web.api.admin import get_admin_stats
 from bot.web.api.admin_reviews import post_approve_review, post_reject_review
+from bot.web.api.admin_reimbursements import (
+    get_reimbursements,
+    post_activate_reimbursement,
+    post_reject_reimbursement,
+)
 from bot.web.api.favorites import delete_favorite, get_favorites, post_favorite
 from bot.web.api.me import get_me
 from bot.web.api.photo import get_teacher_photo
@@ -39,3 +44,7 @@ def register_api_routes(app: web.Application) -> None:
     # P1：评价审核落库（仅 superadmin，端点内校验）
     app.router.add_post("/api/admin/reviews/{id}/approve", post_approve_review)
     app.router.add_post("/api/admin/reviews/{id}/reject", post_reject_review)
+    # P1：报销审核（仅 superadmin；同意=打款走 bot 深链，此处只做拒绝/激活/列表）
+    app.router.add_get("/api/admin/reimbursements", get_reimbursements)
+    app.router.add_post("/api/admin/reimbursements/{id}/reject", post_reject_reimbursement)
+    app.router.add_post("/api/admin/reimbursements/{id}/activate", post_activate_reimbursement)

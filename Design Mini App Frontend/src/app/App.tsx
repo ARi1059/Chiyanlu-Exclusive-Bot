@@ -4,10 +4,12 @@ import {
   addFavorite, removeFavorite, getProfile, getAdminStats,
   approveReview, rejectReview,
   getMyPoints, getMyReviews, setNotify,
+  getReimbursements, rejectReimbursement, activateReimbursement,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
+  type ApiReimbursement,
 } from "../lib/api";
-import { isInTelegram, showBackButton, hapticLight } from "../lib/tg";
+import { isInTelegram, showBackButton, hapticLight, openTelegramLink } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, Home, BarChart2,
@@ -714,35 +716,141 @@ function PendingReviewItem({
   );
 }
 
+// 待审报销队列项：超管「同意=打款」深链回 bot 口令 FSM；拒绝(选原因)/激活 直接落库。
+const REIMB_REJECT_REASONS = ["金额与截图不符", "证据不清晰", "不符合报销规则", "重复申请"];
+
+function PendingReimbursementItem({
+  item, botUsername, onResolved,
+}: {
+  item: ApiReimbursement;
+  botUsername: string;
+  onResolved: (id: number) => void;
+}) {
+  const [mode, setMode] = useState<"idle" | "reject">("idle");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const isQueued = item.status === "queued";
+
+  const approve = () => {
+    hapticLight();
+    if (botUsername) openTelegramLink(`https://t.me/${botUsername}?start=reimb_${item.id}`);
+  };
+  const doReject = async (reason: string) => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await rejectReimbursement(item.id, reason);
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "驳回失败");
+  };
+  const doActivate = async () => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await activateReimbursement(item.id);
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "激活失败");
+  };
+
+  const chip = "text-xs px-2.5 py-1 rounded-full disabled:opacity-40 transition-colors";
+
+  return (
+    <div className="px-4 py-3 border-b border-white/5 last:border-b-0">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[#e8e8e8] text-sm">{item.teacher}</span>
+            <span className="text-[#c4974a] text-xs font-mono">￥{item.amount}</span>
+            {isQueued && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#6b9ee8]/15 text-[#6b9ee8]">名单</span>}
+          </div>
+          <span className="text-[#7d8d9e] text-xs">{item.user} · {item.time}</span>
+        </div>
+        {mode === "idle" && (
+          <div className="flex gap-1.5">
+            {isQueued ? (
+              <button disabled={busy} onClick={doActivate}
+                className="p-1.5 rounded-lg bg-[#6b9ee8]/15 text-[#6b9ee8] hover:bg-[#6b9ee8]/25 transition-colors">
+                <CheckCircle size={16} />
+              </button>
+            ) : (
+              <>
+                <button onClick={approve}
+                  className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors">
+                  <Wallet size={16} />
+                </button>
+                <button onClick={() => setMode("reject")}
+                  className="p-1.5 rounded-lg bg-[#e05b7a]/15 text-[#e05b7a] hover:bg-[#e05b7a]/25 transition-colors">
+                  <XCircle size={16} />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {!isQueued && mode === "idle" && (
+        <div className="text-[#7d8d9e] text-[10px] mt-1">💰 = 同意打款(跳回 bot 输支付宝口令)</div>
+      )}
+
+      {mode === "reject" && (
+        <div className="mt-2.5">
+          <div className="text-[#7d8d9e] text-[10px] mb-1.5">选驳回原因</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {REIMB_REJECT_REASONS.map((r) => (
+              <button key={r} disabled={busy} onClick={() => doReject(r)}
+                className={`${chip} bg-[#243447] text-[#e05b7a] hover:bg-[#3a2230]`}>{r}</button>
+            ))}
+            <button disabled={busy} onClick={() => setMode("idle")}
+              className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {busy && <div className="text-[#7d8d9e] text-xs mt-2">处理中…</div>}
+      {err && <div className="text-[#e05b7a] text-xs mt-2">{err}</div>}
+    </div>
+  );
+}
+
 function AdminView({ role }: { role: Role }) {
+  const isSuper = role === "superadmin";
   const [stats, setStats] = useState<ApiAdminStats | null>(null);
   const [loading, setLoading] = useState(true);
   // 审过的本地即时移出队列；同时后台 refresh 拉新统计（已审的服务端不再返回）。
   const [handledIds, setHandledIds] = useState<number[]>([]);
+  const [reimbs, setReimbs] = useState<ApiReimbursement[]>([]);
+  const [reimbHandled, setReimbHandled] = useState<number[]>([]);
 
   const refresh = useCallback(async () => {
     const s = await getAdminStats();
     if (s) setStats(s);
-  }, []);
+    if (isSuper) setReimbs(await getReimbursements());
+  }, [isSuper]);
 
   useEffect(() => {
     let alive = true;
-    getAdminStats()
-      .then((s) => { if (alive) { setStats(s); setLoading(false); } })
-      .catch(() => { if (alive) setLoading(false); });
+    (async () => {
+      const s = await getAdminStats();
+      if (alive) setStats(s);
+      if (isSuper) {
+        const rs = await getReimbursements();
+        if (alive) setReimbs(rs);
+      }
+    })().catch(() => {}).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [isSuper]);
 
   const onResolved = (id: number) => {
     setHandledIds((p) => [...p, id]);
     void refresh();
   };
+  const onReimbResolved = (id: number) => {
+    setReimbHandled((p) => [...p, id]);
+    void refresh();
+  };
 
   const trend = stats?.trend ?? [];
   const queue = (stats?.pending_queue ?? []).filter((p) => !handledIds.includes(p.id));
+  const reimbQueue = reimbs.filter((r) => !reimbHandled.includes(r.id));
   const pool = stats?.reimburse_pool ?? null;
   const packages = stats?.point_packages ?? [];
-  const isSuper = role === "superadmin";
+  const botUsername = stats?.bot_username ?? "";
 
   const cards = [
     { label: "今日签到", val: String(stats?.today_checkins ?? 0), sub: `今日新增 ${stats?.today_new_users ?? 0} 用户`, icon: CheckCircle, color: "#4fc97a" },
@@ -842,6 +950,32 @@ function AdminView({ role }: { role: Role }) {
           ))
         )}
       </div>
+
+      {/* Pending reimbursements queue (superadmin only) */}
+      {isSuper && (
+        <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+            <span className="text-[#e8e8e8] text-sm font-medium">待审报销</span>
+            {reimbQueue.length > 0 && (
+              <span className="text-xs bg-[#c4974a]/15 text-[#c4974a] px-2 py-0.5 rounded-full font-mono">
+                {reimbQueue.length} 条
+              </span>
+            )}
+          </div>
+          {reimbQueue.length === 0 ? (
+            <div className="px-4 py-5 text-center text-[#7d8d9e] text-xs">没有待审报销 ✓</div>
+          ) : (
+            reimbQueue.map((item) => (
+              <PendingReimbursementItem
+                key={item.id}
+                item={item}
+                botUsername={botUsername}
+                onResolved={onReimbResolved}
+              />
+            ))
+          )}
+        </div>
+      )}
 
       {/* Reimbursement pool (superadmin only) */}
       {role === "superadmin" && pool && pool.enabled && (

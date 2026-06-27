@@ -273,6 +273,16 @@ export interface ApiAdminStats {
   pending_queue: ApiPendingReview[];
   point_packages?: ApiPointPackage[];
   reimburse_pool?: ApiReimbursePool | null;
+  bot_username?: string;
+}
+
+export interface ApiReimbursement {
+  id: number;
+  amount: number;
+  status: "pending" | "queued" | string;
+  teacher: string;
+  user: string;
+  time: string;
 }
 
 /** 管理台统计；非管理员或失败返回 null。 */
@@ -304,6 +314,34 @@ export async function rejectReview(id: number, reason?: string): Promise<ModResu
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(reason ? { reason } : {}),
   });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
+// ── 报销审核（仅超管）──────────────────────────────────────────────────────────
+
+/** 待审 + queued 报销列表。 */
+export async function getReimbursements(): Promise<ApiReimbursement[]> {
+  const r = await apiFetch("/api/admin/reimbursements");
+  if (!r.ok) return [];
+  const data = (await r.json()) as { reimbursements?: ApiReimbursement[] };
+  return data.reimbursements ?? [];
+}
+
+/** 驳回报销（reason 必填）。 */
+export async function rejectReimbursement(id: number, reason: string): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/reimbursements/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
+/** 激活 queued 报销 → pending。 */
+export async function activateReimbursement(id: number): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/reimbursements/${id}/activate`, { method: "POST" });
   if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
   return (await r.json()) as ModResult;
 }

@@ -22,9 +22,26 @@ from bot.database import (
 )
 from bot.services.admin_overview import get_admin_overview_stats
 from bot.services.reimbursement_pool import get_reimbursement_pool_stats
+from bot.web.keys import APP_BOT
 from bot.web.roles import ROLE_ADMIN, ROLE_SUPERADMIN
 
 logger = logging.getLogger(__name__)
+
+# bot 用户名缓存一次（不变）。供报销「同意」深链构造 t.me 链接。
+_bot_username: str | None = None
+
+
+async def _get_bot_username(request: web.Request) -> str:
+    global _bot_username
+    if _bot_username is None:
+        try:
+            bot = request.app.get(APP_BOT)
+            me = await bot.get_me()
+            _bot_username = me.username or ""
+        except Exception:
+            logger.warning("get_me 取 bot username 失败", exc_info=True)
+            return ""
+    return _bot_username
 
 try:
     from pytz import timezone as _tz
@@ -133,6 +150,8 @@ async def get_admin_stats(request: web.Request) -> web.Response:
             {"key": o["key"], "label": o["label"], "delta": o["delta"]}
             for o in POINT_PACKAGE_OPTIONS
         ],
+        # bot 用户名（前端报销「同意」深链 https://t.me/<bot>?start=reimb_<id> 用）
+        "bot_username": await _get_bot_username(request),
     }
 
     # 报销池仅超管可见

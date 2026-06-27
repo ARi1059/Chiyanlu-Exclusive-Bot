@@ -197,13 +197,14 @@ def test_safe_notify_swallows_exceptions_returns_false(temp_db):
 
 
 def test_reject_reason_handler_uses_safe_notify():
-    """on_reimburse_reject_reason 必须调用 safe_notify_user_reimburse_reject，
-    且不再直接 inline 拼 send_message 驳回文案。"""
-    import bot.handlers.admin_reimburse as mod
+    """驳回必须调用 safe_notify_user_reimburse_reject，且不再 inline 拼驳回文案。
+
+    业务核心已抽到 bot.services.reimbursement_moderation（handler 委托调用）。"""
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def on_reimburse_reject_reason(")
+    idx = src.find("async def reject_reimbursement_core(")
     assert idx > 0
-    end = src.find("\n@router", idx + 1)
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 4000]
 
     # 必须用 safe_notify_user_reimburse_reject
@@ -217,18 +218,18 @@ def test_reject_reason_handler_uses_safe_notify():
 
 
 def test_safe_notify_imported_in_admin_reimburse():
-    """admin_reimburse.py 顶部应 import safe_notify_user_reimburse_reject。"""
-    import bot.handlers.admin_reimburse as mod
+    """报销审核 service 应 import 并使用 safe_notify_user_reimburse_reject。"""
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
     assert "safe_notify_user_reimburse_reject" in src
 
 
 def test_reject_audit_log_still_written():
-    """UX-4.1 不应影响 reimburse_reject audit log 写入（保护契约）。"""
-    import bot.handlers.admin_reimburse as mod
+    """reimburse_reject audit log 写入(保护契约;逻辑在 service)。"""
+    import bot.services.reimbursement_moderation as mod
     src = _src(mod)
-    idx = src.find("async def on_reimburse_reject_reason(")
-    end = src.find("\n@router", idx + 1)
+    idx = src.find("async def reject_reimbursement_core(")
+    end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 4000]
     assert 'action="reimburse_reject"' in body
     assert "log_admin_audit" in body
