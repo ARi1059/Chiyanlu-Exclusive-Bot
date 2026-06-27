@@ -133,6 +133,11 @@ async def get_teacher_detail(request: web.Request) -> web.Response:
 
     available = await is_checked_in(tid, _today_str_local())
 
+    # 相册：get_teacher_full_profile 已把 photo_album 解析为 list[file_id]（空则回退封面）。
+    # 每张一个签名 URL（?i=index）。
+    album = teacher.get("photo_album") or []
+    photos = [signed_photo_url(request, tid, True, i) for i in range(len(album))]
+
     return web.json_response({
         "id": tid,
         "name": teacher.get("display_name") or "",
@@ -144,5 +149,6 @@ async def get_teacher_detail(request: web.Request) -> web.Response:
         "dims": dims,
         "reviews": reviews,
         "has_photo": _has_photo(teacher),
-        "photo_url": signed_photo_url(request, tid, _has_photo(teacher)),
+        "photo_url": photos[0] if photos else None,  # 兼容：封面
+        "photos": photos,                            # 相册全部（轮播用）
     })

@@ -8,6 +8,7 @@ Bot（app[APP_BOT]，§二零拷贝）把 file 拉成字节流代发，并按 fi
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import OrderedDict
 
@@ -20,12 +21,29 @@ from bot.web.keys import APP_BOT, APP_BOT_TOKEN
 logger = logging.getLogger(__name__)
 
 
-def signed_photo_url(request: web.Request, teacher_id: int, has_photo: bool):
-    """构造带签名的照片 URL（供老师/收藏端点放进响应）。无照片返回 None。"""
+def _album(teacher) -> list:
+    """老师相册 file_id 列表：解析 photo_album JSON，空则回退 [photo_file_id]。"""
+    raw = (teacher or {}).get("photo_album")
+    out: list = []
+    try:
+        parsed = json.loads(raw) if raw else []
+        if isinstance(parsed, list):
+            out = [str(x) for x in parsed if x]
+    except (json.JSONDecodeError, TypeError):
+        out = []
+    if not out and (teacher or {}).get("photo_file_id"):
+        out = [teacher["photo_file_id"]]
+    return out
+
+
+def signed_photo_url(request: web.Request, teacher_id: int, has_photo: bool, index: int = 0):
+    """构造带签名的照片 URL（index 选相册第几张）。无照片返回 None。
+    签名只覆盖 teacher_id（相册全是该老师的图、对已鉴权用户全可见）。"""
     if not has_photo:
         return None
     sig = sign_photo(teacher_id, request.app[APP_BOT_TOKEN])
-    return f"/api/teachers/{teacher_id}/photo?sig={sig}"
+    base = f"/api/teachers/{teacher_id}/photo?sig={sig}"
+    return base + (f"&i={index}" if index else "")
 
 
 # file_id → (content_type, bytes)。OrderedDict 当简易 LRU，超额淘汰最旧。
@@ -55,10 +73,17 @@ async def get_teacher_photo(request: web.Request) -> web.Response:
     if not verify_photo(tid, sig, request.app[APP_BOT_TOKEN]):
         raise web.HTTPForbidden(reason="invalid photo signature")
 
+    # i：相册索引（默认 0=封面）
+    try:
+        i = max(0, int(request.query.get("i", "0")))
+    except (TypeError, ValueError):
+        i = 0
+
     teacher = await get_teacher(tid)
-    file_id = (teacher or {}).get("photo_file_id")
-    if not file_id:
+    album = _album(teacher)
+    if not album or i >= len(album):
         raise web.HTTPNotFound(reason="no photo")
+    file_id = album[i]
 
     # 命中缓存
     cached = _CACHE.get(file_id)

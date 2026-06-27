@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
@@ -1042,6 +1042,50 @@ function AdminView({ role }: { role: Role }) {
 
 // ── Teacher detail overlay ────────────────────────────────────────────────────
 
+// 详情封面相册轮播：横向滚动吸附 + 顶部进度小圆点。单图退化为静态。
+function PhotoCarousel({ photos, name }: { photos: string[]; name: string }) {
+  const [idx, setIdx] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const onScroll = () => {
+    const el = ref.current;
+    if (el && el.clientWidth) setIdx(Math.round(el.scrollLeft / el.clientWidth));
+  };
+
+  if (photos.length === 0) return null;
+
+  return (
+    <>
+      <div
+        ref={ref}
+        onScroll={onScroll}
+        className="absolute inset-0 z-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+      >
+        {photos.map((url, i) => (
+          <img
+            key={i}
+            src={url}
+            alt={`${name} ${i + 1}`}
+            loading={i === 0 ? "eager" : "lazy"}
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0"; }}
+            className="w-full h-full flex-shrink-0 object-cover snap-center"
+          />
+        ))}
+      </div>
+      {photos.length > 1 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex gap-1.5">
+          {photos.map((_, i) => (
+            <span
+              key={i}
+              className={`h-1.5 rounded-full transition-all ${i === idx ? "w-4 bg-white" : "w-1.5 bg-white/40"}`}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function TeacherDetail({
   teacher, onBack, onFavorite, botUsername,
 }: {
@@ -1068,6 +1112,10 @@ function TeacherDetail({
   const dims: Dim[] = detail?.dims ?? [];
   const reviews: Review[] = detail?.reviews ?? [];
   const reviewCount = teacher.rating.count;
+  // 相册：详情到达前先用卡片封面占位（1 张），到达后展示全部相册图。
+  const coverPhotos: string[] = (detail?.photos && detail.photos.length > 0)
+    ? detail.photos
+    : (teacher.photoUrl ? [teacher.photoUrl] : []);
 
   return (
     <div className="flex flex-col h-full bg-[#17212b]">
@@ -1077,7 +1125,7 @@ function TeacherDetail({
         style={{ background: `linear-gradient(135deg, ${teacher.colorFrom}, ${teacher.colorTo})` }}
       >
         <span className="absolute inset-0 flex items-center justify-center text-[120px] font-bold text-white/8 select-none leading-none z-0">{teacher.name[0]}</span>
-        <CoverPhoto url={teacher.photoUrl} name={teacher.name} />
+        <PhotoCarousel key={teacher.id} photos={coverPhotos} name={teacher.name} />
         <div className="flex items-center justify-between relative z-10">
           <button onClick={onBack} className="p-2 rounded-full bg-black/20 backdrop-blur-sm text-white">
             <ChevronLeft size={20} />

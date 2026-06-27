@@ -134,6 +134,7 @@ export interface ApiReview {
 export interface ApiTeacherDetail extends ApiTeacher {
   dims: { subject: string; A: number }[];
   reviews: ApiReview[];
+  photos?: string[];  // 相册全部照片签名 URL（轮播）
 }
 
 /** 在册老师列表；失败返回 []。 */
