@@ -39,8 +39,11 @@ async def post_upload(request: web.Request) -> web.Response:
     if bot is None:
         raise web.HTTPServiceUnavailable(reason="bot unavailable")
 
-    reader = await request.multipart()
-    part = await reader.next()
+    try:
+        reader = await request.multipart()
+        part = await reader.next()
+    except Exception:
+        raise web.HTTPBadRequest(reason="expected multipart/form-data")
     # 找到名为 file 的图片字段
     while part is not None and part.name != "file":
         part = await reader.next()
