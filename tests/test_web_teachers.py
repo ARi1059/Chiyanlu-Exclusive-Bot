@@ -162,10 +162,11 @@ def test_teacher_detail_deleted_404(monkeypatch):
 
 def test_teacher_detail_shape(monkeypatch):
     async def fake_profile(tid):
+        # get_teacher_full_profile 把 photo_album 解析为 list（空则回退 [photo_file_id]）
         return {
             "user_id": tid, "display_name": "晚棠", "region": "天府一街",
             "price": "900P", "tags": ["御姐", "大长腿"], "is_active": 1,
-            "is_deleted": 0, "photo_file_id": "PH",
+            "is_deleted": 0, "photo_file_id": "PH", "photo_album": ["PH1", "PH2", "PH3"],
         }
 
     async def fake_post(tid):
@@ -196,6 +197,8 @@ def test_teacher_detail_shape(monkeypatch):
             assert d["rating"] == {"avg": 9.2, "count": 7}
             assert isinstance(d["dims"], list) and len(d["dims"]) > 0
             assert d["photo_url"] and "sig=" in d["photo_url"]  # 有照片 → 签名 URL
+            assert len(d["photos"]) == 3 and all("sig=" in p for p in d["photos"])  # 相册轮播
+            assert "&i=" in d["photos"][1]                      # 非首张带 index
             assert len(d["reviews"]) == 2
             sigs = {rv["id"]: rv["sig"] for rv in d["reviews"]}
             assert sigs[11] == "****3456"                     # 实名末4位脱敏

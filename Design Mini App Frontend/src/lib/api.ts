@@ -369,3 +369,79 @@ export async function bootstrapAuth(): Promise<Me | null> {
   if (!ok) return null;
   return getMe();
 }
+
+// ── 写评价（P2）────────────────────────────────────────────────────────────────
+
+export interface ChannelMiss { display_name: string; invite_link: string }
+
+export interface ReviewContext {
+  teacher: { id: number; display_name: string };
+  rate_limit: { blocked: boolean; reason: string | null };
+  required_channels: { ok: boolean; missing: ChannelMiss[] };
+  reimburse: {
+    eligible: boolean;
+    estimated_amount: number;
+    ineligibility_hint: string | null;
+    required_channels: { ok: boolean; missing: ChannelMiss[] };
+  };
+}
+
+/** 写评价前置上下文（限频/必关/报销资格）；失败返回 null。 */
+export async function getReviewContext(teacherId: number): Promise<ReviewContext | null> {
+  const r = await apiFetch(`/api/teachers/${teacherId}/review-context`);
+  if (!r.ok) return null;
+  return (await r.json()) as ReviewContext;
+}
+
+/** 上传单图 → file_id（失败返回 null）。multipart，勿手动设 Content-Type。 */
+export async function uploadImage(file: File): Promise<string | null> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await apiFetch("/api/uploads", { method: "POST", body: fd });
+  if (!r.ok) return null;
+  const data = (await r.json()) as { file_id?: string };
+  return data.file_id ?? null;
+}
+
+export interface ReviewScores {
+  humanphoto: number; appearance: number; body: number;
+  service: number; attitude: number; environment: number;
+}
+
+export interface ReviewSubmitPayload {
+  teacher_id: number;
+  rating: "positive" | "neutral" | "negative";
+  booking_screenshot_file_id: string;
+  gesture_photo_file_id?: string | null;
+  scores: ReviewScores;
+  summary: string;
+  request_reimbursement: 0 | 1;
+  anonymous: 0 | 1;
+}
+
+export interface ReviewSubmitResult {
+  ok: boolean;
+  review_id?: number;
+  error?: string;
+  message?: string;
+  missing?: ChannelMiss[];
+  fields?: string[];
+}
+
+/** 提交评价；成功 ok:true + review_id，失败 ok:false + 结构化错误。 */
+export async function submitReview(payload: ReviewSubmitPayload): Promise<ReviewSubmitResult> {
+  const r = await apiFetch("/api/reviews", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json().catch(() => ({} as Record<string, unknown>));
+  if (r.ok) return { ok: true, review_id: (data as { review_id?: number }).review_id };
+  return {
+    ok: false,
+    error: (data as ReviewSubmitResult).error,
+    message: (data as ReviewSubmitResult).message,
+    missing: (data as ReviewSubmitResult).missing,
+    fields: (data as ReviewSubmitResult).fields,
+  };
+}

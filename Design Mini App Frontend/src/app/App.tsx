@@ -18,6 +18,8 @@ import {
 // recharts 重(~157KB gzip)且只在管理台/详情用 → 懒加载，普通用户首屏不下载。
 const TrendChart = lazy(() => import("./charts/TrendChart"));
 const RadarChartBox = lazy(() => import("./charts/RadarChartBox"));
+// 写评价表单仅写评价时用 → 懒加载。
+const WriteReview = lazy(() => import("./WriteReview"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
@@ -1087,16 +1089,16 @@ function PhotoCarousel({ photos, name }: { photos: string[]; name: string }) {
 }
 
 function TeacherDetail({
-  teacher, onBack, onFavorite, botUsername,
+  teacher, onBack, onFavorite,
 }: {
   teacher: Teacher;
   onBack: () => void;
   onFavorite: () => void;
-  botUsername?: string;
 }) {
   const [detailTab, setDetailTab] = useState<"info" | "reviews">("info");
   const [detail, setDetail] = useState<ApiTeacherDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [writing, setWriting] = useState(false);
 
   // 详情（雷达 6 维 + 已通过评价）按需拉取；头部先用卡片数据即时渲染。
   useEffect(() => {
@@ -1224,21 +1226,27 @@ function TeacherDetail({
                 ))}
               </div>
             )}
-            {/* 写评价：深链回 bot 现有卡片 FSM（含约课截图上传 + 6 维打分） */}
-            {botUsername && (
-              <button
-                onClick={() => {
-                  hapticLight();
-                  openTelegramLink(`https://t.me/${botUsername}?start=write_${teacher.id}`);
-                }}
-                className="w-full mt-4 py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
-              >
-                ✍️ 写评价（去 bot 完成）
-              </button>
-            )}
+            {/* 写评价：in-app 一屏表单（P2） */}
+            <button
+              onClick={() => { hapticLight(); setWriting(true); }}
+              className="w-full mt-4 py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
+            >
+              ✍️ 写评价
+            </button>
           </div>
         )}
       </div>
+
+      {writing && (
+        <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+          <WriteReview
+            teacherId={teacher.id}
+            teacherName={teacher.name}
+            onClose={() => setWriting(false)}
+            onSubmitted={() => { setWriting(false); }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -1436,7 +1444,6 @@ export default function App() {
               teacher={selectedTeacher}
               onBack={() => setSelectedTeacherId(null)}
               onFavorite={() => toggleFavorite(selectedTeacher.id)}
-              botUsername={profile?.bot_username}
             />
           )}
         </div>

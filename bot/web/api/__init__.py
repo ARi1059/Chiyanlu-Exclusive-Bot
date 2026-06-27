@@ -25,7 +25,9 @@ from bot.web.api.profile import (
     post_checkin,
     post_notify,
 )
+from bot.web.api.reviews import get_review_context, post_review
 from bot.web.api.teachers import get_teacher_detail, get_teachers
+from bot.web.api.uploads import post_upload
 
 
 def register_api_routes(app: web.Application) -> None:
@@ -42,6 +44,10 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/teachers", get_teachers)
     app.router.add_get("/api/teachers/{id}", get_teacher_detail)
     app.router.add_get("/api/teachers/{id}/photo", get_teacher_photo)
+    # P2：写评价（in-app 表单）
+    app.router.add_get("/api/teachers/{id}/review-context", get_review_context)
+    app.router.add_post("/api/reviews", post_review)
+    app.router.add_post("/api/uploads", post_upload)
     # P1：收藏
     app.router.add_get("/api/favorites", get_favorites)
     app.router.add_post("/api/favorites", post_favorite)
