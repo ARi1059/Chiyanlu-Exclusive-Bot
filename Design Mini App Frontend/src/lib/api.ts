@@ -205,6 +205,25 @@ export async function checkinTeacher(): Promise<{ ok: boolean; checked_in?: bool
   return await r.json();
 }
 
+export interface ApiTeacherHome {
+  display_name: string;
+  is_active: boolean;
+  checked_in_today: boolean;
+  deadline: string;        // 签到截止 HH:MM
+  server_time: string;     // 服务端当前 HH:MM
+  profile_complete: boolean;
+  missing_fields: string[];
+  review_count: number;
+  avg_overall: number;
+}
+
+/** 老师端首页数据（仅 teacher 角色）；失败返回 null。 */
+export async function getTeacherHome(): Promise<ApiTeacherHome | null> {
+  const r = await apiFetch("/api/me/teacher-home");
+  if (!r.ok) return null;
+  return (await r.json()) as ApiTeacherHome;
+}
+
 // ── 个人页子项（P1 Tier1）────────────────────────────────────────────────────
 
 export interface ApiPointTx {

@@ -22,9 +22,12 @@ from bot.database import (
     count_user_reviews,
     get_config,
     get_teacher,
+    get_teacher_channel_post,
+    get_teacher_full_profile,
     get_user,
     get_user_total_points,
     is_checked_in,
+    is_teacher_profile_complete,
     list_user_favorites,
     list_user_point_transactions,
     list_user_reviews_paged,
@@ -123,6 +126,40 @@ async def post_checkin(request: web.Request) -> web.Response:
     if not success:
         return web.json_response({"ok": False, "error": "签到失败，请稍后重试"})
     return web.json_response({"ok": True, "checked_in": True, "already": False})
+
+
+async def get_teacher_home(request: web.Request) -> web.Response:
+    """老师端首页（仅 teacher 角色）：签到态/截止/资料完整度/被评价。P4 §16.1。"""
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    teacher = await get_teacher_full_profile(uid)
+    if not teacher:
+        raise web.HTTPForbidden(reason="not a registered teacher")
+
+    complete, missing = await is_teacher_profile_complete(uid)
+    checked_in = await is_checked_in(uid, _today_str_local())
+    publish_time = await get_config("publish_time") or config.publish_time
+    post = await get_teacher_channel_post(uid)  # 未发档案帖 → None
+    from datetime import datetime
+    try:
+        from pytz import timezone
+        now = datetime.now(timezone(config.timezone))
+    except Exception:
+        now = datetime.now()
+
+    return web.json_response({
+        "display_name": teacher.get("display_name") or "",
+        "is_active": bool(teacher.get("is_active")),
+        "checked_in_today": checked_in,
+        "deadline": publish_time,
+        "server_time": now.strftime("%H:%M"),
+        "profile_complete": complete,
+        "missing_fields": missing,
+        "review_count": int((post or {}).get("review_count") or 0),
+        "avg_overall": round(float((post or {}).get("avg_overall") or 0), 1),
+    })
 
 
 async def get_my_points(request: web.Request) -> web.Response:

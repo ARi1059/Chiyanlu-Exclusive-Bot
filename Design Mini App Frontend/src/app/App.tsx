@@ -3,13 +3,13 @@ import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   approveReview, rejectReview,
-  getMyPoints, getMyReviews, setNotify, checkinTeacher,
+  getMyPoints, getMyReviews, setNotify, checkinTeacher, getTeacherHome,
   getReimbursements, rejectReimbursement, activateReimbursement,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
-  type ApiReimbursement,
+  type ApiReimbursement, type ApiTeacherHome,
 } from "../lib/api";
-import { isInTelegram, showBackButton, hapticLight, openTelegramLink } from "../lib/tg";
+import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartParam } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, Home, BarChart2,
@@ -496,7 +496,11 @@ function ProfileView({
   const [checkedIn, setCheckedIn] = useState<boolean>(profile?.checked_in_today ?? false);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinMsg, setCheckinMsg] = useState<string | null>(null);
+  const [home, setHome] = useState<ApiTeacherHome | null>(null);
   useEffect(() => { if (profile) setCheckedIn(profile.checked_in_today ?? false); }, [profile]);
+  useEffect(() => {
+    if (profile?.is_teacher) getTeacherHome().then(setHome).catch(() => {});
+  }, [profile?.is_teacher]);
 
   const doCheckin = async () => {
     if (checkinBusy || checkedIn) return;
@@ -551,28 +555,46 @@ function ProfileView({
         </div>
       </div>
 
-      {/* 老师签到（仅注册老师） */}
+      {/* 老师面板（仅注册老师）：艺名 / 今日签到 / 资料完整度 / 被评价 */}
       {profile?.is_teacher && (
-        <div className="bg-[#1e2c3a] rounded-2xl p-4">
+        <div className="bg-[#1e2c3a] rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[#e8e8e8] text-sm font-medium">
+              老师面板{home?.display_name ? ` · ${home.display_name}` : ""}
+            </span>
+            {home && (
+              <span className="text-[#7d8d9e] text-xs">
+                被评价 {home.review_count} 人{home.review_count > 0 ? ` · 均分 ${home.avg_overall}` : ""}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-[#e8e8e8] text-sm font-medium">今日签到</div>
+              <div className="text-[#e8e8e8] text-sm">今日签到</div>
               <div className="text-[#7d8d9e] text-xs mt-0.5">
-                {checkinMsg || (checkedIn ? "今日已签到 ✓" : "签到后进入今日可约名单")}
+                {checkinMsg || (checkedIn ? "今日已签到 ✓" : `签到截止 ${home?.deadline ?? "14:00"}，签到后进入今日可约`)}
               </div>
             </div>
             <button
               onClick={doCheckin}
               disabled={checkedIn || checkinBusy}
               className={`text-sm px-4 py-2 rounded-xl font-medium transition-transform active:scale-95 ${
-                checkedIn
-                  ? "bg-[#243447] text-[#4fc97a]"
-                  : "bg-[#c4974a] text-[#0d1117]"
+                checkedIn ? "bg-[#243447] text-[#4fc97a]" : "bg-[#c4974a] text-[#0d1117]"
               } ${checkinBusy ? "opacity-60" : ""}`}
             >
               {checkedIn ? "已签到" : checkinBusy ? "签到中…" : "签到"}
             </button>
           </div>
+
+          {home && (
+            <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+              <span className="text-[#aebac8] text-xs">资料完整度</span>
+              <span className={`text-xs ${home.profile_complete ? "text-[#4fc97a]" : "text-[#e8a857]"}`}>
+                {home.profile_complete ? "✓ 已完整" : `缺 ${home.missing_fields.length} 项（去 bot 完善）`}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -1295,12 +1317,14 @@ function BottomNav({
 export default function App() {
   const [tab, setTab] = useState<NavTab>("today");
   const [selectedTeacherId, setSelectedTeacherId] = useState<number | null>(null);
+  const [writeTeacherId, setWriteTeacherId] = useState<number | null>(null);
   const [role, setRole] = useState<Role>("user");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [profile, setProfile] = useState<ApiProfile | null>(null);
   const inTg = isInTelegram();
+  const startConsumed = useRef(false);
 
   // 拉老师列表 + 档案（重试也调它）。Telegram 内拿不到数据视为失败 → 给重试。
   const loadData = useCallback(async () => {
@@ -1327,6 +1351,18 @@ export default function App() {
         if (alive && me) setRole(me.role);
       } catch { /* 鉴权失败：保留 mock 角色 */ }
       if (alive) await loadData();
+      // 消费一次 startapp 深链参数（t.me/<bot>?startapp=<param>），路由到对应页。
+      if (alive && !startConsumed.current) {
+        startConsumed.current = true;
+        const p = getStartParam();
+        const mt = p.match(/^teacher_(\d+)$/);
+        const mw = p.match(/^write_(\d+)$/);
+        if (mt) setSelectedTeacherId(Number(mt[1]));
+        else if (mw) setWriteTeacherId(Number(mw[1]));
+        else if (p === "today" || p === "menu") setTab("today");
+        else if (p === "search") setTab("search");
+        // 其它/未知 → 忽略，留在首页
+      }
     })();
     return () => { alive = false; };
   }, [loadData]);
@@ -1447,6 +1483,18 @@ export default function App() {
             />
           )}
         </div>
+
+        {/* 写评价（startapp=write_<id> 深链直达；详情页内的写评价走 TeacherDetail 局部 state） */}
+        {writeTeacherId != null && (
+          <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+            <WriteReview
+              teacherId={writeTeacherId}
+              teacherName={teachers.find((t) => t.id === writeTeacherId)?.name ?? ""}
+              onClose={() => setWriteTeacherId(null)}
+              onSubmitted={() => setWriteTeacherId(null)}
+            />
+          </Suspense>
+        )}
       </div>
     </div>
   );

@@ -358,3 +358,86 @@ def test_checkin_idempotent_already(monkeypatch):
             assert d["already"] is True
 
     _run(_t())
+
+
+# ============ teacher-home（P4 §16.1）============
+
+def test_teacher_home_requires_teacher_role():
+    """非 teacher 角色 → 403。"""
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/teacher-home",
+                            headers={"Authorization": f"Bearer {_tok(role='user')}"})
+            assert r.status == 403
+    _run(_t())
+
+
+def test_teacher_home_assembles(monkeypatch):
+    async def fake_profile(uid):
+        return {"user_id": uid, "display_name": "苏乔晚", "is_active": 1}
+
+    async def fake_complete(uid):
+        return False, ["age", "height_cm"]
+
+    async def fake_checked(uid, date_str):
+        return True
+
+    async def fake_get_config(key):
+        return None  # 回退 config.publish_time
+
+    async def fake_post(uid):
+        return {"review_count": 12, "avg_overall": 8.6}
+
+    monkeypatch.setattr(prof_mod, "get_teacher_full_profile", fake_profile)
+    monkeypatch.setattr(prof_mod, "is_teacher_profile_complete", fake_complete)
+    monkeypatch.setattr(prof_mod, "is_checked_in", fake_checked)
+    monkeypatch.setattr(prof_mod, "get_config", fake_get_config)
+    monkeypatch.setattr(prof_mod, "get_teacher_channel_post", fake_post)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/teacher-home",
+                            headers={"Authorization": f"Bearer {_tok(role='teacher')}"})
+            assert r.status == 200
+            d = await r.json()
+            assert d["display_name"] == "苏乔晚"
+            assert d["checked_in_today"] is True
+            assert d["profile_complete"] is False
+            assert d["missing_fields"] == ["age", "height_cm"]
+            assert d["review_count"] == 12 and d["avg_overall"] == 8.6
+            assert d["deadline"]  # publish_time 回退非空
+    _run(_t())
+
+
+def test_teacher_home_no_channel_post_zero(monkeypatch):
+    """未发档案帖（get_teacher_channel_post → None）→ 被评价 0。"""
+    async def fake_profile(uid):
+        return {"user_id": uid, "display_name": "新人", "is_active": 1}
+
+    async def fake_complete(uid):
+        return True, []
+
+    async def fake_checked(uid, date_str):
+        return False
+
+    async def fake_get_config(key):
+        return None
+
+    async def fake_post(uid):
+        return None
+
+    monkeypatch.setattr(prof_mod, "get_teacher_full_profile", fake_profile)
+    monkeypatch.setattr(prof_mod, "is_teacher_profile_complete", fake_complete)
+    monkeypatch.setattr(prof_mod, "is_checked_in", fake_checked)
+    monkeypatch.setattr(prof_mod, "get_config", fake_get_config)
+    monkeypatch.setattr(prof_mod, "get_teacher_channel_post", fake_post)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/teacher-home",
+                            headers={"Authorization": f"Bearer {_tok(role='teacher')}"})
+            assert r.status == 200
+            d = await r.json()
+            assert d["review_count"] == 0 and d["avg_overall"] == 0
+            assert d["profile_complete"] is True
+    _run(_t())

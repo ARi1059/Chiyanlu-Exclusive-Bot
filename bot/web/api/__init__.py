@@ -22,6 +22,7 @@ from bot.web.api.profile import (
     get_my_points,
     get_my_reviews,
     get_profile,
+    get_teacher_home,
     post_checkin,
     post_notify,
 )
@@ -40,6 +41,7 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/me/reviews", get_my_reviews)
     app.router.add_post("/api/me/notify", post_notify)
     app.router.add_post("/api/me/checkin", post_checkin)
+    app.router.add_get("/api/me/teacher-home", get_teacher_home)
     # P1：老师数据（MiniApp）
     app.router.add_get("/api/teachers", get_teachers)
     app.router.add_get("/api/teachers/{id}", get_teacher_detail)

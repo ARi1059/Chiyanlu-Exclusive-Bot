@@ -23,6 +23,7 @@ interface TgHaptic {
 
 interface TgWebApp {
   initData: string;
+  initDataUnsafe?: { start_param?: string };
   ready: () => void;
   expand?: () => void;
   colorScheme?: "light" | "dark";
@@ -68,6 +69,15 @@ export function getInitData(): string {
 /** 是否运行在 Telegram 容器内（有可用 initData）。 */
 export function isInTelegram(): boolean {
   return getInitData().length > 0;
+}
+
+/** startapp 深链参数（t.me/<bot>?startapp=<param>）；无则空串。 */
+export function getStartParam(): string {
+  try {
+    return tg()?.initDataUnsafe?.start_param || "";
+  } catch {
+    return "";
+  }
 }
 
 /** 显示 Telegram 原生返回键并绑定回调；返回解绑函数。非 Telegram 环境为 no-op。 */
