@@ -373,3 +373,4 @@ def test_teacher_card_v2_kb_unchanged():
     assert any("example.com/contact" in c for c in callbacks_and_urls)
     assert any("group:fav:100" in c for c in callbacks_and_urls)
     assert any("?startapp=teacher_100" in c for c in callbacks_and_urls)
+    assert any("?startapp=write_100" in c for c in callbacks_and_urls)  # 写报告按钮

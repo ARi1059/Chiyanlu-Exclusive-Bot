@@ -156,6 +156,13 @@ def build_teacher_group_card_v2_kb(
         ))
     rows.append(second_row)
 
+    # 3. 写报告：startapp 直达 MiniApp 写评价表单（bot_username 缺失则跳过）
+    if bot_username:
+        rows.append([InlineKeyboardButton(
+            text="📝 写报告",
+            url=f"https://t.me/{bot_username}?startapp=write_{teacher_id}",
+        )])
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

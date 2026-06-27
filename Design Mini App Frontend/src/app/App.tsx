@@ -1140,6 +1140,10 @@ function TeacherDetail({
   const coverPhotos: string[] = (detail?.photos && detail.photos.length > 0)
     ? detail.photos
     : (teacher.photoUrl ? [teacher.photoUrl] : []);
+  // 私信老师：用数据库 @username 跳转老师私聊窗口（button_url 多为频道帖，不可用）。
+  const dmUrl: string | null = detail?.username
+    ? `https://t.me/${detail.username.replace(/^@/, "")}`
+    : null;
 
   return (
     <div className="flex flex-col h-full bg-[#17212b]">
@@ -1248,13 +1252,23 @@ function TeacherDetail({
                 ))}
               </div>
             )}
-            {/* 写评价：in-app 一屏表单（P2） */}
-            <button
-              onClick={() => { hapticLight(); setWriting(true); }}
-              className="w-full mt-4 py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
-            >
-              ✍️ 写评价
-            </button>
+            {/* 私信老师（主）+ 写评价（次） */}
+            <div className="mt-4 space-y-2">
+              {dmUrl && (
+                <button
+                  onClick={() => { hapticLight(); openTelegramLink(dmUrl); }}
+                  className="w-full py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium active:scale-[0.98] transition-transform"
+                >
+                  💬 私信老师
+                </button>
+              )}
+              <button
+                onClick={() => { hapticLight(); setWriting(true); }}
+                className="w-full py-3 rounded-xl border border-[#c4974a] text-[#c4974a] text-sm font-medium active:scale-[0.98] transition-transform"
+              >
+                ✍️ 写评价
+              </button>
+            </div>
           </div>
         )}
       </div>

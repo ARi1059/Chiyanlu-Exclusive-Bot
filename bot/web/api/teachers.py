@@ -141,6 +141,7 @@ async def get_teacher_detail(request: web.Request) -> web.Response:
     return web.json_response({
         "id": tid,
         "name": teacher.get("display_name") or "",
+        "username": teacher.get("username") or "",  # 私信老师按钮用
         "region": teacher.get("region") or "",
         "price": teacher.get("price") or "",
         "tags": _parse_tags(teacher.get("tags")),
