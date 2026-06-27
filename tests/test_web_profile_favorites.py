@@ -1,0 +1,180 @@
+"""bot/web 个人页 + 收藏端点测试（P1）。
+
+覆盖：
+  - GET  /api/profile      字段含 notify_enabled / points / 计数
+  - GET  /api/me/points    流水 reason→中文 label、delta
+  - POST /api/me/notify    开关落库（透传 enabled）
+  - 收藏 GET(401) / POST(add, 幂等) / POST 坏 body(400) / DELETE(remove)
+
+DB 函数 monkeypatch（:memory: 跨连接不持表）。
+"""
+from __future__ import annotations
+
+import asyncio
+
+from aiohttp.test_utils import TestClient, TestServer
+
+import bot.web.api.favorites as fav_mod
+import bot.web.api.profile as prof_mod
+from bot.config import config
+from bot.web.auth import issue_session
+from bot.web.server import create_web_app
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def _tok(uid: int = 555, role: str = "user") -> str:
+    return issue_session(uid, role, config.bot_token)
+
+
+def _hdr(uid: int = 555) -> dict:
+    return {"Authorization": f"Bearer {_tok(uid)}"}
+
+
+# ============ profile ============
+
+def test_profile_shape(monkeypatch):
+    async def fake_user(uid):
+        return {"user_id": uid, "username": "chiyan", "first_name": "痴颜",
+                "total_points": 1280, "notify_enabled": 1}
+
+    async def fake_review_count(uid, status_filter=None):
+        return 8
+
+    async def fake_favs(uid):
+        return [{"user_id": 1}, {"user_id": 2}]
+
+    monkeypatch.setattr(prof_mod, "get_user", fake_user)
+    monkeypatch.setattr(prof_mod, "count_user_reviews", fake_review_count)
+    monkeypatch.setattr(prof_mod, "list_user_favorites", fake_favs)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/profile", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["username"] == "chiyan"
+            assert d["points"] == 1280
+            assert d["review_count"] == 8
+            assert d["favorite_count"] == 2
+            assert d["notify_enabled"] is True
+
+    _run(_t())
+
+
+def test_profile_no_token_401():
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            assert (await c.get("/api/profile")).status == 401
+
+    _run(_t())
+
+
+def test_my_points_labels(monkeypatch):
+    async def fake_txs(uid, limit=50):
+        return [
+            {"delta": 5, "reason": "review_approved", "note": "包夜", "created_at": "2026-06-20 14:23:00"},
+            {"delta": -3, "reason": "admin_revoke", "note": "", "created_at": "2026-06-19 10:00:00"},
+        ]
+
+    async def fake_total(uid):
+        return 100
+
+    monkeypatch.setattr(prof_mod, "list_user_point_transactions", fake_txs)
+    monkeypatch.setattr(prof_mod, "get_user_total_points", fake_total)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/me/points", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["total"] == 100
+            assert d["transactions"][0]["label"] == "评价通过"    # reason→中文
+            assert d["transactions"][0]["delta"] == 5
+            assert d["transactions"][1]["label"] == "管理员扣分"
+
+    _run(_t())
+
+
+def test_set_notify_roundtrip(monkeypatch):
+    rec: dict = {}
+
+    async def fake_set(uid, enabled):
+        rec.update(uid=uid, enabled=enabled)
+        return True
+
+    monkeypatch.setattr(prof_mod, "set_user_notify_enabled", fake_set)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/me/notify", headers=_hdr(uid=777), json={"enabled": False})
+            assert r.status == 200
+            assert (await r.json())["notify_enabled"] is False
+
+    _run(_t())
+    assert rec == {"uid": 777, "enabled": False}
+
+
+# ============ favorites ============
+
+def test_favorites_no_token_401():
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            assert (await c.get("/api/favorites")).status == 401
+
+    _run(_t())
+
+
+def test_favorite_add(monkeypatch):
+    rec: dict = {}
+
+    async def fake_add(uid, tid):
+        rec.update(uid=uid, tid=tid)
+        return True
+
+    monkeypatch.setattr(fav_mod, "add_favorite", fake_add)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/favorites", headers=_hdr(uid=42), json={"teacher_id": 9})
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["favorited"] is True
+
+    _run(_t())
+    assert rec == {"uid": 42, "tid": 9}
+
+
+def test_favorite_add_bad_body_400(monkeypatch):
+    async def fake_add(uid, tid):
+        raise AssertionError("不应到达 add_favorite")
+
+    monkeypatch.setattr(fav_mod, "add_favorite", fake_add)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/favorites", headers=_hdr(), json={})  # 缺 teacher_id
+            assert r.status == 400
+
+    _run(_t())
+
+
+def test_favorite_delete(monkeypatch):
+    rec: dict = {}
+
+    async def fake_remove(uid, tid):
+        rec.update(uid=uid, tid=tid)
+        return True
+
+    monkeypatch.setattr(fav_mod, "remove_favorite", fake_remove)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.delete("/api/favorites/9", headers=_hdr(uid=42))
+            assert r.status == 200
+            assert (await r.json())["favorited"] is False
+
+    _run(_t())
+    assert rec == {"uid": 42, "tid": 9}
