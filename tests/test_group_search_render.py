@@ -8,7 +8,7 @@
     5. 单条消息 ≤ Telegram 4096 字符
     6. HTML 注入防御（< > & 必 escape）
     7. _handle_combo_search 用 ParseMode.HTML + disable_web_page_preview
-    8. 仅最后一页附底部按钮
+    8. 组合搜索结果不再附底部按钮（2026-06 查看全部/筛选/热门整组移除）
 """
 from __future__ import annotations
 
@@ -274,19 +274,21 @@ def test_handle_combo_search_keeps_disable_web_page_preview():
     assert "disable_web_page_preview=True" in body
 
 
-def test_handle_combo_search_attaches_kb_only_on_last_page():
-    """循环逐页 send；仅最后一页附底部按钮。"""
+def test_handle_combo_search_attaches_no_buttons():
+    """≥2 结果：逐页 send，各页均不附底部按钮（2026-06 三按钮整组移除）。"""
     import bot.handlers.keyword as mod
     src = _src(mod)
     idx = src.find("async def _handle_combo_search(")
     assert idx > 0
     end = src.find("\nasync def ", idx + 1)
     body = src[idx:end if end > 0 else idx + 5000]
-    # 应有循环 for ...pages... + 最后一页判断
+    # 仍逐页循环发送
     assert "for " in body
-    assert "total_pages" in body or "len(pages)" in body
-    # 应有"最后一页才附 kb"的逻辑
-    assert "page_kb" in body or "if idx == total_pages - 1" in body or "if idx == len(pages) - 1" in body
+    # 不再有"最后一页才附 kb"的逻辑 / 不再引用废弃的 kb 构造
+    assert "page_kb" not in body
+    assert "_build_combo_search_kb" not in body
+    # reply_markup 仅以 None 形式出现（不附任何按钮）
+    assert "reply_markup=None" in body
 
 
 # ============================================================
@@ -315,11 +317,20 @@ def test_legacy_no_truncation_message():
     assert "先展示前" not in full
 
 
-def test_combo_search_kb_still_built():
-    """_build_combo_search_kb 仍存在，被最后一页使用。"""
+def test_combo_search_bottom_buttons_removed():
+    """组合搜索底部三按钮（查看全部结果/按条件筛选/热门推荐）已整组移除。
+
+    断言代码级 token（非散文措辞——解释性注释可合法提及这些中文名）：
+    不再构造按钮键盘、不再引用 filter/hot 死深链与 q_ 编码。
+    """
     import bot.handlers.keyword as mod
     src = _src(mod)
-    assert "_build_combo_search_kb" in src
+    assert "_build_combo_search_kb" not in src       # 键盘构造函数已删
+    assert "?start=filter" not in src                # filter 死深链已清
+    assert "?start=hot" not in src                   # hot 死深链已清
+    assert "encode_query_for_deep_link" not in src   # q_ 编码不再在本 handler 引用
+    # 单老师卡片仍走 _send_teacher_group_card_v2（matched_count==1 分支）
+    assert "_send_teacher_group_card_v2" in src
 
 
 def test_handle_combo_search_single_match_unchanged():
@@ -356,8 +367,9 @@ def test_keyword_router_still_importable():
     assert router is not None
 
 
-def test_teacher_card_v2_kb_unchanged():
-    """单老师群卡片 keyboard 未受影响（仍有联系 + 收藏 + 私聊详情按钮）。"""
+def test_teacher_card_v2_kb_two_buttons_deeplink_only():
+    """单老师群卡片（精简版）：仅「私聊详情」「写评价」两个 startapp 深链按钮，
+    不再有联系老师(button_url) / 收藏(group:fav)。"""
     from bot.utils.teacher_render import build_teacher_group_card_v2_kb
     teacher = {
         "user_id": 100,
@@ -365,12 +377,22 @@ def test_teacher_card_v2_kb_unchanged():
         "button_text": "联系",
     }
     kb = build_teacher_group_card_v2_kb(teacher, bot_username="testbot")
-    callbacks_and_urls = []
-    for row in kb.inline_keyboard:
-        for b in row:
-            callbacks_and_urls.append(b.callback_data or b.url or "")
-    # 应含 contact url + group:fav callback + 私聊详情 deep link（startapp 直达 MiniApp）
-    assert any("example.com/contact" in c for c in callbacks_and_urls)
-    assert any("group:fav:100" in c for c in callbacks_and_urls)
-    assert any("?startapp=teacher_100" in c for c in callbacks_and_urls)
-    assert any("?startapp=write_100" in c for c in callbacks_and_urls)  # 写报告按钮
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    urls = [b.url or b.callback_data or "" for b in buttons]
+    # 恰好两个按钮
+    assert len(buttons) == 2
+    # 两个 startapp 深链直达 MiniApp（详情页 + 写评价页）
+    assert any("?startapp=teacher_100" in u for u in urls)
+    assert any("?startapp=write_100" in u for u in urls)
+    # 不再有联系老师（button_url）与收藏（group:fav）
+    assert not any("example.com/contact" in u for u in urls)
+    assert not any("group:fav" in u for u in urls)
+
+
+def test_teacher_card_v2_kb_fallback_without_bot_username():
+    """bot_username 缺失兜底：私聊详情退化为 callback，写评价跳过。"""
+    from bot.utils.teacher_render import build_teacher_group_card_v2_kb
+    kb = build_teacher_group_card_v2_kb({"user_id": 100, "button_url": "", "button_text": ""}, None)
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert len(buttons) == 1
+    assert buttons[0].callback_data == "teacher:view:100"

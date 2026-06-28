@@ -33,7 +33,6 @@ from aiogram.enums import ParseMode
 
 from bot.utils.group_search import (
     check_group_cooldown,
-    encode_query_for_deep_link,
     normalize_group_query,
     record_group_cooldown,
     render_group_search_result_pages,
@@ -411,35 +410,9 @@ async def _enrich_with_today_status(
     return enriched
 
 
-def _build_combo_search_kb(
-    bot_username: str,
-    raw_query: str,
-    total_count: int,
-) -> InlineKeyboardMarkup:
-    """组合搜索结果页底部按钮
-
-    [查看全部结果] —— /start q_<base64url> 优先，超长 fallback 到 /start search
-    [按条件筛选] —— /start filter
-    [热门推荐]   —— 仅在结果 > 5 时显示
-    """
-    base = f"https://t.me/{bot_username}"
-
-    encoded = encode_query_for_deep_link(raw_query)
-    if encoded:
-        all_results_url = f"{base}?start=q_{encoded}"
-    else:
-        all_results_url = f"{base}?start=search"
-
-    row1: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(text="🔍 查看全部结果", url=all_results_url),
-        InlineKeyboardButton(text="🔎 按条件筛选", url=f"{base}?start=filter"),
-    ]
-    rows: list[list[InlineKeyboardButton]] = [row1]
-    if total_count > 5:
-        rows.append([
-            InlineKeyboardButton(text="🔥 热门推荐", url=f"{base}?start=hot"),
-        ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+# 注：组合搜索底部按钮（查看全部结果 / 按条件筛选 / 热门推荐）已于 2026-06 整组移除——
+# filter/hot 深链 A0 已下线、实际无效；「查看全部」也无意义（群内已完整展示所有命中老师）。
+# 群内组合搜索结果自此不再附任何底部按钮。
 
 
 async def _handle_combo_search(
@@ -452,7 +425,7 @@ async def _handle_combo_search(
     Returns:
         (sent, matched_count):
             sent=True  → 已发送回复（调用方记录冷却 + 埋点）
-            sent=False → 静默（0 命中 / 全 unrecognized / bot username 缺失）
+            sent=False → 静默（0 命中 / 全 unrecognized）
             matched_count → 命中数量（用于埋点）
     """
     try:
@@ -467,18 +440,14 @@ async def _handle_combo_search(
 
     today = _today_str()
 
-    # 单结果：直接复用 Phase 8.1 群组卡片
+    # 单结果：直接复用精准艺名群组卡片（2 按钮直达小程序）
     if matched_count == 1:
         await _send_teacher_group_card_v2(message, teachers[0])
         return True, 1
 
-    # ≥2：补 daily_status + 排序 + 渲染列表
+    # ≥2：补 daily_status + 排序 + 渲染完整超链接列表（不再附任何底部按钮）
     enriched = await _enrich_with_today_status(teachers, today)
     enriched = sort_group_search_results(enriched, today)
-
-    bot_username = await _get_bot_username(message)
-    if not bot_username:
-        return False, matched_count
 
     # 2026-05：群内必须完整 + 老师名带超链接，超长自动分页
     pages = render_group_search_result_pages(
@@ -486,17 +455,14 @@ async def _handle_combo_search(
         total_count=matched_count,
         per_page=25,
     )
-    kb = _build_combo_search_kb(bot_username, raw_query, matched_count)
     total_pages = len(pages)
 
     for idx, page_text in enumerate(pages):
-        # 仅最后一页附底部按钮（避免每页都附按钮造成重复）
-        page_kb = kb if idx == total_pages - 1 else None
         try:
             await message.reply(
                 page_text,
                 parse_mode=ParseMode.HTML,
-                reply_markup=page_kb,
+                reply_markup=None,  # 组合搜索结果不附底部按钮（已下线）
                 disable_web_page_preview=True,
             )
         except Exception as e:
