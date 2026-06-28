@@ -12,7 +12,7 @@ import {
 import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartParam } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
-  Star, MapPin, Bell, Home, BarChart2,
+  Star, MapPin, Bell, Home, BarChart2, Users,
   CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList,
 } from "lucide-react";
 // recharts 重(~157KB gzip)且只在管理台/详情用 → 懒加载，普通用户首屏不下载。
@@ -25,7 +25,7 @@ const TeacherEditProfile = lazy(() => import("./TeacherEditProfile"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
-type NavTab = "today" | "search" | "favorites" | "me" | "admin";
+type NavTab = "today" | "all" | "search" | "favorites" | "me" | "admin";
 
 interface Dim { subject: string; A: number }
 
@@ -212,30 +212,34 @@ function EmptyState({ text }: { text: string }) {
   return <div className="text-center py-14 text-[#7d8d9e] text-sm">{text}</div>;
 }
 
-function TodayView({
-  teachers, loading, onSelect, onFavorite,
+function TeacherGridView({
+  teachers, loading, title, badgeText, emptyText, onSelect, onFavorite,
 }: {
   teachers: Teacher[];
   loading: boolean;
+  title: string;
+  badgeText?: string;
+  emptyText: string;
   onSelect: (t: Teacher) => void;
   onFavorite: (id: number) => void;
 }) {
-  const available = teachers.filter((t) => t.available).length;
   return (
     <div className="px-4 pt-4 pb-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-[#e8e8e8] text-lg font-medium">今日可约</h1>
+          <h1 className="text-[#e8e8e8] text-lg font-medium">{title}</h1>
           <p className="text-[#7d8d9e] text-xs mt-0.5">{todayLabel()}</p>
         </div>
-        <span className="text-xs bg-[#c4974a]/15 text-[#c4974a] border border-[#c4974a]/25 px-2.5 py-1 rounded-full font-mono">
-          {available} 位可约
-        </span>
+        {badgeText && (
+          <span className="text-xs bg-[#c4974a]/15 text-[#c4974a] border border-[#c4974a]/25 px-2.5 py-1 rounded-full font-mono">
+            {badgeText}
+          </span>
+        )}
       </div>
       {loading ? (
         <EmptyState text="加载中…" />
       ) : teachers.length === 0 ? (
-        <EmptyState text="暂无老师数据" />
+        <EmptyState text={emptyText} />
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {teachers.map((t) => (
@@ -1383,6 +1387,7 @@ function BottomNav({
   const isAdmin = role === "admin" || role === "superadmin";
   const items: { key: NavTab; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
     { key: "today",     label: "首页",  icon: Home     },
+    { key: "all",       label: "全部",  icon: Users    },
     { key: "search",    label: "搜索",  icon: Search   },
     { key: "favorites", label: "收藏",  icon: Heart    },
     { key: "me",        label: "我的",  icon: User     },
@@ -1555,7 +1560,8 @@ export default function App() {
             </div>
           ) : (
             <>
-              {tab === "today"     && <TodayView     teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+              {tab === "today"     && <TeacherGridView teachers={teachers.filter((t) => t.available)} loading={loading} title="今日开课" badgeText={`${teachers.filter((t) => t.available).length} 位开课`} emptyText="今日暂无老师开课，去「全部」看看 👇" onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
+              {tab === "all"       && <TeacherGridView teachers={teachers} loading={loading} title="全部老师" badgeText={`${teachers.filter((t) => t.available).length} 位可约`} emptyText="暂无老师数据" onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
               {tab === "search"    && <SearchView    teachers={teachers} loading={loading} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
               {tab === "favorites" && <FavoritesView teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
               {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} profile={profile} />}
