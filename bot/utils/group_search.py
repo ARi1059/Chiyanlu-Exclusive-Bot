@@ -312,6 +312,7 @@ def render_group_search_result_pages(
     *,
     total_count: int,
     per_page: int = 25,
+    header: Optional[str] = None,
 ) -> list[str]:
     """把搜索命中分页为多段 HTML 文本，每位老师含可点击超链接。
 
@@ -322,6 +323,10 @@ def render_group_search_result_pages(
         - 单条消息 < Telegram 4096 字符上限（per_page=25 × 约 100 字节/行 ≈ 2.5KB，安全）
         - 每页头部带页码；最后一页结尾不再写"建议私聊"，由 caller 附按钮即可
 
+    Args:
+        header: 自定义页头（如「📚 今日开课（N 位老师）」）；None 时用默认
+            「🔎 找到 {total_count} 位相关老师」。多页时统一追加「（第 x/y 页）」。
+
     Returns:
         list[str]：至少 1 页；caller 用 ParseMode.HTML + disable_web_page_preview=True
         逐页 send_message。当列表为空时返回 []（caller 应跳过发送）。
@@ -330,19 +335,17 @@ def render_group_search_result_pages(
         return []
     per_page = max(1, int(per_page))
     total_pages = (len(teachers) + per_page - 1) // per_page
+    base_header = header if header is not None else f"🔎 找到 {total_count} 位相关老师"
     pages: list[str] = []
     for page_no in range(total_pages):
         start = page_no * per_page
         end = start + per_page
         chunk = teachers[start:end]
         if total_pages == 1:
-            header = f"🔎 找到 {total_count} 位相关老师"
+            page_header = base_header
         else:
-            header = (
-                f"🔎 找到 {total_count} 位相关老师"
-                f"（第 {page_no + 1}/{total_pages} 页）"
-            )
-        lines = [header, ""]
+            page_header = f"{base_header}（第 {page_no + 1}/{total_pages} 页）"
+        lines = [page_header, ""]
         for offset, t in enumerate(chunk):
             idx = start + offset + 1
             lines.append(_render_one_teacher_html(idx, t))

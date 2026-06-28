@@ -24,6 +24,7 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     count_teacher_favoriters,
+    get_checked_in_teachers,
     get_config,
     get_teacher_by_name,
     is_checked_in,
@@ -337,6 +338,88 @@ async def _get_quick_entry_config(keyword: str) -> Optional[dict]:
     return None
 
 
+def _is_today_entry(cfg: Optional[dict]) -> bool:
+    """该快捷词是否为「今日开课」类型。
+
+    稳定语义信号 = buttons 里任一项的 deep-link target 为 "today"
+    （trigger 文本会被管理员改名，target 不会）。
+    """
+    if not cfg:
+        return False
+    for b in (cfg.get("buttons") or []):
+        try:
+            if b[1] == "today":
+                return True
+        except (IndexError, TypeError, KeyError):
+            continue
+    return False
+
+
+async def _send_today_open_teachers(
+    message: types.Message,
+    bot_username: str,
+) -> bool:
+    """「今日开课」专属渲染：今日已签到老师的超链接列表 + 打开小程序按钮。
+
+    超链接规则与组合搜索关键词逐字一致（复用 render_group_search_result_pages）。
+    无人签到时回「暂无老师开课」+ 同款打开小程序按钮。
+    """
+    today = _today_str()
+    try:
+        teachers = await get_checked_in_teachers(today)
+    except Exception as e:
+        logger.warning("get_checked_in_teachers 失败: %s", e)
+        return False
+
+    miniapp_btn = InlineKeyboardButton(
+        text="📲 打开小程序看今日开课",
+        url=f"https://t.me/{bot_username}?startapp=today",
+    )
+    miniapp_kb = InlineKeyboardMarkup(inline_keyboard=[[miniapp_btn]])
+
+    # 无人签到：友好空态 + 入口按钮
+    if not teachers:
+        try:
+            await message.reply(
+                "📚 今日暂无老师开课\n\n点下方按钮去小程序随时查看 👇",
+                reply_markup=miniapp_kb,
+                disable_web_page_preview=True,
+            )
+            return True
+        except Exception as e:
+            logger.warning("发送今日开课(空)失败: %s", e)
+            return False
+
+    # 补 signed_in/fav_count + 排序（与组合搜索同源），渲染完整超链接列表
+    enriched = await _enrich_with_today_status(teachers, today)
+    enriched = sort_group_search_results(enriched, today)
+    pages = render_group_search_result_pages(
+        enriched,
+        total_count=len(enriched),
+        per_page=25,
+        header=f"📚 今日开课（{len(enriched)} 位老师）",
+    )
+    total_pages = len(pages)
+
+    for idx, page_text in enumerate(pages):
+        # 仅最后一页附「打开小程序」按钮（同组合搜索旧规则，避免每页重复）
+        page_kb = miniapp_kb if idx == total_pages - 1 else None
+        try:
+            await message.reply(
+                page_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=page_kb,
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.warning(
+                "发送今日开课列表失败 page=%s/%s: %s", idx + 1, total_pages, e,
+            )
+            return False
+
+    return True
+
+
 async def _send_quick_entry(
     message: types.Message,
     keyword: str,
@@ -357,17 +440,24 @@ async def _send_quick_entry(
     if not bot_username:
         return False
 
-    body = f"{cfg['banner']}\n\n{cfg['body']}"
-    kb = _build_deep_link_buttons(bot_username, cfg["buttons"], per_row=2)
-
-    try:
-        await message.reply(
-            body,
-            reply_markup=kb,
-            disable_web_page_preview=True,
-        )
-    except Exception as e:
-        logger.warning("发送群内快捷入口失败: %s", e)
+    # 「今日开课」类型：走专属渲染（实时老师超链接列表 + 打开小程序按钮），
+    # 忽略 banner/body/旧死按钮；其余快捷词走原 banner 逻辑。
+    if _is_today_entry(cfg):
+        ok = await _send_today_open_teachers(message, bot_username)
+    else:
+        body = f"{cfg['banner']}\n\n{cfg['body']}"
+        kb = _build_deep_link_buttons(bot_username, cfg["buttons"], per_row=2)
+        try:
+            await message.reply(
+                body,
+                reply_markup=kb,
+                disable_web_page_preview=True,
+            )
+            ok = True
+        except Exception as e:
+            logger.warning("发送群内快捷入口失败: %s", e)
+            ok = False
+    if not ok:
         return False
 
     # 命中计数（仅 DB 行有 id；fallback 路径无 id 不累计）
