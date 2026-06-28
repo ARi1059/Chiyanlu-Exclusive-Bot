@@ -258,11 +258,13 @@ def test_checkin_no_token_401():
 
 
 def test_checkin_inactive_teacher_ok_false(monkeypatch):
-    """停用老师 → ok:false（不抛错）。"""
-    async def fake_teacher(uid):
-        return {"user_id": uid, "is_active": 0, "display_name": "T"}
+    """停用老师 → ok:false（端点把 service 的 inactive 映射成 ok:false）。"""
+    from bot.services.teacher_checkin import CheckinResult
 
-    monkeypatch.setattr(prof_mod, "get_teacher", fake_teacher)
+    async def fake_perform(uid):
+        return CheckinResult("inactive", teacher={"user_id": uid})
+
+    monkeypatch.setattr(prof_mod, "perform_checkin", fake_perform)
 
     async def _t():
         async with TestClient(TestServer(create_web_app(bot=None))) as c:
@@ -275,15 +277,13 @@ def test_checkin_inactive_teacher_ok_false(monkeypatch):
 
 
 def test_checkin_closed_window_ok_false(monkeypatch):
-    """已过 publish_time → ok:false（截止）。publish_time 设 00:00 必然已过。"""
-    async def fake_teacher(uid):
-        return {"user_id": uid, "is_active": 1, "display_name": "T"}
+    """已过 publish_time → ok:false（截止），error 含「截止」。"""
+    from bot.services.teacher_checkin import CheckinResult
 
-    async def fake_get_config(key):
-        return "00:00" if key == "publish_time" else None
+    async def fake_perform(uid):
+        return CheckinResult("closed", teacher={"user_id": uid}, deadline="00:00")
 
-    monkeypatch.setattr(prof_mod, "get_teacher", fake_teacher)
-    monkeypatch.setattr(prof_mod, "get_config", fake_get_config)
+    monkeypatch.setattr(prof_mod, "perform_checkin", fake_perform)
 
     async def _t():
         async with TestClient(TestServer(create_web_app(bot=None))) as c:
@@ -297,26 +297,13 @@ def test_checkin_closed_window_ok_false(monkeypatch):
 
 
 def test_checkin_success(monkeypatch):
-    """窗口内 + 未签 → checkin_teacher 调用，ok:true already:false。"""
-    async def fake_teacher(uid):
-        return {"user_id": uid, "is_active": 1, "display_name": "T"}
+    """service 返回 success → ok:true already:false。"""
+    from bot.services.teacher_checkin import CheckinResult
 
-    async def fake_get_config(key):
-        return "23:59" if key == "publish_time" else None  # 几乎不会截止
+    async def fake_perform(uid):
+        return CheckinResult("success", teacher={"user_id": uid}, today_str="2026-06-28", now_hm="10:00")
 
-    async def fake_is_checked_in(uid, day):
-        return False
-
-    called = {}
-
-    async def fake_checkin(uid, day):
-        called["uid"] = uid
-        return True
-
-    monkeypatch.setattr(prof_mod, "get_teacher", fake_teacher)
-    monkeypatch.setattr(prof_mod, "get_config", fake_get_config)
-    monkeypatch.setattr(prof_mod, "is_checked_in", fake_is_checked_in)
-    monkeypatch.setattr(prof_mod, "checkin_teacher", fake_checkin)
+    monkeypatch.setattr(prof_mod, "perform_checkin", fake_perform)
 
     async def _t():
         async with TestClient(TestServer(create_web_app(bot=None))) as c:
@@ -325,29 +312,18 @@ def test_checkin_success(monkeypatch):
             d = await r.json()
             assert d["ok"] is True
             assert d["already"] is False
-            assert called["uid"] == 777
 
     _run(_t())
 
 
 def test_checkin_idempotent_already(monkeypatch):
-    """已签到 → ok:true already:true，不再调 checkin_teacher。"""
-    async def fake_teacher(uid):
-        return {"user_id": uid, "is_active": 1, "display_name": "T"}
+    """service 返回 already → ok:true already:true。"""
+    from bot.services.teacher_checkin import CheckinResult
 
-    async def fake_get_config(key):
-        return "23:59" if key == "publish_time" else None
+    async def fake_perform(uid):
+        return CheckinResult("already", teacher={"user_id": uid})
 
-    async def fake_is_checked_in(uid, day):
-        return True
-
-    async def boom(uid, day):
-        raise AssertionError("已签到不应再调 checkin_teacher")
-
-    monkeypatch.setattr(prof_mod, "get_teacher", fake_teacher)
-    monkeypatch.setattr(prof_mod, "get_config", fake_get_config)
-    monkeypatch.setattr(prof_mod, "is_checked_in", fake_is_checked_in)
-    monkeypatch.setattr(prof_mod, "checkin_teacher", boom)
+    monkeypatch.setattr(prof_mod, "perform_checkin", fake_perform)
 
     async def _t():
         async with TestClient(TestServer(create_web_app(bot=None))) as c:

@@ -1,66 +1,40 @@
-from datetime import datetime
-
 from aiogram import Router, types, F
 from aiogram.filters import StateFilter
-from pytz import timezone
 
-from bot.config import config
-from bot.database import get_teacher, is_checked_in, checkin_teacher, get_config
+from bot.services.teacher_checkin import perform_checkin
 
 router = Router(name="teacher_checkin")
-
-# 北京时间时区
-tz = timezone(config.timezone)
 
 
 # StateFilter(None) 保证只在用户不在任何 FSM 状态时触发，避免误劫持搜索 /
 # 评价 / 资料录入等流程中输入的文字（2026-05-18 P0 修复）。
 @router.message(StateFilter(None), F.text == "签到")
 async def on_checkin(message: types.Message):
-    """老师私聊签到"""
+    """老师私聊签到（文字「签到」）。业务逻辑委托 services.teacher_checkin。"""
     # 仅处理私聊消息
     if message.chat.type != "private":
         return
 
-    user_id = message.from_user.id
+    result = await perform_checkin(message.from_user.id)
+    status = result.status
 
-    # 验证是否为已录入老师
-    teacher = await get_teacher(user_id)
-    if not teacher:
+    if status == "not_teacher":
         await message.reply("您未被授权使用此功能")
-        return
-
-    if not teacher["is_active"]:
+    elif status == "inactive":
         await message.reply("您的账号已被停用，请联系管理员")
-        return
-
-    # 获取当前北京时间
-    now = datetime.now(tz)
-    today_str = now.strftime("%Y-%m-%d")
-
-    # 检查签到时间窗口：00:00 - 发布时间
-    publish_time = await get_config("publish_time") or config.publish_time
-    hour, minute = map(int, publish_time.split(":"))
-    if now.hour > hour or (now.hour == hour and now.minute >= minute):
+    elif status == "closed":
         await message.reply(
-            f"⏰ 今日签到已截止（截止时间 {publish_time}）\n"
+            f"⏰ 今日签到已截止（截止时间 {result.deadline}）\n"
             "请明天再来签到"
         )
-        return
-
-    # 检查是否已签到
-    if await is_checked_in(user_id, today_str):
+    elif status == "already":
         await message.reply("✅ 今日已签到，无需重复操作")
-        return
-
-    # 执行签到
-    success = await checkin_teacher(user_id, today_str)
-    if success:
+    elif status == "success":
         await message.reply(
             f"✅ 签到成功！\n\n"
-            f"👤 {teacher['display_name']}\n"
-            f"📅 {today_str}\n"
-            f"⏰ {now.strftime('%H:%M')}"
+            f"👤 {result.teacher['display_name']}\n"
+            f"📅 {result.today_str}\n"
+            f"⏰ {result.now_hm}"
         )
-    else:
+    else:  # failed
         await message.reply("⚠️ 签到失败，请稍后重试")

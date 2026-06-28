@@ -18,20 +18,12 @@
 
 import json
 import logging
-from datetime import datetime
 
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from pytz import timezone
 
-from bot.config import config
-from bot.database import (
-    checkin_teacher,
-    get_config,
-    get_teacher,
-    is_checked_in,
-)
+from bot.database import get_teacher
 from bot.keyboards.teacher_self_kb import (
     FIELD_LABELS,
     teacher_back_to_profile_kb,
@@ -39,14 +31,13 @@ from bot.keyboards.teacher_self_kb import (
     teacher_main_menu_kb,
     teacher_profile_kb,
 )
+from bot.services.teacher_checkin import perform_checkin
 from bot.services.teacher_self_edit import EDITABLE_FIELDS, submit_field_edit
 from bot.states.teacher_self_states import TeacherEditStates
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="teacher_self")
-
-tz = timezone(config.timezone)
 
 
 # ========================================================
@@ -278,55 +269,46 @@ async def on_edit_value(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "teacher_self:checkin")
 async def cb_button_checkin(callback: types.CallbackQuery, state: FSMContext):
-    """按钮触发签到（行为同 v1 teacher_checkin.on_checkin）"""
+    """按钮触发签到（业务逻辑委托 services.teacher_checkin，与文字「签到」同源）。"""
     if not _is_teacher_chat(callback):
         await callback.answer()
         return
     await state.clear()
-    user_id = callback.from_user.id
 
-    teacher = await get_teacher(user_id)
-    if not teacher:
+    result = await perform_checkin(callback.from_user.id)
+    status = result.status
+
+    if status == "not_teacher":
         await callback.answer("⚠️ 你不在老师名单内", show_alert=True)
         return
-    if not teacher["is_active"]:
+    if status == "inactive":
         await callback.answer("⚠️ 你的账号已被停用", show_alert=True)
         return
-
-    now = datetime.now(tz)
-    today_str = now.strftime("%Y-%m-%d")
-
-    # 签到截止时间窗口（同 v1）
-    publish_time = await get_config("publish_time") or config.publish_time
-    hour, minute = map(int, publish_time.split(":"))
-    if now.hour > hour or (now.hour == hour and now.minute >= minute):
+    if status == "closed":
         await callback.answer(
-            f"⏰ 今日签到已截止（{publish_time}）\n请明天再来",
+            f"⏰ 今日签到已截止（{result.deadline}）\n请明天再来",
             show_alert=True,
         )
         return
-
-    if await is_checked_in(user_id, today_str):
+    if status == "already":
         await callback.answer("✅ 今日已签到，无需重复操作", show_alert=True)
         return
-
-    ok = await checkin_teacher(user_id, today_str)
-    if not ok:
+    if status == "failed":
         await callback.answer("⚠️ 签到失败，请稍后重试", show_alert=True)
         return
 
-    # UX-5.1：签到成功后立即把当前菜单的"✅ 今日签到"刷新为"✅ 今日已签到"
+    # success：UX-5.1 立即把当前菜单的"✅ 今日签到"刷新为"✅ 今日已签到"
     try:
         await callback.message.edit_reply_markup(
             reply_markup=teacher_main_menu_kb(checked_in=True),
         )
     except Exception as e:
         logger.info(
-            "[UX-5.1] 签到成功后菜单刷新失败 user=%s: %s", user_id, e,
+            "[UX-5.1] 签到成功后菜单刷新失败 user=%s: %s", callback.from_user.id, e,
         )
 
     await callback.answer(
-        f"✅ 签到成功 - {today_str} {now.strftime('%H:%M')}",
+        f"✅ 签到成功 - {result.today_str} {result.now_hm}",
         show_alert=True,
     )
 

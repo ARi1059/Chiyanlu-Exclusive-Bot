@@ -18,7 +18,6 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     _today_str_local,
-    checkin_teacher,
     count_user_reviews,
     get_config,
     get_teacher,
@@ -35,6 +34,7 @@ from bot.database import (
 )
 from bot.web.keys import APP_BOT, get_bot_username
 from bot.web.roles import ROLE_TEACHER
+from bot.services.teacher_checkin import perform_checkin
 from bot.services.teacher_self_edit import (
     EDITABLE_FIELDS,
     FIELD_LABELS,
@@ -92,45 +92,31 @@ async def get_profile(request: web.Request) -> web.Response:
 
 
 async def post_checkin(request: web.Request) -> web.Response:
-    """老师自助签到。校验链对齐 teacher_checkin handler：
-    角色=teacher → is_active → 时间窗口(publish_time 截止) → 幂等(已签)。"""
+    """老师自助签到（业务逻辑委托 services.teacher_checkin，与 bot 同源）。
+    role 校验留在端点（web 鉴权关注点）；其余校验链在 service。"""
     session = request["session"]
     uid = session["uid"]
 
     if session["role"] != ROLE_TEACHER:
         raise web.HTTPForbidden(reason="teacher only")
-    teacher = await get_teacher(uid)
-    if not teacher:
-        raise web.HTTPForbidden(reason="not a registered teacher")
-    if not teacher.get("is_active"):
-        return web.json_response({"ok": False, "error": "账号已停用，请联系管理员"})
 
-    # 时间窗口：现在 ≥ publish_time → 截止
-    from datetime import datetime
-    try:
-        from pytz import timezone
-        now = datetime.now(timezone(config.timezone))
-    except Exception:
-        now = datetime.now()
-    publish_time = await get_config("publish_time") or config.publish_time
-    try:
-        hour, minute = map(int, str(publish_time).split(":"))
-    except (ValueError, AttributeError):
-        hour, minute = 14, 0
-    if now.hour > hour or (now.hour == hour and now.minute >= minute):
+    result = await perform_checkin(uid)
+    status = result.status
+
+    if status == "not_teacher":
+        raise web.HTTPForbidden(reason="not a registered teacher")
+    if status == "inactive":
+        return web.json_response({"ok": False, "error": "账号已停用，请联系管理员"})
+    if status == "closed":
         return web.json_response({
             "ok": False,
-            "error": f"今日签到已截止（截止 {publish_time}），请明天再来",
+            "error": f"今日签到已截止（截止 {result.deadline}），请明天再来",
         })
-
-    today = _today_str_local()
-    if await is_checked_in(uid, today):
+    if status == "already":
         return web.json_response({"ok": True, "checked_in": True, "already": True})
-
-    success = await checkin_teacher(uid, today)
-    if not success:
-        return web.json_response({"ok": False, "error": "签到失败，请稍后重试"})
-    return web.json_response({"ok": True, "checked_in": True, "already": False})
+    if status == "success":
+        return web.json_response({"ok": True, "checked_in": True, "already": False})
+    return web.json_response({"ok": False, "error": "签到失败，请稍后重试"})  # failed
 
 
 async def get_teacher_home(request: web.Request) -> web.Response:
