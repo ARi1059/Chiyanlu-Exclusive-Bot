@@ -63,17 +63,17 @@ def test_kb_contains_all_5_reimburse_callbacks():
         assert expected in cbs, f"missing callback: {expected}"
 
 
-def test_kb_has_return_to_settings():
-    """末行返回按钮指向 admin:settings（二级父页），不是 menu:main。"""
+def test_kb_has_return_to_operations():
+    """末行返回按钮指向 admin:operations（2026-06 报销配置移至「财务运营」），不是 menu:main。"""
     from bot.keyboards.admin_kb import admin_reimburse_config_kb
     kb = admin_reimburse_config_kb()
     last_row_cbs = [b.callback_data for b in kb.inline_keyboard[-1]]
-    assert "admin:settings" in last_row_cbs
+    assert "admin:operations" in last_row_cbs
     assert "menu:main" not in last_row_cbs
 
 
 def test_kb_reuses_existing_callbacks_only():
-    """所有 callback 全部复用既有 system:reimburse_* / admin:settings；
+    """所有 callback 全部复用既有 system:reimburse_* / admin:operations；
     Sprint 3 §5.2.1 新增 admin:reimburse_rules（只读规则页）也属于报销命名空间。
 
     防御性：不允许出现其它命名空间的新 callback。"""
@@ -83,7 +83,7 @@ def test_kb_reuses_existing_callbacks_only():
     allowed_prefixes = ("system:reimburse_", "admin:reimburse_rules")
     for cb in cbs:
         assert (
-            cb == "admin:settings"
+            cb == "admin:operations"
             or any(cb.startswith(p) for p in allowed_prefixes)
         ), f"unexpected callback {cb}"
 
@@ -117,39 +117,31 @@ def test_kb_first_button_is_readonly_rules_view():
 # ============================================================
 
 
-def test_admin_settings_kb_super_has_aggregate_entry():
-    """super 视角下 admin_settings_kb 含 [admin:reimburse_config] 入口。"""
-    from bot.keyboards.admin_kb import admin_settings_kb
-    kb = admin_settings_kb(is_super=True)
-    cbs = [b.callback_data for b in _flat_buttons(kb)]
-    assert "admin:reimburse_config" in cbs
+def test_reimburse_config_entry_now_under_operations():
+    """2026-06：报销配置入口已从「系统配置」移至「财务运营(admin:operations)」与积分归一。"""
+    from bot.keyboards.admin_kb import admin_operations_kb, admin_settings_kb
+    op_cbs = [b.callback_data for b in _flat_buttons(admin_operations_kb())]
+    set_cbs = [b.callback_data for b in _flat_buttons(admin_settings_kb(is_super=True))]
+    assert "admin:reimburse_config" in op_cbs       # 新家：财务运营
+    assert "admin:reimburse_config" not in set_cbs  # 旧家：系统配置已移除
 
 
 def test_admin_settings_kb_non_super_no_aggregate_entry():
-    """普通管理员视角下 admin_settings_kb 不应含报销聚合入口（与原 super-only 一致）。"""
+    """普通管理员视角下 admin_settings_kb 不含报销聚合入口（与超管一致：均已移走）。"""
     from bot.keyboards.admin_kb import admin_settings_kb
-    kb = admin_settings_kb(is_super=False)
-    cbs = [b.callback_data for b in _flat_buttons(kb)]
+    cbs = [b.callback_data for b in _flat_buttons(admin_settings_kb(is_super=False))]
     assert "admin:reimburse_config" not in cbs
     # 旧 super-only 报销按钮也不应出现
     assert "system:reimburse_pool" not in cbs
     assert "system:reimburse_toggle" not in cbs
 
 
-def test_admin_settings_kb_super_no_longer_has_overlapping_reimburse_entries():
-    """2026-05 修订：admin_settings_kb 顶部原本含 system:reimburse_pool /
-    system:reimburse_toggle 两并列入口，与 admin:reimburse_config 聚合页
-    入口重叠。本批已删除两个直入口；callback handler 仍保留兼容旧
-    inline button（在历史会话中点旧按钮仍可工作）。
-
-    历史 PLAN §1.2「不破坏旧入口」+ §11.3「旧入口保留双跑期」契约由
-    callback handler 自身的存在性满足，UI 入口的去重并不违反这一契约。"""
+def test_admin_settings_kb_no_longer_has_any_reimburse_entries():
+    """2026-06：系统配置不再含任何报销入口（聚合页 + 旧直入口都不在）。"""
     from bot.keyboards.admin_kb import admin_settings_kb
-    kb = admin_settings_kb(is_super=True)
-    cbs = [b.callback_data for b in _flat_buttons(kb)]
-    # 聚合入口必在
-    assert "admin:reimburse_config" in cbs
-    # 两个直入口应已被撤除
+    cbs = [b.callback_data for b in _flat_buttons(admin_settings_kb(is_super=True))]
+    assert "admin:reimburse_config" not in cbs
+    # 两个旧直入口也不应出现
     assert "system:reimburse_pool" not in cbs
     assert "system:reimburse_toggle" not in cbs
 

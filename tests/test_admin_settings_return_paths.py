@@ -175,18 +175,14 @@ def test_admin_settings_kb_keeps_all_base_entries_and_menu_main():
 
 
 def test_admin_settings_kb_super_only_entries_unchanged():
-    """admin_settings_kb 超管专属入口：聚合报销配置入口。
-
-    2026-05 修订：原 system:reimburse_pool / system:reimburse_toggle 两个
-    并列入口已删除（与 admin:reimburse_config 聚合页重叠）。callback handler
-    保留兼容历史 inline button。"""
+    """2026-06：报销配置已移至「财务运营(admin:operations)」，系统配置 super 与 non-super
+    视图一致——均不含报销配置入口，也不含旧并列报销直入口。"""
     from bot.keyboards.admin_kb import admin_settings_kb
     super_cbs = set(_all_callbacks(admin_settings_kb(is_super=True)))
     normal_cbs = set(_all_callbacks(admin_settings_kb(is_super=False)))
-    # 仅聚合入口可见
-    assert "admin:reimburse_config" in super_cbs
+    assert "admin:reimburse_config" not in super_cbs
     assert "admin:reimburse_config" not in normal_cbs
-    # 旧并列入口已撤除，两种角色下都不应出现
+    # 旧并列入口两种角色下都不应出现
     assert "system:reimburse_pool" not in super_cbs
     assert "system:reimburse_toggle" not in super_cbs
     assert "system:reimburse_pool" not in normal_cbs

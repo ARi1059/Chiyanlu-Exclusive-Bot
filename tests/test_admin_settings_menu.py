@@ -76,17 +76,11 @@ def test_settings_kb_contains_base_entries():
 
 
 def test_settings_kb_contains_super_only_entries():
-    """超管专属：报销配置聚合入口。
-
-    2026-05 修订：原本 admin_settings_kb 同时含 system:reimburse_pool +
-    system:reimburse_toggle 两个直入口，与 admin:reimburse_config 聚合页
-    重叠，造成认知混乱。已删除两直入口，仅保留聚合入口；callback handler
-    仍保留兼容旧 inline button。
-    """
+    """2026-06：报销配置已移至「财务运营(admin:operations)」，系统配置不再含报销配置，
+    super 与 non-super 视图一致。"""
     from bot.keyboards.admin_kb import admin_settings_kb
-    kb = admin_settings_kb(is_super=True)
-    callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
-    assert "admin:reimburse_config" in callbacks
+    callbacks = {b.callback_data for row in admin_settings_kb(is_super=True).inline_keyboard for b in row}
+    assert "admin:reimburse_config" not in callbacks
 
 
 def test_settings_kb_no_overlapping_reimburse_buttons():
@@ -122,11 +116,9 @@ def test_settings_kb_back_button_is_menu_main():
 
 
 def test_settings_kb_row_counts():
-    """超管：6 base + 1 reimburse_config + 1 back = 8 行；
-    非超管：6 base + 1 back = 7 行。
-    2026-05 修订：删除两个直入口（报销池 / 报销功能开关），故超管行数 9 → 8。"""
+    """2026-06：6 项配置 + 1 返回 = 7 行；super 与 non-super 一致（报销配置已移至财务运营）。"""
     from bot.keyboards.admin_kb import admin_settings_kb
-    assert len(admin_settings_kb(is_super=True).inline_keyboard) == 8
+    assert len(admin_settings_kb(is_super=True).inline_keyboard) == 7
     assert len(admin_settings_kb(is_super=False).inline_keyboard) == 7
 
 
@@ -142,8 +134,8 @@ def test_settings_kb_button_texts_match_labels():
     assert "频道" in by_callback["menu:channel"]
     assert "日报" in by_callback["admin:report_settings"] or \
            "周报" in by_callback["admin:report_settings"]
-    assert "系统设置" in by_callback["menu:system"]
-    assert "报销配置" in by_callback["admin:reimburse_config"]
+    assert "签到与发布设置" in by_callback["menu:system"]
+    # 2026-06：报销配置已移至「财务运营」，本面板不再断言其文案
 
 
 # ============ 不含已下线 / 不存在 / 错误归属的入口 ============

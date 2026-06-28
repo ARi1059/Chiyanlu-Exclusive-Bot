@@ -23,79 +23,71 @@ def main_menu_kb(
     queued_reimburse_count: int = 0,
     is_super: bool = False,
 ) -> InlineKeyboardMarkup:
-    """管理员主菜单面板
+    """管理员主菜单面板（2026-06 重排：去重 + 闭环）。
+
+    布局（审核置顶=日常核心，带综合待办角标）：
+        [🚀 打开小程序]
+        [✅ 审核处理 (N)]
+        [👩‍🏫 老师管理]   [📊 数据看板]
+        [⚙️ 系统配置]     [💰 财务运营]（超管）
+        [🛡 管理员设置]（超管）
+
+    2026-06 重排要点：
+        - 合并原「📈 数据分析(dashboard:enter)」+「📊 运营看板(admin:dashboard)」
+          为单一「📊 数据看板」入口（dashboard:enter 降为其子视图）。
+        - 「🎲 活动运营」改名「💰 财务运营」(admin:operations)，并入「报销配置」。
+        - callback 命名空间一律不变；handler 不动。
 
     Args:
-        pending_count: 老师改资料待审核数量（review:enter 内容）
-        pending_review_count: 用户评价待审核数量（rreview:enter 内容；仅超管）
-        pending_reimburse_count: 待审核报销数量（reimburse:enter 内容；仅超管）
-        queued_reimburse_count: queued 报销名单数量（reimburse:queued:0 内容；仅超管）
+        pending_count: 老师改资料待审核数量
+        pending_review_count: 用户评价待审核数量（仅超管计入角标）
+        pending_reimburse_count: 待审核报销数量（仅超管计入角标）
+        queued_reimburse_count: queued 报销名单数量（保留入参，角标不计）
         is_super: 是否超管
-
-    审核相关四个 callback（review:enter / rreview:enter / reimburse:enter /
-    reimburse:queued:0）已统一收纳进 admin:review_tasks 二级页；本主菜单不
-    再直接含这四个 callback。
     """
-    # ✅ 审核处理 综合 badge：非超管只算 pending_count；超管再加 review + reimburse pending
     review_total = pending_count
     if is_super:
         review_total += pending_review_count + pending_reimburse_count
     review_tasks_label = (
         f"✅ 审核处理 ({review_total})" if review_total > 0 else "✅ 审核处理"
     )
-    # Row 1：老师管理 + (仅超管) 管理员设置；非超管 Row 1 只有 老师管理 单按钮
-    row1: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="admin:teachers"),
-    ]
-    if is_super:
-        # menu:admin（@super_admin_required）已收纳进二级页 admin:admin_settings；
-        # 同时把 dashboard:audit 也收入该页（审计日志）
-        row1.append(
-            InlineKeyboardButton(text="🛡 管理员设置", callback_data="admin:admin_settings"),
-        )
     rows: list[list[InlineKeyboardButton]] = [
         miniapp_entry_row(),  # 🚀 打开小程序（§16.3：管理台也走 MiniApp，FSM 保留兜底）
-        row1,
+        # 审核处理置顶（日常核心）
+        [InlineKeyboardButton(text=review_tasks_label, callback_data="admin:review_tasks")],
+        # 老师管理 + 数据看板（合并原 数据分析 + 运营看板）
         [
-            # 📈 数据分析：旧 Phase 1 看板，user_events + 审计 + 7 日窗口分析
-            InlineKeyboardButton(text="📈 数据分析", callback_data="dashboard:enter"),
-            InlineKeyboardButton(text=review_tasks_label, callback_data="admin:review_tasks"),
+            InlineKeyboardButton(text="👩‍🏫 老师管理", callback_data="admin:teachers"),
+            InlineKeyboardButton(text="📊 数据看板",   callback_data="admin:dashboard"),
         ],
     ]
+    # 系统配置 + (超管) 财务运营
+    config_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="⚙️ 系统配置", callback_data="admin:settings"),
+    ]
     if is_super:
-        # 积分管理 / 抽奖管理 已收纳进二级页 admin:operations；这里仅保留入口
+        config_row.append(
+            InlineKeyboardButton(text="💰 财务运营", callback_data="admin:operations"),
+        )
+    rows.append(config_row)
+    # 管理员设置（仅超管）
+    if is_super:
         rows.append([
-            InlineKeyboardButton(text="🎲 活动运营", callback_data="admin:operations"),
+            InlineKeyboardButton(text="🛡 管理员设置", callback_data="admin:admin_settings"),
         ])
-    rows.extend([
-        # 热门推荐 / 今日状态 / 用户画像 已收纳进二级页 admin:teachers
-        # 频道设置 / 系统设置 / 发布模板 / 报表设置 已收纳进二级页 admin:settings
-        # 📊 运营看板：admin:dashboard 二级页，含运营总览 / 报销池状态 / 抽奖状态
-        [
-            InlineKeyboardButton(text="📊 运营看板", callback_data="admin:dashboard"),
-            InlineKeyboardButton(text="⚙️ 系统配置", callback_data="admin:settings"),
-        ],
-    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_admin_settings_kb() -> InlineKeyboardMarkup:
-    """二级「🛡 管理员设置」面板：超管专用，聚合管理员权限相关入口 + 返回后台
+    """二级「🛡 管理员设置」面板：超管专用，管理员权限管理 + 返回后台。
 
     入口：
-        - menu:admin       👥 管理员管理（既有子菜单，含 添加 / 移除 / 列表）
-                           @super_admin_required
-        - dashboard:audit  📜 审计日志（既有，admin_audit_logs 最近 20 条）
-                           @admin_required（super 当然也是 admin，能正常访问）
+        - menu:admin       👥 管理员管理（添加 / 移除 / 列表）@super_admin_required
 
-    本 keyboard 仅在 cb_admin_admin_settings（@super_admin_required）中被渲染，
-    所以普通管理员既看不到入口，也不会通过 callback 路径进入。
-
-    callback 含义全部保持不变；handler 仍由原模块处理。
+    2026-06：移除「📜 审计日志(dashboard:audit)」——已并入「📊 数据看板」作唯一入口。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 管理员管理", callback_data="menu:admin")],
-        [InlineKeyboardButton(text="📜 审计日志",  callback_data="dashboard:audit")],
         [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
     ])
 
@@ -118,40 +110,29 @@ def admin_teachers_kb() -> InlineKeyboardMarkup:
 
 
 def admin_settings_kb(is_super: bool = False) -> InlineKeyboardMarkup:
-    """二级「⚙️ 系统配置」面板：聚合配置类入口 + 返回后台
+    """二级「⚙️ 系统配置」面板（2026-06 重排）。
 
     入口（按 admin_required 权限可见）：
-        - admin:subreq             📢 必关订阅（handler 在 subreq_admin.py）
-        - admin:publish_templates  🧩 发布模板（handler 在 publish_templates.py）
-        - menu:channel             📣 频道 / 群组设置（handler 在 admin_panel.py）
-        - admin:report_settings    📅 日报 / 周报设置（handler 在 report_settings.py）
-        - menu:system              ⚙️ 系统设置（含发布时间 / 冷却 / 提醒 / 品牌等深层项）
+        - menu:channel             📣 频道 / 群组设置
+        - menu:system              ⏰ 签到与发布设置（原「系统设置」改名，消同义混淆）
+        - admin:subreq             📢 必关订阅（**唯一入口**，已从签到与发布设置去重）
+        - admin:publish_templates  🧩 发布模板
+        - admin:keywords           🗝 关键词管理
+        - admin:report_settings    📅 日报 / 周报设置
 
-    超管专属：
-        - admin:reimburse_config   💰 报销配置（聚合页，含报销池 / 开关 / 门槛 / 必关 / 池重置）
-
-    callback 含义未做任何变更，handler 仍由原模块处理；本 keyboard 仅是
-    聚合视图组合。UX-9.1：群组快捷词配置入口 admin:keywords（handler 在
-    admin_keyword.py），消息匹配触发仍由 keyword.py 处理。
-
-    2026-05 修订：删除 admin_settings_kb 顶部对 system:reimburse_pool /
-    system:reimburse_toggle 的并列直入口（与「💰 报销配置」聚合页的入口
-    重叠造成认知混乱）。两个 callback handler 仍保留，旧 inline button 兼容。
+    2026-06：「💰 报销配置」已移至「💰 财务运营(admin:operations)」与积分归一，
+    本面板不再含报销配置入口（admin:reimburse_config handler 不变）。is_super 入参
+    保留以兼容 handler 调用。
     """
     rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="📣 频道 / 群组设置", callback_data="menu:channel")],
+        [InlineKeyboardButton(text="⏰ 签到与发布设置",  callback_data="menu:system")],
         [InlineKeyboardButton(text="📢 必关订阅",        callback_data="admin:subreq")],
         [InlineKeyboardButton(text="🧩 发布模板",        callback_data="admin:publish_templates")],
         [InlineKeyboardButton(text="🗝 关键词管理",      callback_data="admin:keywords")],
-        [InlineKeyboardButton(text="📣 频道 / 群组设置", callback_data="menu:channel")],
         [InlineKeyboardButton(text="📅 日报 / 周报设置", callback_data="admin:report_settings")],
-        [InlineKeyboardButton(text="⚙️ 系统设置",        callback_data="menu:system")],
+        [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
     ]
-    if is_super:
-        # UX-6.2 + 2026-05 收口：仅保留聚合入口，去除旧两按钮重叠
-        rows.append([
-            InlineKeyboardButton(text="💰 报销配置（聚合 6 项）", callback_data="admin:reimburse_config"),
-        ])
-    rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -176,7 +157,7 @@ def admin_reimburse_config_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎚 报销门槛设置", callback_data="system:reimburse_min_points")],
         [InlineKeyboardButton(text="🗓 每周报销上限", callback_data="system:reimburse_weekly_limit")],
         [InlineKeyboardButton(text="📋 报销必关设置", callback_data="system:reimburse_subreq")],
-        [InlineKeyboardButton(text="⬅️ 返回系统配置", callback_data="admin:settings")],
+        [InlineKeyboardButton(text="⬅️ 返回财务运营", callback_data="admin:operations")],
     ])
 
 
@@ -207,14 +188,16 @@ def admin_reimburse_rules_kb() -> InlineKeyboardMarkup:
 
 
 def admin_operations_kb() -> InlineKeyboardMarkup:
-    """二级「💰 活动运营」面板（Phase A0 后 2026-05-23）
+    """二级「💰 财务运营」面板（2026-06 改名「活动运营」→「财务运营」，钱相关归一）。
 
-    Phase A0：移除「🎲 抽奖管理」入口（抽奖功能整体下线）。
-    入口对应：
-        - admin:points    积分管理（仅超管，handler 在 admin_points.py）
+    入口（均超管，admin:operations 在主菜单仅对超管渲染）：
+        - admin:points            💰 积分管理
+        - admin:reimburse_config  💵 报销配置（从「系统配置」移来；含开关/池/门槛/每周上限/必关）
+    注：报销审核(reimburse:enter)仍在「审核处理」；报销池状态在「数据看板」——审核/状态/配置分层。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 积分管理", callback_data="admin:points")],
+        [InlineKeyboardButton(text="💵 报销配置", callback_data="admin:reimburse_config")],
         [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
     ])
 
@@ -310,19 +293,26 @@ def admin_review_done_next_kb(kind: str) -> InlineKeyboardMarkup:
 
 
 def admin_dashboard_kb(is_super: bool = False) -> InlineKeyboardMarkup:
-    """二级「📊 运营看板」面板（Phase A0 后 2026-05-23）
+    """二级「📊 数据看板」面板（2026-06 合并原 数据分析 + 运营看板为单一入口）。
 
-    Phase A0：移除「🎲 抽奖状态」「📊 抽奖对账」入口（抽奖功能整体下线）。
-    入口对应：
-        - admin:overview            运营总览
-        - admin:reimbursement_pool  报销池状态
+    4 子视图：
+        - dashboard:enter           📈 数据分析（活跃 / 搜索 / 收藏 / 7 日窗口）
+        - admin:overview            📊 运营总览（今日签到 / 新用户 / 待审）
+        - admin:reimbursement_pool  💰 报销池状态
+        - dashboard:audit           📜 操作日志（审计，唯一入口）
+    is_super 入参保留以兼容 handler 调用；本面板对所有 admin 展示同样 4 项。
     """
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="📊 运营总览",   callback_data="admin:overview")],
-        [InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool")],
-    ]
-    rows.append([InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📈 数据分析", callback_data="dashboard:enter"),
+            InlineKeyboardButton(text="📊 运营总览", callback_data="admin:overview"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 报销池状态", callback_data="admin:reimbursement_pool"),
+            InlineKeyboardButton(text="📜 操作日志",   callback_data="dashboard:audit"),
+        ],
+        [InlineKeyboardButton(text="⬅️ 返回后台", callback_data="menu:main")],
+    ])
 
 
 def admin_overview_kb(
@@ -559,13 +549,16 @@ def hot_manage_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def dashboard_menu_kb() -> InlineKeyboardMarkup:
-    """看板主视图：刷新 / 操作日志 / 返回主菜单"""
+    """数据分析视图（dashboard:enter）：刷新 / 操作日志 / 返回数据看板（闭环）。
+
+    2026-06：本视图降为「📊 数据看板」子项，返回从 menu:main 改指 admin:dashboard。
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔄 刷新", callback_data="dashboard:enter"),
             InlineKeyboardButton(text="📜 操作日志", callback_data="dashboard:audit"),
         ],
-        [InlineKeyboardButton(text="🔙 返回主菜单", callback_data="menu:main")],
+        [InlineKeyboardButton(text="🔙 返回数据看板", callback_data="admin:dashboard")],
     ])
 
 
@@ -1007,7 +1000,7 @@ def system_menu_kb() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="⏰ 修改发布时间", callback_data="system:publish_time")],
         [InlineKeyboardButton(text="⏳ 修改冷却时间", callback_data="system:cooldown")],
-        [InlineKeyboardButton(text="📋 必关频道/群组", callback_data="admin:subreq")],
+        # 2026-06：移除重复的「📋 必关频道/群组(admin:subreq)」——必关订阅唯一入口在「系统配置」。
         # Phase A0（2026-05-23）已下线：[👨‍💼 抽奖客服链接] system:lottery_contact
         [InlineKeyboardButton(text="📢 评价 footer 文本", callback_data="system:reimburse_promo_text")],
         [InlineKeyboardButton(text="🔗 评价 footer 链接", callback_data="system:reimburse_promo_url")],
@@ -1026,7 +1019,7 @@ def subreq_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ 添加", callback_data="admin:subreq:add")],
         [InlineKeyboardButton(text="📋 列表", callback_data="admin:subreq")],
-        [InlineKeyboardButton(text="🔙 返回系统设置", callback_data="menu:system")],
+        [InlineKeyboardButton(text="🔙 返回系统配置", callback_data="admin:settings")],
     ])
 
 
@@ -1043,7 +1036,7 @@ def subreq_list_kb(items: list[dict]) -> InlineKeyboardMarkup:
             callback_data=f"admin:subreq:item:{it['id']}",
         )])
     rows.append([InlineKeyboardButton(text="➕ 添加", callback_data="admin:subreq:add")])
-    rows.append([InlineKeyboardButton(text="🔙 返回系统设置", callback_data="menu:system")])
+    rows.append([InlineKeyboardButton(text="🔙 返回系统配置", callback_data="admin:settings")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

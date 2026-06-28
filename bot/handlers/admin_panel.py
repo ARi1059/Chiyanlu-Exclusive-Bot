@@ -178,8 +178,8 @@ async def cb_channel_menu(callback: types.CallbackQuery):
 @router.callback_query(F.data == "menu:system")
 @admin_required
 async def cb_system_menu(callback: types.CallbackQuery):
-    """系统设置子面板"""
-    await callback.message.edit_text("⚙️ 系统设置", reply_markup=system_menu_kb())
+    """签到与发布设置子面板（2026-06 改名「系统设置」→「签到与发布设置」消同义混淆）"""
+    await callback.message.edit_text("⏰ 签到与发布设置", reply_markup=system_menu_kb())
     await callback.answer()
 
 
@@ -1459,15 +1459,14 @@ async def cb_admin_reimburse_announce(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:operations")
 @super_admin_required
 async def cb_admin_operations(callback: types.CallbackQuery):
-    """二级「💰 活动运营」入口
+    """二级「💰 财务运营」入口（2026-06 改名「活动运营」→「财务运营」）。
 
-    Phase A0（2026-05-23）：抽奖管理整体下线，本聚合页仅剩「💰 积分管理」。
-    callback `admin:points` 含义不变。
+    钱相关归一：积分管理 + 报销配置（从「系统配置」移来）。callback 不变。
     """
     text = (
-        "💰 活动运营\n\n"
-        "请选择运营功能：\n\n"
-        "💰 积分管理"
+        "💰 财务运营\n\n"
+        "积分与报销配置：\n\n"
+        "💰 积分管理 · 💵 报销配置"
     )
     await callback.message.edit_text(text, reply_markup=admin_operations_kb())
     await callback.answer()
@@ -1531,26 +1530,21 @@ async def cb_admin_review_tasks(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin:dashboard")
 @admin_required
 async def cb_admin_dashboard(callback: types.CallbackQuery):
-    """二级「📊 运营看板」入口：聚合三个只读看板（+ 超管专属对账入口）
+    """二级「📊 数据看板」入口（2026-06 合并原 数据分析 + 运营看板为单一入口）。
 
-    callback 含义未做任何变更，本 handler 仅渲染聚合页 + 复用既有三个 callback
-    入口（admin:overview / admin:reimbursement_pool / admin:lottery_status）。
-
-    主菜单中「📈 数据分析」对应 dashboard:enter（user_events / 审计 / 7 日窗口），
-    与本「📊 运营看板」职责区分。
-
-    Sprint 2 §4.2.1：超管视角额外渲染「📊 抽奖对账」入口。
+    4 子视图：数据分析(dashboard:enter) / 运营总览(admin:overview) /
+    报销池状态(admin:reimbursement_pool) / 操作日志(dashboard:audit，唯一入口)。
+    callback 含义不变。
     """
     user_id = callback.from_user.id
     is_super = (user_id == config.super_admin_id) or await is_super_admin(user_id)
-    # Phase A0（2026-05-23）：移除「🎲 抽奖状态」「📊 抽奖对账」入口
     lines = [
-        "📊 运营看板",
+        "📊 数据看板",
         "",
-        "请选择要查看的运营数据：",
+        "请选择要查看的数据：",
         "",
-        "📊 运营总览",
-        "💰 报销池状态",
+        "📈 数据分析 · 📊 运营总览",
+        "💰 报销池状态 · 📜 操作日志",
     ]
     text = "\n".join(lines)
     await callback.message.edit_text(

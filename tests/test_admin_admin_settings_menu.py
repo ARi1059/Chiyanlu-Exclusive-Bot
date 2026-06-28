@@ -63,12 +63,12 @@ def test_main_menu_no_longer_contains_menu_admin_directly():
 
 
 def test_settings_kb_contains_admin_management_and_audit():
-    """admin_admin_settings_kb 必须含 menu:admin + dashboard:audit。"""
+    """2026-06：审计日志已并入「📊 数据看板」作唯一入口，管理员设置只剩 管理员管理(menu:admin)。"""
     from bot.keyboards.admin_kb import admin_admin_settings_kb
     kb = admin_admin_settings_kb()
     callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
     assert "menu:admin" in callbacks, "缺少 管理员管理 入口"
-    assert "dashboard:audit" in callbacks, "缺少 审计日志 入口"
+    assert "dashboard:audit" not in callbacks, "审计日志应已移至数据看板，本面板不再含"
 
 
 def test_settings_kb_back_button_is_menu_main():
@@ -82,10 +82,10 @@ def test_settings_kb_back_button_is_menu_main():
 
 
 def test_settings_kb_exactly_three_rows():
-    """精确 3 行：管理员管理 / 审计日志 / 返回，不能漏不能多。"""
+    """2026-06：精确 2 行：管理员管理 / 返回（审计日志已并入数据看板）。"""
     from bot.keyboards.admin_kb import admin_admin_settings_kb
     kb = admin_admin_settings_kb()
-    assert len(kb.inline_keyboard) == 3
+    assert len(kb.inline_keyboard) == 2
 
 
 def test_settings_kb_button_texts():
@@ -95,7 +95,6 @@ def test_settings_kb_button_texts():
         b.callback_data: b.text for row in kb.inline_keyboard for b in row
     }
     assert "管理员管理" in by_callback["menu:admin"]
-    assert "审计日志" in by_callback["dashboard:audit"]
 
 
 # ============ 不含其它二级菜单的 callback（防误纳） ============
@@ -271,21 +270,25 @@ def test_admin_management_handlers_use_super_admin_required():
 
 
 def test_main_menu_super_layout_after_admin_settings_grouping():
-    """超管主菜单：Row 0 是「🚀 打开小程序」入口（§16.3），Row 1 为 [老师管理, 管理员设置]。"""
+    """2026-06 重排后超管主菜单：
+    Row0 🚀小程序 / Row1 ✅审核处理 / Row2 老师管理+数据看板 / Row3 系统配置+财务运营 / Row4 管理员设置。"""
     from bot.keyboards.admin_kb import main_menu_kb
     kb = main_menu_kb(is_super=True)
-    # Row 0：§16.3 新增的 MiniApp 入口（web_app 按钮，无 callback_data）
-    assert kb.inline_keyboard[0][0].web_app is not None
-    row1 = kb.inline_keyboard[1]
-    callbacks_row1 = [b.callback_data for b in row1]
-    assert callbacks_row1 == ["admin:teachers", "admin:admin_settings"]
+    assert kb.inline_keyboard[0][0].web_app is not None  # §16.3 小程序入口
+    assert [b.callback_data for b in kb.inline_keyboard[1]] == ["admin:review_tasks"]
+    assert [b.callback_data for b in kb.inline_keyboard[2]] == ["admin:teachers", "admin:dashboard"]
+    assert [b.callback_data for b in kb.inline_keyboard[3]] == ["admin:settings", "admin:operations"]
+    assert [b.callback_data for b in kb.inline_keyboard[4]] == ["admin:admin_settings"]
 
 
 def test_main_menu_non_super_layout_after_admin_settings_grouping():
-    """非超管主菜单：Row 0 是小程序入口，Row 1 仅 [老师管理]（隐藏 管理员设置）。"""
+    """2026-06 重排后非超管主菜单：无 财务运营/管理员设置；系统配置单独成行。"""
     from bot.keyboards.admin_kb import main_menu_kb
     kb = main_menu_kb(is_super=False)
     assert kb.inline_keyboard[0][0].web_app is not None
-    row1 = kb.inline_keyboard[1]
-    callbacks_row1 = [b.callback_data for b in row1]
-    assert callbacks_row1 == ["admin:teachers"]
+    assert [b.callback_data for b in kb.inline_keyboard[1]] == ["admin:review_tasks"]
+    assert [b.callback_data for b in kb.inline_keyboard[2]] == ["admin:teachers", "admin:dashboard"]
+    assert [b.callback_data for b in kb.inline_keyboard[3]] == ["admin:settings"]
+    all_cbs = {b.callback_data for row in kb.inline_keyboard for b in row}
+    assert "admin:operations" not in all_cbs
+    assert "admin:admin_settings" not in all_cbs

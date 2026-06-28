@@ -90,12 +90,11 @@ def test_admin_menu_kb_keeps_core_entries():
 
 
 def test_admin_admin_settings_kb_keeps_all_entries():
-    """UX-1 第五批不改 admin_admin_settings_kb 自身：仍含
-    menu:admin + dashboard:audit + menu:main 兜底。"""
+    """2026-06：审计日志已并入「📊 数据看板」，管理员设置只剩 menu:admin + menu:main 兜底。"""
     from bot.keyboards.admin_kb import admin_admin_settings_kb
     callbacks = set(_all_callbacks(admin_admin_settings_kb()))
     assert "menu:admin" in callbacks
-    assert "dashboard:audit" in callbacks
+    assert "dashboard:audit" not in callbacks  # 已移至数据看板，不再双入口
     # admin:admin_settings 自己回主菜单仍走 menu:main（兜底）
     assert "menu:main" in callbacks
 
