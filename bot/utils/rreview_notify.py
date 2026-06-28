@@ -300,6 +300,11 @@ async def notify_super_admins_new_review(bot: Bot, review_id: int) -> None:
             media=review["gesture_photo_file_id"], caption="✋ 现场手势",
         ))
     supers = await list_super_admins()
+    try:
+        _me = await bot.get_me()
+        _bot_username = _me.username
+    except Exception:
+        _bot_username = None
     for uid in supers:
         # 媒体组
         try:
@@ -310,8 +315,8 @@ async def notify_super_admins_new_review(bot: Bot, review_id: int) -> None:
         except Exception as e:
             logger.warning("notify_super_admins media_group 失败 uid=%s: %s", uid, e)
             continue
-        # 文字 + 前往审核按钮
+        # 文字 + 前往审核 / 打开小程序处理 按钮
         await _safe_send_text(
             bot, uid, text,
-            reply_markup=rreview_push_action_kb(),
+            reply_markup=rreview_push_action_kb(_bot_username),
         )

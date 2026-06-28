@@ -38,6 +38,12 @@ from bot.keyboards.admin_kb import (
     review_reject_choice_kb,
 )
 from bot.keyboards.teacher_self_kb import FIELD_LABELS
+# 老师通知文案已抽到共享 service（bot/web 同源）；此处 re-export 保持
+# `from bot.handlers.admin_review import _notify_teacher_*` 与 cb_review_approve 调用不变。
+from bot.services.teacher_edit_moderation import (  # noqa: F401
+    _notify_teacher_approved,
+    _notify_teacher_rejected,
+)
 from bot.states.teacher_self_states import ReviewStates
 from bot.utils.permissions import admin_required
 
@@ -212,78 +218,8 @@ async def _render_claim_conflict(
     await callback.answer()
 
 
-async def _notify_teacher_approved(
-    bot,
-    teacher_id: int,
-    field_name: str,
-    new_value: str | None,
-):
-    """通过时给老师私聊推送通知（UX-5.2，与 _notify_teacher_rejected 对称）。
-
-    补 UX-FEATURE-ITERATION-2026-05-19 §6 痛点 8「审核通过老师收不到通知」。
-    photo_file_id 字段刻意不展示 file_id 字符串（用户视角是乱码）；
-    其它文字字段展示新值（已生效）。
-
-    失败仅 logger.warning，不影响调用方主流程（audit log / next 推送）。
-    """
-    label = FIELD_LABELS.get(field_name, field_name)
-
-    if field_name == "photo_file_id":
-        # approve_edit_request 已把新 file_id 写入 teachers 表
-        value_line = "新图片已生效。"
-    else:
-        value_repr = new_value if new_value else "（空）"
-        value_line = f"当前生效值：{value_repr}"
-
-    text = (
-        f"✅ 你的资料修改已通过审核\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"字段：{label}\n"
-        f"{value_line}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"感谢配合！"
-    )
-
-    try:
-        await bot.send_message(chat_id=teacher_id, text=text)
-    except Exception as e:
-        logger.warning("通知老师 %s 通过失败: %s", teacher_id, e)
-
-
-async def _notify_teacher_rejected(
-    bot,
-    teacher_id: int,
-    field_name: str,
-    new_value: str | None,
-    reason: str | None,
-):
-    """驳回时给老师私聊推送通知（v2 §2.3.5）"""
-    label = FIELD_LABELS.get(field_name, field_name)
-
-    if field_name == "photo_file_id":
-        rollback_note = "线上展示仍是旧图（图片字段在审核期间从未切换）。"
-        value_repr = "你提交的新图"
-    else:
-        rollback_note = "资料已恢复为原值。"
-        value_repr = new_value if new_value else "（空）"
-
-    reason_line = f"原因: {reason}" if reason else "原因: （未填写）"
-
-    text = (
-        f"❌ 你的资料修改已被驳回\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"字段: {label}\n"
-        f"你提交的值: {value_repr}\n"
-        f"{reason_line}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"{rollback_note}\n"
-        f"如有疑问请联系管理员。"
-    )
-
-    try:
-        await bot.send_message(chat_id=teacher_id, text=text)
-    except Exception as e:
-        logger.warning("通知老师 %s 驳回失败: %s", teacher_id, e)
+# 注：老师通知 _notify_teacher_approved / _notify_teacher_rejected 已抽到
+# bot/services/teacher_edit_moderation.py（bot/web 同源），本文件顶部 re-export。
 
 
 # ========================================================

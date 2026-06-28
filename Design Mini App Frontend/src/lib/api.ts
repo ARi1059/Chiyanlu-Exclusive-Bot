@@ -313,6 +313,7 @@ export interface ApiAdminStats {
   today_new_reviews: number;
   pending_reviews: number;
   pending_reimbursements: number;
+  pending_teacher_edits?: number;
   active_teachers: number;
   trend: ApiTrendPoint[];
   pending_queue: ApiPendingReview[];
@@ -364,8 +365,46 @@ export async function rejectReview(id: number, reason?: string): Promise<ModResu
   return (await r.json()) as ModResult;
 }
 
-// ── 报销审核（仅超管）──────────────────────────────────────────────────────────
+// ── 老师资料审核（阶段1）──────────────────────────────────────────────────────
 
+export interface ApiTeacherEdit {
+  id: number;
+  teacher: string;
+  field: string;
+  field_label: string;
+  is_photo: boolean;
+  old: string;
+  new: string;
+  time: string;
+}
+
+/** 待审老师资料修改列表（admin+）；失败返回 []。 */
+export async function getTeacherEdits(): Promise<ApiTeacherEdit[]> {
+  const r = await apiFetch("/api/admin/teacher-edits");
+  if (!r.ok) return [];
+  const data = (await r.json()) as { edits?: ApiTeacherEdit[] };
+  return data.edits ?? [];
+}
+
+/** 通过老师资料修改（含切图 + 通知老师）。 */
+export async function approveTeacherEdit(id: number): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/teacher-edits/${id}/approve`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
+/** 驳回老师资料修改（reason 可选 + 通知老师 + 回滚）。 */
+export async function rejectTeacherEdit(id: number, reason?: string): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/teacher-edits/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
+// ── 报销审核（仅超管）──────────────────────────────────────────────────────────
 /** 待审 + queued 报销列表。 */
 export async function getReimbursements(): Promise<ApiReimbursement[]> {
   const r = await apiFetch("/api/admin/reimbursements");

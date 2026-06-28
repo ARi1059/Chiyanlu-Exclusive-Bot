@@ -161,9 +161,21 @@ async def notify_admins(
     target_ids = {a["user_id"] for a in admins}
     target_ids.add(config.super_admin_id)
 
+    # 通知附「📲 打开小程序处理」按钮（startapp=admin → 管理台审核），缺 username 则纯文本。
+    from aiogram.types import InlineKeyboardMarkup
+    from bot.keyboards.common_kb import miniapp_admin_url_button
+    kb = None
+    try:
+        me = await bot.get_me()
+        btn = miniapp_admin_url_button(me.username)
+        if btn is not None:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[btn]])
+    except Exception as e:
+        logger.debug("notify_admins 取 bot username 失败: %s", e)
+
     for admin_id in target_ids:
         try:
-            await bot.send_message(chat_id=admin_id, text=text)
+            await bot.send_message(chat_id=admin_id, text=text, reply_markup=kb)
         except Exception as e:
             logger.warning("通知管理员 %s 失败: %s", admin_id, e)
 

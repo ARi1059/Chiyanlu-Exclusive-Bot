@@ -15,6 +15,7 @@ from aiohttp import web
 
 from bot.config import config
 from bot.database import (
+    count_pending_edits,
     get_db,
     get_surface_split,
     get_teacher,
@@ -127,6 +128,13 @@ async def get_admin_stats(request: web.Request) -> web.Response:
         logger.warning("surface_split 统计失败", exc_info=True)
         surface_split = None
 
+    # 阶段1：老师资料审核待办数（容错，单项失败不阻塞总览）。
+    try:
+        pending_teacher_edits = await count_pending_edits()
+    except Exception:
+        logger.warning("count_pending_edits 失败", exc_info=True)
+        pending_teacher_edits = 0
+
     from bot.database import POINT_PACKAGE_OPTIONS
     resp = {
         "today_checkins": overview.today_checkin_teachers or 0,
@@ -134,6 +142,7 @@ async def get_admin_stats(request: web.Request) -> web.Response:
         "today_new_reviews": overview.today_new_reviews or 0,
         "pending_reviews": overview.pending_reviews or 0,
         "pending_reimbursements": overview.pending_reimbursements or 0,
+        "pending_teacher_edits": pending_teacher_edits,  # 阶段1：老师资料审核
         "active_teachers": counts.get("active", 0),
         "trend": trend,
         "pending_queue": queue,

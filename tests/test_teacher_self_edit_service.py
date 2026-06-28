@@ -26,8 +26,14 @@ class _FakeBot:
     def __init__(self):
         self.sent: list[dict] = []
 
-    async def send_message(self, chat_id, text):
+    async def send_message(self, chat_id, text, **kwargs):
+        # 真实 bot.send_message 接受 reply_markup 等；测试只记录 chat_id/text。
         self.sent.append({"chat_id": chat_id, "text": text})
+
+    async def get_me(self):
+        class _Me:
+            username = "fakebot"
+        return _Me()
 
 
 # ============ validate_field ============

@@ -162,7 +162,12 @@ async def notify_supers_reimburse_pending(
         amount=amount,
         status=status,
     )
-    kb = reimburse_pending_super_notice_kb()
+    try:
+        _me = await bot.get_me()
+        _bot_username = _me.username
+    except Exception:
+        _bot_username = None
+    kb = reimburse_pending_super_notice_kb(_bot_username)
     for super_id in supers:
         try:
             await bot.send_message(chat_id=super_id, text=text, reply_markup=kb)

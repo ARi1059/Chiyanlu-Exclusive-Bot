@@ -5,9 +5,10 @@ import {
   approveReview, rejectReview,
   getMyPoints, getMyReviews, setNotify, checkinTeacher, getTeacherHome,
   getReimbursements, rejectReimbursement, activateReimbursement,
+  getTeacherEdits, approveTeacherEdit, rejectTeacherEdit,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
-  type ApiReimbursement, type ApiTeacherHome, type ApiSurfaceSplit,
+  type ApiReimbursement, type ApiTeacherHome, type ApiSurfaceSplit, type ApiTeacherEdit,
 } from "../lib/api";
 import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartParam } from "../lib/tg";
 import {
@@ -958,6 +959,70 @@ function SurfaceSplitCard({ split }: { split: ApiSurfaceSplit }) {
   );
 }
 
+// 待审老师资料项（阶段1）：通过 / 驳回（可选原因），处理后通知老师。
+const EDIT_REJECT_REASONS = ["内容违规", "与事实不符", "格式不规范", "重复提交"];
+
+function TeacherEditItem({
+  item, onResolved,
+}: {
+  item: ApiTeacherEdit;
+  onResolved: (id: number) => void;
+}) {
+  const [mode, setMode] = useState<"idle" | "reject">("idle");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const doApprove = async () => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await approveTeacherEdit(item.id);
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "通过失败");
+  };
+  const doReject = async (reason?: string) => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await rejectTeacherEdit(item.id, reason);
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "驳回失败");
+  };
+
+  const chip = "text-xs px-2.5 py-1 rounded-full disabled:opacity-40 transition-colors";
+
+  return (
+    <div className="px-4 py-3 border-b border-white/5 last:border-b-0">
+      <div className="mb-1">
+        <span className="text-[#e8e8e8] text-sm font-medium">{item.teacher}</span>
+        <span className="text-[#7d8d9e] text-xs ml-2">改 {item.field_label} · {item.time}</span>
+      </div>
+      <div className="text-xs mb-2 break-all">
+        <span className="text-[#7d8d9e]">{item.old}</span>
+        <span className="text-[#7d8d9e] mx-1">→</span>
+        <span className="text-[#e8e8e8]">{item.new}</span>
+      </div>
+      {mode === "idle" ? (
+        <div className="flex gap-2">
+          <button disabled={busy} onClick={doApprove}
+            className={`${chip} bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25`}>✅ 通过</button>
+          <button disabled={busy} onClick={() => setMode("reject")}
+            className={`${chip} bg-[#243447] text-[#e05b7a] hover:bg-[#3a2230]`}>❌ 驳回</button>
+        </div>
+      ) : (
+        <div className="flex gap-1.5 flex-wrap">
+          {EDIT_REJECT_REASONS.map((r) => (
+            <button key={r} disabled={busy} onClick={() => doReject(r)}
+              className={`${chip} bg-[#243447] text-[#e05b7a] hover:bg-[#3a2230]`}>{r}</button>
+          ))}
+          <button disabled={busy} onClick={() => doReject(undefined)}
+            className={`${chip} bg-[#243447] text-[#7d8d9e]`}>跳过原因</button>
+          <button disabled={busy} onClick={() => setMode("idle")}
+            className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+        </div>
+      )}
+      {busy && <div className="text-[#7d8d9e] text-xs mt-2">处理中…</div>}
+      {err && <div className="text-[#e05b7a] text-xs mt-2">{err}</div>}
+    </div>
+  );
+}
+
 function AdminView({ role }: { role: Role }) {
   const isSuper = role === "superadmin";
   const [stats, setStats] = useState<ApiAdminStats | null>(null);
@@ -966,10 +1031,13 @@ function AdminView({ role }: { role: Role }) {
   const [handledIds, setHandledIds] = useState<number[]>([]);
   const [reimbs, setReimbs] = useState<ApiReimbursement[]>([]);
   const [reimbHandled, setReimbHandled] = useState<number[]>([]);
+  const [edits, setEdits] = useState<ApiTeacherEdit[]>([]);          // 阶段1 待审老师资料
+  const [editHandled, setEditHandled] = useState<number[]>([]);
 
   const refresh = useCallback(async () => {
     const s = await getAdminStats();
     if (s) setStats(s);
+    setEdits(await getTeacherEdits());
     if (isSuper) setReimbs(await getReimbursements());
   }, [isSuper]);
 
@@ -978,6 +1046,8 @@ function AdminView({ role }: { role: Role }) {
     (async () => {
       const s = await getAdminStats();
       if (alive) setStats(s);
+      const es = await getTeacherEdits();
+      if (alive) setEdits(es);
       if (isSuper) {
         const rs = await getReimbursements();
         if (alive) setReimbs(rs);
@@ -994,10 +1064,15 @@ function AdminView({ role }: { role: Role }) {
     setReimbHandled((p) => [...p, id]);
     void refresh();
   };
+  const onEditResolved = (id: number) => {
+    setEditHandled((p) => [...p, id]);
+    void refresh();
+  };
 
   const trend = stats?.trend ?? [];
   const queue = (stats?.pending_queue ?? []).filter((p) => !handledIds.includes(p.id));
   const reimbQueue = reimbs.filter((r) => !reimbHandled.includes(r.id));
+  const editQueue = edits.filter((e) => !editHandled.includes(e.id));
   const pool = stats?.reimburse_pool ?? null;
   const packages = stats?.point_packages ?? [];
   const botUsername = stats?.bot_username ?? "";
@@ -1060,6 +1135,25 @@ function AdminView({ role }: { role: Role }) {
 
       {/* MiniApp vs Bot 双轨占比（§16.4） */}
       {surface && <SurfaceSplitCard split={surface} />}
+
+      {/* Pending teacher-profile edits（阶段1：老师资料审核，admin+） */}
+      <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+          <span className="text-[#e8e8e8] text-sm font-medium">待审老师资料</span>
+          {editQueue.length > 0 && (
+            <span className="text-xs bg-[#6b9ee8]/15 text-[#6b9ee8] px-2 py-0.5 rounded-full font-mono">
+              {editQueue.length} 条
+            </span>
+          )}
+        </div>
+        {editQueue.length === 0 ? (
+          <div className="px-4 py-5 text-center text-[#7d8d9e] text-xs">没有待审老师资料 ✓</div>
+        ) : (
+          editQueue.map((item) => (
+            <TeacherEditItem key={item.id} item={item} onResolved={onEditResolved} />
+          ))
+        )}
+      </div>
 
       {/* Pending reviews queue */}
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
@@ -1464,6 +1558,7 @@ export default function App() {
         else if (mw) setWriteTeacherId(Number(mw[1]));
         else if (p === "today" || p === "menu") setTab("today");
         else if (p === "search") setTab("search");
+        else if (p === "admin") setTab("admin");  // 通知「打开小程序处理」直达管理台（非 admin 由守卫回首页）
         // 其它/未知 → 忽略，留在首页
       }
     })();

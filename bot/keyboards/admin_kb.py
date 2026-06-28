@@ -1379,11 +1379,19 @@ def rreview_empty_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def rreview_push_action_kb() -> InlineKeyboardMarkup:
-    """新评价推送给超管时附带的按钮"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 前往审核", callback_data="rreview:enter")],
-    ])
+def rreview_push_action_kb(bot_username: str | None = None) -> InlineKeyboardMarkup:
+    """新评价推送给超管时附带的按钮。
+
+    bot_username 给定时附「📲 打开小程序处理」(startapp=admin 直达管理台)；
+    始终保留「📝 前往审核」(bot 内审核，向后兼容)。
+    """
+    from bot.keyboards.common_kb import miniapp_admin_url_button
+    rows: list[list[InlineKeyboardButton]] = []
+    mini = miniapp_admin_url_button(bot_username)
+    if mini is not None:
+        rows.append([mini])
+    rows.append([InlineKeyboardButton(text="📝 前往审核", callback_data="rreview:enter")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_points_menu_kb() -> InlineKeyboardMarkup:
@@ -1770,14 +1778,21 @@ def reimburse_subreq_add_confirm_kb() -> InlineKeyboardMarkup:
 # ============ 报销审核 + 支付宝口令发放（2026-05） ============
 
 
-def reimburse_pending_super_notice_kb() -> InlineKeyboardMarkup:
-    """报告审核通过后通知超管的快捷按钮组。"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💰 去审核报销", callback_data="reimburse:enter"),
-            InlineKeyboardButton(text="✅ 审核处理", callback_data="admin:review_tasks"),
-        ],
+def reimburse_pending_super_notice_kb(bot_username: str | None = None) -> InlineKeyboardMarkup:
+    """报告审核通过后通知超管的快捷按钮组。
+
+    bot_username 给定时附「📲 打开小程序处理」(startapp=admin)；始终保留 bot 内入口。
+    """
+    from bot.keyboards.common_kb import miniapp_admin_url_button
+    rows: list[list[InlineKeyboardButton]] = []
+    mini = miniapp_admin_url_button(bot_username)
+    if mini is not None:
+        rows.append([mini])
+    rows.append([
+        InlineKeyboardButton(text="💰 去审核报销", callback_data="reimburse:enter"),
+        InlineKeyboardButton(text="✅ 审核处理", callback_data="admin:review_tasks"),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def reimburse_payout_waiting_cancel_kb(reimb_id: int) -> InlineKeyboardMarkup:
