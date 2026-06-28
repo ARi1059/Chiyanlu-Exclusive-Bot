@@ -1604,8 +1604,11 @@ async def search_teachers_smart_and(
     规则:
         - 同类型 OR：多个标签 / 多个地区 / 多个价格之间用 OR
         - 跨类型 AND：标签条件、地区条件、价格条件之间用 AND
-        - 类型自动识别：扫描所有 active 老师的 tags/region/price 集合，决定每个 token 属于哪些类型
-        - 单个 token 可能同时属于多个类型（罕见，兜底处理）
+        - 类型自动识别：扫描所有 active 老师的 tags/region/price，统计每个值在各
+          类型下命中的老师数，决定每个 token 属于哪个类型
+        - 单个 token 同时属于多个类型时，取「命中老师数最多」的**主导类型**（平局
+          按 地区 > 价格 > 标签 的优先级）——避免把它同时塞进多个类型组后被跨类型
+          AND 误收窄（例：「心岛」既是地区又被某老师误设为标签 → 应按地区返回全部）
         - 完全未匹配任何类型的 token 视为 unrecognized
         - 艺名不参与组合搜索（由调用方在更上一层做精确艺名匹配优先判断）
 
@@ -1626,45 +1629,60 @@ async def search_teachers_smart_and(
 
     db = await get_db()
     try:
-        # 1. 加载所有 active 老师的 region / price / tags，构造小写集合用于类型识别
+        # 1. 加载所有 active 老师的 region / price / tags，统计每个值在各类型下命中的
+        #    老师数（用于 token 主导类型判定）。
         cursor = await db.execute(
             "SELECT region, price, tags FROM teachers WHERE is_active = 1 AND is_deleted = 0"
         )
         rows = await cursor.fetchall()
 
-        regions: set[str] = set()
-        prices: set[str] = set()
-        tags_set: set[str] = set()
+        region_counts: dict[str, int] = {}
+        price_counts: dict[str, int] = {}
+        tag_counts: dict[str, int] = {}
         for row in rows:
             if row["region"]:
-                regions.add(row["region"].lower())
+                k = row["region"].lower()
+                region_counts[k] = region_counts.get(k, 0) + 1
             if row["price"]:
-                prices.add(row["price"].lower())
+                k = row["price"].lower()
+                price_counts[k] = price_counts.get(k, 0) + 1
             try:
+                seen_tags: set[str] = set()
                 for t in json.loads(row["tags"] or "[]"):
-                    tags_set.add(str(t).lower())
+                    tk = str(t).lower()
+                    if tk and tk not in seen_tags:  # 同一老师同标签只计一次
+                        seen_tags.add(tk)
+                        tag_counts[tk] = tag_counts.get(tk, 0) + 1
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        # 2. token 类型识别（一个 token 可命中多个类型）
+        # 2. token 类型识别：一个 token 可能同时命中多个类型 → 取命中老师数最多的
+        #    主导类型（平局按 地区 0 > 价格 1 > 标签 2 的固定优先级）。
         token_tags: list[str] = []
         token_regions: list[str] = []
         token_prices: list[str] = []
         unrecognized: list[str] = []
         for raw in tokens:
             tl = raw.lower()
-            matched = False
-            if tl in tags_set:
-                token_tags.append(tl)
-                matched = True
-            if tl in regions:
-                token_regions.append(tl)
-                matched = True
-            if tl in prices:
-                token_prices.append(tl)
-                matched = True
-            if not matched:
+            # (-命中数, 优先级, 类型名)：先按命中数降序，再按优先级升序
+            candidates: list[tuple[int, int, str]] = []
+            if tl in region_counts:
+                candidates.append((-region_counts[tl], 0, "region"))
+            if tl in price_counts:
+                candidates.append((-price_counts[tl], 1, "price"))
+            if tl in tag_counts:
+                candidates.append((-tag_counts[tl], 2, "tag"))
+            if not candidates:
                 unrecognized.append(raw)
+                continue
+            candidates.sort()
+            chosen = candidates[0][2]
+            if chosen == "region":
+                token_regions.append(tl)
+            elif chosen == "price":
+                token_prices.append(tl)
+            else:
+                token_tags.append(tl)
 
         # 没有任何可识别 token，无法构造查询
         if not (token_tags or token_regions or token_prices):
