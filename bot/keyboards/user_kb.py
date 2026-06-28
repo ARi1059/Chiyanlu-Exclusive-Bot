@@ -78,39 +78,28 @@ def parse_teacher_view_callback(data: str) -> tuple[int, str]:
 # ============ 用户主菜单 ============
 
 def user_main_menu_kb() -> InlineKeyboardMarkup:
-    """普通用户私聊主菜单（Phase A0 后 2026-05-23）
+    """普通用户私聊主菜单。
 
-    布局（已删 抽奖 / 搜索历史 / 最近看过 / 我的记录 后剩余 11 按钮 + 1 聚合）：
-        [🔎 找老师]                       ← 聚合 4 个找老师入口
-        [📚 今天能约谁] [🎯 帮我推荐]
-        [🔎 按条件找]   [🔥 热门推荐]
-        [⭐ 我的收藏]   [🔍 直接搜索]
-        [💝 收藏开课]   [🔔 我的提醒]
+    2026-06 精简：删去与主菜单重复的两个入口——
+      · 「🔎 找老师」(user:find)：其二级页只有「今天能约谁」+「直接搜索」，主菜单已直达，纯多一跳。
+      · 「💝 收藏开课」(user:fav_today)：= 「我的收藏」内「只看今日可约」模式，功能重叠。
+    对应 callback handler **保留**（user:find 仍是评价驳回 CTA 入口；两者均为旧消息按钮向后兼容）。
+
+    布局：
+        [🚀 打开小程序]
+        [📚 今天能约谁] [🔍 直接搜索]
+        [⭐ 我的收藏]   [🔔 我的提醒]
         [💰 我的积分]   [🧾 我的报销]
         [📝 写评价]
-
-    Phase A0 删除入口：
-        - 🕘 最近看过 (user:recent)
-        - 📜 搜索历史 (user:search_history)
-        - 🎁 抽奖中心 (user:lottery)
-        - 📝 我的记录 (user:my_records)
-
-    后续 Plan A1 将进一步把主菜单收口到 6 按钮（4 行）。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         miniapp_entry_row(),  # 🚀 打开小程序（§16.3：MiniApp 首选入口，FSM 保留兜底）
         [
-            InlineKeyboardButton(text="🔎 找老师", callback_data="user:find"),
-        ],
-        [
             InlineKeyboardButton(text="📚 今天能约谁", callback_data="user:today"),
-        ],
-        [
-            InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites"),
             InlineKeyboardButton(text="🔍 直接搜索", callback_data="user:search"),
         ],
         [
-            InlineKeyboardButton(text="💝 收藏开课", callback_data="user:fav_today"),
+            InlineKeyboardButton(text="⭐ 我的收藏", callback_data="user:favorites"),
             InlineKeyboardButton(text="🔔 我的提醒", callback_data="user:reminders"),
         ],
         [

@@ -52,11 +52,15 @@ def test_admin_menu_nonsuper_also_has_entry():
 
 
 def test_fsm_buttons_preserved_user_menu():
-    """入口是新增不是替换：用户菜单仍含「找老师」等既有 callback。"""
+    """入口是新增不是替换：用户菜单仍含既有核心 callback（小程序入口在顶部，FSM 保留）。"""
     kb = user_main_menu_kb()
     cbs = [b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data]
-    assert "user:find" in cbs
+    assert "user:today" in cbs
+    assert "user:search" in cbs
     assert "user:write_review" in cbs
+    # 2026-06 精简：找老师 / 收藏开课 冗余入口已从主菜单移除（handler 仍保留）
+    assert "user:find" not in cbs
+    assert "user:fav_today" not in cbs
 
 
 def test_fsm_buttons_preserved_teacher_menu():
