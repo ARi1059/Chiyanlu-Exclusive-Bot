@@ -22,9 +22,11 @@ from bot.web.api.profile import (
     get_my_points,
     get_my_reviews,
     get_profile,
+    get_teacher_edit_profile,
     get_teacher_home,
     post_checkin,
     post_notify,
+    post_teacher_edit_profile,
 )
 from bot.web.api.reviews import get_review_context, post_review
 from bot.web.api.teachers import get_teacher_detail, get_teachers
@@ -42,6 +44,9 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/me/notify", post_notify)
     app.router.add_post("/api/me/checkin", post_checkin)
     app.router.add_get("/api/me/teacher-home", get_teacher_home)
+    # §16.3：老师自助编辑资料（仅 teacher，端点内校验；同源 service，过审+回滚）
+    app.router.add_get("/api/me/teacher-profile", get_teacher_edit_profile)
+    app.router.add_post("/api/me/teacher-profile", post_teacher_edit_profile)
     # P1：老师数据（MiniApp）
     app.router.add_get("/api/teachers", get_teachers)
     app.router.add_get("/api/teachers/{id}", get_teacher_detail)

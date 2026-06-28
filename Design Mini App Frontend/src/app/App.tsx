@@ -7,7 +7,7 @@ import {
   getReimbursements, rejectReimbursement, activateReimbursement,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
-  type ApiReimbursement, type ApiTeacherHome,
+  type ApiReimbursement, type ApiTeacherHome, type ApiSurfaceSplit,
 } from "../lib/api";
 import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartParam } from "../lib/tg";
 import {
@@ -20,6 +20,8 @@ const TrendChart = lazy(() => import("./charts/TrendChart"));
 const RadarChartBox = lazy(() => import("./charts/RadarChartBox"));
 // 写评价表单仅写评价时用 → 懒加载。
 const WriteReview = lazy(() => import("./WriteReview"));
+// 老师编辑资料仅老师用 → 懒加载。
+const TeacherEditProfile = lazy(() => import("./TeacherEditProfile"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
@@ -497,6 +499,7 @@ function ProfileView({
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinMsg, setCheckinMsg] = useState<string | null>(null);
   const [home, setHome] = useState<ApiTeacherHome | null>(null);
+  const [editingProfile, setEditingProfile] = useState(false);  // §16.3 编辑资料 overlay
   useEffect(() => { if (profile) setCheckedIn(profile.checked_in_today ?? false); }, [profile]);
   useEffect(() => {
     if (profile?.is_teacher) getTeacherHome().then(setHome).catch(() => {});
@@ -591,10 +594,17 @@ function ProfileView({
             <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
               <span className="text-[#aebac8] text-xs">资料完整度</span>
               <span className={`text-xs ${home.profile_complete ? "text-[#4fc97a]" : "text-[#e8a857]"}`}>
-                {home.profile_complete ? "✓ 已完整" : `缺 ${home.missing_fields.length} 项（去 bot 完善）`}
+                {home.profile_complete ? "✓ 已完整" : `缺 ${home.missing_fields.length} 项`}
               </span>
             </div>
           )}
+
+          <button
+            onClick={() => { hapticLight(); setEditingProfile(true); }}
+            className="w-full py-2.5 rounded-xl bg-[#243447] text-[#c4974a] text-sm font-medium border border-[#c4974a]/30 active:scale-95"
+          >
+            ✏️ 编辑资料
+          </button>
         </div>
       )}
 
@@ -683,6 +693,13 @@ function ProfileView({
 
       {/* 子弹层 */}
       {sheet && <ProfileSheet kind={sheet} onClose={() => setSheet(null)} />}
+
+      {/* 编辑资料 overlay（§16.3，懒加载） */}
+      {editingProfile && (
+        <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+          <TeacherEditProfile onClose={() => { setEditingProfile(false); getTeacherHome().then(setHome).catch(() => {}); }} />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -875,6 +892,68 @@ function PendingReimbursementItem({
   );
 }
 
+// MiniApp vs Bot 双轨占比卡（§16.4）：今日 + 近 N 日，各轨活跃用户 + 事件数 + 百分比。
+function SurfaceSplitCard({ split }: { split: ApiSurfaceSplit }) {
+  const [range, setRange] = useState<"today" | "week">("today");
+  const b = split[range];
+  const totalUsers = b.web_users + b.bot_users;
+  const webPct = totalUsers > 0 ? Math.round((b.web_users / totalUsers) * 100) : 0;
+  const botPct = totalUsers > 0 ? 100 - webPct : 0;
+
+  return (
+    <div className="bg-[#1e2c3a] rounded-2xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[#e8e8e8] text-sm font-medium">小程序 vs Bot 占比</span>
+        <div className="flex gap-1 text-xs">
+          {(["today", "week"] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={`px-2.5 py-1 rounded-full ${
+                range === r ? "bg-[#c4974a] text-[#0d1117] font-medium" : "bg-[#243447] text-[#7d8d9e]"
+              }`}
+            >
+              {r === "today" ? "今日" : `近 ${split.window_days} 日`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {totalUsers === 0 ? (
+        <div className="text-[#7d8d9e] text-xs py-3 text-center">暂无活跃数据</div>
+      ) : (
+        <>
+          {/* 占比条 */}
+          <div className="flex h-2.5 rounded-full overflow-hidden bg-[#243447] mb-3">
+            <div className="bg-[#c4974a]" style={{ width: `${webPct}%` }} />
+            <div className="bg-[#6b9ee8]" style={{ width: `${botPct}%` }} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-[#243447] rounded-xl p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="w-2 h-2 rounded-full bg-[#c4974a] inline-block" />
+                <span className="text-[#aebac8] text-xs">小程序</span>
+                <span className="text-[#c4974a] text-xs font-mono ml-auto">{webPct}%</span>
+              </div>
+              <div className="text-[#e8e8e8] text-lg font-mono font-semibold">{b.web_users}</div>
+              <div className="text-[#7d8d9e] text-[10px]">活跃用户 · {b.web_events} 次操作</div>
+            </div>
+            <div className="bg-[#243447] rounded-xl p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="w-2 h-2 rounded-full bg-[#6b9ee8] inline-block" />
+                <span className="text-[#aebac8] text-xs">Bot</span>
+                <span className="text-[#6b9ee8] text-xs font-mono ml-auto">{botPct}%</span>
+              </div>
+              <div className="text-[#e8e8e8] text-lg font-mono font-semibold">{b.bot_users}</div>
+              <div className="text-[#7d8d9e] text-[10px]">活跃用户 · {b.bot_events} 次操作</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AdminView({ role }: { role: Role }) {
   const isSuper = role === "superadmin";
   const [stats, setStats] = useState<ApiAdminStats | null>(null);
@@ -918,6 +997,7 @@ function AdminView({ role }: { role: Role }) {
   const pool = stats?.reimburse_pool ?? null;
   const packages = stats?.point_packages ?? [];
   const botUsername = stats?.bot_username ?? "";
+  const surface = stats?.surface_split ?? null;
 
   const cards = [
     { label: "今日签到", val: String(stats?.today_checkins ?? 0), sub: `今日新增 ${stats?.today_new_users ?? 0} 用户`, icon: CheckCircle, color: "#4fc97a" },
@@ -973,6 +1053,9 @@ function AdminView({ role }: { role: Role }) {
           <TrendChart data={trend} />
         </Suspense>
       </div>
+
+      {/* MiniApp vs Bot 双轨占比（§16.4） */}
+      {surface && <SurfaceSplitCard split={surface} />}
 
       {/* Pending reviews queue */}
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">

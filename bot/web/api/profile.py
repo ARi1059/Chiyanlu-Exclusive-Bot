@@ -33,8 +33,13 @@ from bot.database import (
     list_user_reviews_paged,
     set_user_notify_enabled,
 )
-from bot.web.keys import get_bot_username
+from bot.web.keys import APP_BOT, get_bot_username
 from bot.web.roles import ROLE_TEACHER
+from bot.services.teacher_self_edit import (
+    EDITABLE_FIELDS,
+    FIELD_LABELS,
+    submit_field_edit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,3 +211,63 @@ async def post_notify(request: web.Request) -> web.Response:
     enabled = bool((body or {}).get("enabled"))
     await set_user_notify_enabled(uid, enabled)
     return web.json_response({"ok": True, "notify_enabled": enabled})
+
+
+async def get_teacher_edit_profile(request: web.Request) -> web.Response:
+    """老师自助编辑资料 —— 当前可编辑字段值（仅 teacher 角色）。§16.3。
+
+    返回 6 个白名单字段当前值（tags 以 list 给前端）+ 锁定的 button_url（只读展示）。
+    """
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    teacher = await get_teacher_full_profile(uid)  # tags 已解析为 list
+    if not teacher:
+        raise web.HTTPForbidden(reason="not a registered teacher")
+
+    return web.json_response({
+        "fields": {
+            "display_name": teacher.get("display_name") or "",
+            "region": teacher.get("region") or "",
+            "price": teacher.get("price") or "",
+            "tags": teacher.get("tags") or [],
+            "button_text": teacher.get("button_text") or "",
+            "has_photo": bool(teacher.get("photo_file_id")),
+        },
+        "button_url": teacher.get("button_url") or "",  # 锁定，仅展示
+        "labels": FIELD_LABELS,
+        "editable_fields": sorted(EDITABLE_FIELDS),
+    })
+
+
+async def post_teacher_edit_profile(request: web.Request) -> web.Response:
+    """老师自助提交单字段修改（仅 teacher 角色）。§16.3。
+
+    body: {field, value}。复用 bot/web 同源 service：文字立即生效（可回滚）、
+    图片延后（审核后生效），并通知管理员。图片字段的 value 是先经
+    POST /api/uploads 换得的 file_id。tags 可传 list 或分隔串。
+    """
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="invalid json body")
+
+    field = (body or {}).get("field")
+    value = (body or {}).get("value")
+    if field not in EDITABLE_FIELDS:
+        raise web.HTTPBadRequest(reason="invalid field")
+    # tags 允许前端传数组：拼成分隔串交给 service.parse_tags 统一处理。
+    if field == "tags" and isinstance(value, list):
+        value = " ".join(str(x) for x in value)
+
+    bot = request.app[APP_BOT]
+    result = await submit_field_edit(bot, uid, field, value)
+    # 业务校验失败（空/过长/同值/空标签等）返回 200 + ok:false，前端内联提示。
+    return web.json_response(result)
+

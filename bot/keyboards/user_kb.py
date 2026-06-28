@@ -4,6 +4,7 @@ from typing import Callable, Optional
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+from bot.keyboards.common_kb import miniapp_entry_row
 from bot.utils.url import normalize_url
 
 
@@ -97,6 +98,7 @@ def user_main_menu_kb() -> InlineKeyboardMarkup:
     后续 Plan A1 将进一步把主菜单收口到 6 按钮（4 行）。
     """
     return InlineKeyboardMarkup(inline_keyboard=[
+        miniapp_entry_row(),  # 🚀 打开小程序（§16.3：MiniApp 首选入口，FSM 保留兜底）
         [
             InlineKeyboardButton(text="🔎 找老师", callback_data="user:find"),
         ],

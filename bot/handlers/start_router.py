@@ -42,6 +42,7 @@ from bot.database import (
     get_teacher,
     get_user_onboarding_seen,
     is_admin,
+    log_surface_event,
     mark_user_started,
     record_user_source,
     update_user_tags_from_teacher_action,
@@ -64,6 +65,9 @@ _QUICK_ENTRY_PAGES: dict[str, tuple[str, str, str]] = {
 logger = logging.getLogger(__name__)
 
 router = Router(name="start_router")
+
+# §16.3 FSM 降级引导：三角色落地文案统一附一行小程序引导（按钮已在菜单顶部）。
+_MINIAPP_HINT = "💡 推荐用上方「🚀 打开小程序」，体验更顺 👇"
 
 
 # ============ Deep Link 解析（Phase 4） ============
@@ -316,6 +320,7 @@ async def cmd_start_with_arg(
     # 普通用户身份层维护
     await upsert_user(user_id, user.username, user.first_name)
     await mark_user_started(user_id)
+    await log_surface_event(user_id, "bot", "open", {"args": raw_args[:64]})  # 双轨埋点 §16.4
 
     # reimb_<id>：MiniApp 报销「同意=打款」深链跳回 bot —— 超管直达该报销详情，
     # 点同意即进现有口令 FSM（口令/真钱只在此私聊通道走）。处理则结束，不再展示菜单。
@@ -411,6 +416,7 @@ async def cmd_start_plain(message: types.Message, state: FSMContext):
     # 普通用户身份层维护
     await upsert_user(user_id, user.username, user.first_name)
     await mark_user_started(user_id)
+    await log_surface_event(user_id, "bot", "open")  # 双轨埋点 §16.4
 
     await _route_by_role(message, user_id)
 
@@ -457,7 +463,7 @@ async def _route_by_role(
     """
     # 1. 管理员
     if await _is_admin_user(user_id):
-        text = "🔧 痴颜录管理面板"
+        text = f"🔧 痴颜录管理面板\n\n{_MINIAPP_HINT}"
         if extra_text:
             text = f"{extra_text}\n\n{text}"
         # Phase 9.4：超管用户能看到 [📝 报告审核] 入口
@@ -486,6 +492,7 @@ async def _route_by_role(
         status = "" if teacher["is_active"] else "（账号已停用）"
         text = (
             f"👤 你好，{teacher['display_name']}{status}\n\n"
+            f"{_MINIAPP_HINT}\n\n"
             "你的私聊功能："
         )
         if extra_text:
@@ -682,7 +689,7 @@ async def _route_by_role(
 
     # Phase A0（2026-05-23）已下线：「欢迎回来 + 继续看上次」（依赖已删的 user_teacher_views 表）
 
-    text = "👋 欢迎使用痴颜录 Bot\n\n你想怎么找？"
+    text = f"👋 欢迎使用痴颜录 Bot\n\n{_MINIAPP_HINT}\n\n你想怎么找？"
     if extra_text:
         text = f"{extra_text}\n\n{text}"
     await message.answer(text, reply_markup=user_main_menu_kb())

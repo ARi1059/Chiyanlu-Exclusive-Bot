@@ -16,6 +16,7 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     get_db,
+    get_surface_split,
     get_teacher,
     get_teacher_counts,
     list_pending_reviews,
@@ -119,6 +120,13 @@ async def get_admin_stats(request: web.Request) -> web.Response:
     trend = await _trend_7d()
     queue = await _pending_queue()
 
+    # 双轨占比（§16.4）：MiniApp vs bot 活跃用户 / 事件数（今日 + 近 7 日）。
+    try:
+        surface_split = await get_surface_split(window_days=7)
+    except Exception:
+        logger.warning("surface_split 统计失败", exc_info=True)
+        surface_split = None
+
     from bot.database import POINT_PACKAGE_OPTIONS
     resp = {
         "today_checkins": overview.today_checkin_teachers or 0,
@@ -129,6 +137,8 @@ async def get_admin_stats(request: web.Request) -> web.Response:
         "active_teachers": counts.get("active", 0),
         "trend": trend,
         "pending_queue": queue,
+        # 双轨占比（§16.4）：{today:{web_users,bot_users,web_events,bot_events}, week:{...}}
+        "surface_split": surface_split,
         # 审核加分套餐（前端 ✓ 选套餐用，与 bot 同源）
         "point_packages": [
             {"key": o["key"], "label": o["label"], "delta": o["delta"]}

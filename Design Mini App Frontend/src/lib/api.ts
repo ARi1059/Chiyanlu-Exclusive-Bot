@@ -293,6 +293,20 @@ export interface ApiReimbursePool {
 
 export interface ApiPointPackage { key: string; label: string; delta: number }
 
+/** 双轨占比（§16.4）：单档 MiniApp vs bot 活跃用户 / 事件数。 */
+export interface ApiSurfaceBucket {
+  web_users: number;
+  bot_users: number;
+  web_events: number;
+  bot_events: number;
+}
+
+export interface ApiSurfaceSplit {
+  today: ApiSurfaceBucket;
+  week: ApiSurfaceBucket;
+  window_days: number;
+}
+
 export interface ApiAdminStats {
   today_checkins: number;
   today_new_users: number;
@@ -304,6 +318,7 @@ export interface ApiAdminStats {
   pending_queue: ApiPendingReview[];
   point_packages?: ApiPointPackage[];
   reimburse_pool?: ApiReimbursePool | null;
+  surface_split?: ApiSurfaceSplit | null;
   bot_username?: string;
 }
 
@@ -464,4 +479,59 @@ export async function submitReview(payload: ReviewSubmitPayload): Promise<Review
     missing: (data as ReviewSubmitResult).missing,
     fields: (data as ReviewSubmitResult).fields,
   };
+}
+
+// ── 老师自助编辑资料（§16.3）────────────────────────────────────────────────────
+
+export interface TeacherEditFields {
+  display_name: string;
+  region: string;
+  price: string;
+  tags: string[];
+  button_text: string;
+  has_photo: boolean;
+}
+
+export interface TeacherEditProfile {
+  fields: TeacherEditFields;
+  button_url: string;            // 锁定，仅展示
+  labels: Record<string, string>;
+  editable_fields: string[];
+}
+
+/** 老师自助编辑资料的当前值（仅 teacher）；失败返回 null。 */
+export async function getTeacherEditProfile(): Promise<TeacherEditProfile | null> {
+  const r = await apiFetch("/api/me/teacher-profile");
+  if (!r.ok) return null;
+  return (await r.json()) as TeacherEditProfile;
+}
+
+export interface FieldEditResult {
+  ok: boolean;
+  applied: boolean;            // true=文字立即生效（可回滚），false=图片延后审核
+  request_id: number | null;
+  field: string;
+  label: string;
+  message: string;
+  error: string | null;
+}
+
+/** 提交单字段修改。tags 可传 string[] 或分隔串；photo_file_id 传 uploadImage 换得的 file_id。 */
+export async function submitTeacherFieldEdit(
+  field: string, value: string | string[],
+): Promise<FieldEditResult> {
+  const r = await apiFetch("/api/me/teacher-profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ field, value }),
+  });
+  const data = await r.json().catch(() => ({} as Record<string, unknown>));
+  if (!r.ok) {
+    return {
+      ok: false, applied: false, request_id: null, field,
+      label: field, message: `提交失败（HTTP ${r.status}）`,
+      error: `http_${r.status}`,
+    };
+  }
+  return data as FieldEditResult;
 }

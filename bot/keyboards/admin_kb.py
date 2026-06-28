@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Optional
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+from bot.keyboards.common_kb import miniapp_entry_row
+
 if TYPE_CHECKING:
     # 仅类型提示用，避免运行时循环依赖
     # Phase A0（2026-05-23）：移除 LotteryReconcileItem / LotteryStatusStats（抽奖功能下线）
@@ -52,6 +54,7 @@ def main_menu_kb(
             InlineKeyboardButton(text="🛡 管理员设置", callback_data="admin:admin_settings"),
         )
     rows: list[list[InlineKeyboardButton]] = [
+        miniapp_entry_row(),  # 🚀 打开小程序（§16.3：管理台也走 MiniApp，FSM 保留兜底）
         row1,
         [
             # 📈 数据分析：旧 Phase 1 看板，user_events + 审计 + 7 日窗口分析

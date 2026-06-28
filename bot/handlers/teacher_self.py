@@ -28,12 +28,9 @@ from pytz import timezone
 from bot.config import config
 from bot.database import (
     checkin_teacher,
-    create_edit_request,
-    get_all_admins,
     get_config,
     get_teacher,
     is_checked_in,
-    update_teacher,
 )
 from bot.keyboards.teacher_self_kb import (
     FIELD_LABELS,
@@ -42,6 +39,7 @@ from bot.keyboards.teacher_self_kb import (
     teacher_main_menu_kb,
     teacher_profile_kb,
 )
+from bot.services.teacher_self_edit import EDITABLE_FIELDS, submit_field_edit
 from bot.states.teacher_self_states import TeacherEditStates
 
 logger = logging.getLogger(__name__)
@@ -49,16 +47,6 @@ logger = logging.getLogger(__name__)
 router = Router(name="teacher_self")
 
 tz = timezone(config.timezone)
-
-# 老师可自助改的字段白名单（必须和 database.TEACHER_EDITABLE_FIELDS 一致）
-EDITABLE_FIELDS: set[str] = {
-    "display_name",
-    "region",
-    "price",
-    "tags",
-    "photo_file_id",
-    "button_text",
-}
 
 
 # ========================================================
@@ -130,77 +118,8 @@ def _format_field_prompt(field_name: str, current_value: str | None) -> str:
     )
 
 
-def _parse_tags(text: str) -> str:
-    """把用户输入的标签字符串转成 JSON 数组字符串
-
-    支持空格/中文逗号/英文逗号/顿号分隔；去空 + 去重保序。
-    """
-    import re
-    parts = re.split(r"[\s,，、]+", text)
-    seen: list[str] = []
-    seen_set: set[str] = set()
-    for p in parts:
-        p = p.strip()
-        if not p:
-            continue
-        key = p.lower()
-        if key in seen_set:
-            continue
-        seen_set.add(key)
-        seen.append(p)
-    return json.dumps(seen, ensure_ascii=False)
-
-
-async def _notify_admins(
-    bot,
-    teacher: dict,
-    field_name: str,
-    old_value: str | None,
-    new_value: str,
-    request_id: int,
-):
-    """老师修改一次 → 推一条私聊给所有管理员（v2 §4 待定项决策）
-
-    包含字段、原值、新值，以及"前往审核"的 deep-link 按钮。
-    限速容错：失败仅记日志。
-    """
-    label = FIELD_LABELS.get(field_name, field_name)
-
-    # 图片字段的 old/new 是 file_id，不展示原始字符串（无意义且长）
-    if field_name == "photo_file_id":
-        old_repr = "已上传" if old_value else "（空）"
-        new_repr = "新图（待审核）"
-    else:
-        old_repr = old_value if old_value else "（空）"
-        new_repr = new_value if new_value else "（空）"
-
-    note = ""
-    if field_name == "photo_file_id":
-        note = "\n\n⚠️ 图片字段：审核通过后才会切换到新图，旧图继续展示。"
-
-    text = (
-        f"📝 老师修改通知\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"老师: {teacher['display_name']} (ID: {teacher['user_id']})\n"
-        f"字段: {label}\n"
-        f"原值: {old_repr}\n"
-        f"新值: {new_repr}\n"
-        f"请求 ID: {request_id}{note}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"在管理面板「📝 待审核」中处理。"
-    )
-
-    admins = await get_all_admins()
-    super_id = config.super_admin_id
-    # 推送给所有管理员（含超管，去重）
-    target_ids = {a["user_id"] for a in admins}
-    target_ids.add(super_id)
-
-    for admin_id in target_ids:
-        try:
-            await bot.send_message(chat_id=admin_id, text=text)
-        except Exception as e:
-            logger.warning("通知管理员 %s 失败: %s", admin_id, e)
+# 注：标签解析 _parse_tags、管理员通知 _notify_admins 已抽到
+# bot/services/teacher_self_edit.py（bot/web 同源），本文件不再重复实现。
 
 
 # ========================================================
@@ -307,25 +226,16 @@ async def cmd_cancel_edit(message: types.Message, state: FSMContext):
 
 @router.message(TeacherEditStates.waiting_new_value)
 async def on_edit_value(message: types.Message, state: FSMContext):
-    """接收老师输入的新值，执行立即生效（图片例外）+ 创建 edit_request + 通知管理员
+    """接收老师输入的新值 → 委托 service 提交（立即生效/图片延后 + edit_request + 通知）。
 
-    校验:
-        - 私聊场景
-        - 当前是老师
-        - 字段在白名单内（双重校验）
-        - 图片字段：要求 message.photo 非空
-        - 文字字段：要求 message.text 非空
+    handler 只负责传输层（私聊判定 + 取图片 file_id / 文本）；业务逻辑全在
+    bot/services/teacher_self_edit.submit_field_edit（bot/web 同源）。
+    校验类错误（空 / 过长 / 同值 / 空标签）不退出 FSM，让老师改了再发。
     """
     if message.chat.type != "private":
         return
 
     user_id = message.from_user.id
-    teacher = await get_teacher(user_id)
-    if not teacher:
-        await state.clear()
-        await message.reply("⚠️ 你不在老师名单内")
-        return
-
     data = await state.get_data()
     field_name: str = data.get("field_name", "")
     if field_name not in EDITABLE_FIELDS:
@@ -333,104 +243,33 @@ async def on_edit_value(message: types.Message, state: FSMContext):
         await message.reply("⚠️ 异常：未知字段，请重新进入编辑")
         return
 
-    old_value = teacher.get(field_name)
-
-    # 图片字段（v2 §2.3.3a 例外，延后生效）
+    # 取原始新值：图片字段取最高分辨率 file_id，文字字段取文本（传输层差异留在 handler）。
     if field_name == "photo_file_id":
         if not message.photo:
-            await message.reply(
-                "请发送图片（直接发图，不是文字），或 /cancel 取消"
-            )
+            await message.reply("请发送图片（直接发图，不是文字），或 /cancel 取消")
             return
-        # 取最高分辨率的 file_id
-        new_value = message.photo[-1].file_id
-
-        # ⚠️ 不动 teachers（延后生效）
-        request_id = await create_edit_request(
-            teacher_id=user_id,
-            field_name="photo_file_id",
-            old_value=old_value,
-            new_value=new_value,
-        )
-        if request_id is None:
-            await state.clear()
-            await message.reply("⚠️ 创建审核请求失败（字段不在白名单）")
-            return
-
-        await _notify_admins(
-            message.bot, teacher, "photo_file_id", old_value, new_value, request_id
-        )
-
-        await state.clear()
-        await message.answer(
-            "🖼️ 图片已提交审核\n"
-            "━━━━━━━━━━━━━━━\n"
-            "审核通过后立即生效；\n"
-            "在此期间，展示位仍使用旧图。\n"
-            "━━━━━━━━━━━━━━━",
-            reply_markup=teacher_back_to_profile_kb(),
-        )
-        return
-
-    # 文字字段（5 个），立即生效
-    if not message.text:
-        await message.reply("请输入文字内容，或 /cancel 取消")
-        return
-
-    raw = message.text.strip()
-    if not raw:
-        await message.reply("内容不能为空，请重新输入")
-        return
-
-    # tags 需要特殊编码为 JSON 字符串
-    if field_name == "tags":
-        new_value = _parse_tags(raw)
-        if new_value == "[]":
-            await message.reply("至少输入一个有效标签，或 /cancel 取消")
-            return
+        raw_value: str = message.photo[-1].file_id
     else:
-        new_value = raw
+        if not message.text:
+            await message.reply("请输入文字内容，或 /cancel 取消")
+            return
+        raw_value = message.text
 
-    # 内容相同直接拒绝（避免无意义的审核请求）
-    if old_value == new_value:
-        await message.reply("新值与旧值相同，不需要修改")
-        return
+    result = await submit_field_edit(message.bot, user_id, field_name, raw_value)
 
-    # 立即生效：UPDATE teachers
-    ok = await update_teacher(user_id, field_name, new_value)
-    if not ok:
+    if not result["ok"]:
+        code = result.get("error")
+        # 校验类错误：保持 FSM，提示后等待老师重新输入。
+        if code in {"empty", "too_long", "empty_tags", "same"}:
+            await message.reply(f"⚠️ {result['message']}，请重新输入或 /cancel 取消")
+            return
+        # 其它（not_teacher / update_failed / unknown_field / create_request_failed）：退出。
         await state.clear()
-        await message.reply("⚠️ 修改失败，请稍后重试")
+        await message.reply(f"⚠️ {result['message']}")
         return
 
-    # 创建 edit_request
-    request_id = await create_edit_request(
-        teacher_id=user_id,
-        field_name=field_name,
-        old_value=old_value,
-        new_value=new_value,
-    )
-    if request_id is None:
-        # 兜底（白名单已校验，理论不会到这里）
-        logger.error(
-            "create_edit_request 返回 None: teacher=%s field=%s",
-            user_id, field_name,
-        )
-
-    # 通知所有管理员
-    if request_id is not None:
-        await _notify_admins(
-            message.bot, teacher, field_name, old_value, new_value, request_id
-        )
-
-    label = FIELD_LABELS.get(field_name, field_name)
     await state.clear()
-    await message.answer(
-        f"✅ {label}修改已生效\n"
-        "━━━━━━━━━━━━━━━\n"
-        "管理员会审核此次修改，如不通过将自动回滚。",
-        reply_markup=teacher_back_to_profile_kb(),
-    )
+    await message.answer(result["message"], reply_markup=teacher_back_to_profile_kb())
 
 
 # ========================================================

@@ -2522,6 +2522,80 @@ async def log_user_event(
         pass
 
 
+async def log_surface_event(
+    user_id: int,
+    surface: str,
+    action: str,
+    payload=None,
+) -> None:
+    """双轨埋点（§16.4）：记一条带「来源轨」前缀的事件。
+
+    写入 user_events，event_type = f"{surface}:{action}"（如 "web:active"、
+    "bot:open"）。surface ∈ {"bot","web"}。这样无需新增 schema 即可区分
+    MiniApp / bot 两条使用轨——旧事件（无前缀）在统计里天然归 bot 轨。
+    复用 log_user_event 的静默容错语义。
+    """
+    await log_user_event(user_id, f"{surface}:{action}", payload)
+
+
+async def get_surface_split(window_days: int = 7) -> dict:
+    """双轨使用占比（§16.4）：今日 + 近 window_days 日，按 web / bot 轨统计
+    活跃用户数（DISTINCT user_id）与事件数。
+
+    分轨规则：event_type LIKE 'web:%' → web 轨；其余（含历史无前缀事件）→ bot 轨。
+    日期口径：user_events.created_at 为 UTC，按 config.timezone 折算到本地日
+    （date(created_at, '+8 hours')，与 admin stats 趋势同口径）。
+    返回 {"today": {...}, "week": {...}, "window_days": N}，每档含
+    web_users / bot_users / web_events / bot_events。
+    """
+    from datetime import datetime, timedelta
+    from pytz import timezone as _tz
+
+    now = datetime.now(_tz(config.timezone))
+    today = now.strftime("%Y-%m-%d")
+    week_start = (now - timedelta(days=window_days - 1)).strftime("%Y-%m-%d")
+    offset_hours = int(now.utcoffset().total_seconds() // 3600) if now.utcoffset() else 0
+    shift = f"{offset_hours:+d} hours"
+
+    def _empty() -> dict:
+        return {"web_users": 0, "bot_users": 0, "web_events": 0, "bot_events": 0}
+
+    today_split, week_split = _empty(), _empty()
+    db = await get_db()
+    try:
+        for label, start, target in (
+            ("today", today, today_split),
+            ("week", week_start, week_split),
+        ):
+            try:
+                cur = await db.execute(
+                    """
+                    SELECT
+                        CASE WHEN event_type LIKE 'web:%' THEN 'web' ELSE 'bot' END AS surface,
+                        COUNT(DISTINCT user_id) AS users,
+                        COUNT(*) AS events
+                    FROM user_events
+                    WHERE date(created_at, ?) >= ?
+                    GROUP BY surface
+                    """,
+                    (shift, start),
+                )
+                for r in await cur.fetchall():
+                    if r["surface"] == "web":
+                        target["web_users"] = int(r["users"])
+                        target["web_events"] = int(r["events"])
+                    else:
+                        target["bot_users"] = int(r["users"])
+                        target["bot_events"] = int(r["events"])
+            except Exception:
+                logger.warning("get_surface_split 查询失败 (%s)", label, exc_info=True)
+    finally:
+        await db.close()
+    return {"today": today_split, "week": week_split, "window_days": window_days}
+
+
+
+
 async def log_admin_audit(
     admin_id: int,
     action: str,

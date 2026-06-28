@@ -46,3 +46,26 @@ async def auth_middleware(request: web.Request, handler):
 
     request["session"] = payload
     return await handler(request)
+
+
+@web.middleware
+async def analytics_middleware(request: web.Request, handler):
+    """双轨埋点（§16.4）：对已鉴权请求打一条 ``web:active`` 事件。
+
+    必须排在 ``auth_middleware`` 之后——它依赖后者注入的 ``request["session"]``。
+    公开路径（health / auth / photo）没有 session，自然跳过。fire-and-forget：
+    log_surface_event 内部已吞异常，埋点绝不阻断请求。
+    """
+    response = await handler(request)
+    session = request.get("session")
+    if session:
+        uid = session.get("uid")
+        if uid:
+            try:
+                from bot.database import log_surface_event
+                await log_surface_event(
+                    int(uid), "web", "active", {"path": request.path},
+                )
+            except Exception as e:  # pragma: no cover - 埋点不影响主链
+                logger.debug("web 埋点失败 path=%s: %s", request.path, e)
+    return response

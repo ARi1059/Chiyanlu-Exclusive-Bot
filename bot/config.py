@@ -53,6 +53,7 @@ class Config:
     web_enabled: bool
     web_host: str
     web_port: int
+    miniapp_url: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -70,6 +71,9 @@ class Config:
             web_enabled=os.getenv("WEB_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"),
             web_host=os.getenv("WEB_HOST", "127.0.0.1"),
             web_port=_parse_int_env("WEB_PORT", "8080", min_value=1),
+            # MiniApp 公网地址（bot 菜单「🚀 打开小程序」WebApp 按钮用）。
+            # 默认即生产域名，prod 无需在 .env 额外配置。
+            miniapp_url=os.getenv("MINIAPP_URL", "https://www.chiyanlog.com").strip(),
         )
 
 

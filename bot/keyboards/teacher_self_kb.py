@@ -2,6 +2,8 @@
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+from bot.keyboards.common_kb import miniapp_entry_row
+
 
 # ============ 老师主菜单 ============
 
@@ -18,6 +20,7 @@ def teacher_main_menu_kb(*, checked_in: bool = False) -> InlineKeyboardMarkup:
     """
     checkin_label = "✅ 今日已签到" if checked_in else "✅ 今日签到"
     return InlineKeyboardMarkup(inline_keyboard=[
+        miniapp_entry_row(),  # 🚀 打开小程序（§16.3：老师端首选入口，FSM 保留兜底）
         [InlineKeyboardButton(text=checkin_label, callback_data="teacher_self:checkin")],
         [InlineKeyboardButton(text="✏️ 我的资料", callback_data="teacher_self:profile")],
     ])

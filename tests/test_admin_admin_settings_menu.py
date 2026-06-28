@@ -271,18 +271,21 @@ def test_admin_management_handlers_use_super_admin_required():
 
 
 def test_main_menu_super_layout_after_admin_settings_grouping():
-    """超管主菜单 Row 1 应为 [老师管理, 管理员设置]。"""
+    """超管主菜单：Row 0 是「🚀 打开小程序」入口（§16.3），Row 1 为 [老师管理, 管理员设置]。"""
     from bot.keyboards.admin_kb import main_menu_kb
     kb = main_menu_kb(is_super=True)
-    row1 = kb.inline_keyboard[0]
+    # Row 0：§16.3 新增的 MiniApp 入口（web_app 按钮，无 callback_data）
+    assert kb.inline_keyboard[0][0].web_app is not None
+    row1 = kb.inline_keyboard[1]
     callbacks_row1 = [b.callback_data for b in row1]
     assert callbacks_row1 == ["admin:teachers", "admin:admin_settings"]
 
 
 def test_main_menu_non_super_layout_after_admin_settings_grouping():
-    """非超管主菜单 Row 1 应仅为 [老师管理]（隐藏 管理员设置）。"""
+    """非超管主菜单：Row 0 是小程序入口，Row 1 仅 [老师管理]（隐藏 管理员设置）。"""
     from bot.keyboards.admin_kb import main_menu_kb
     kb = main_menu_kb(is_super=False)
-    row1 = kb.inline_keyboard[0]
+    assert kb.inline_keyboard[0][0].web_app is not None
+    row1 = kb.inline_keyboard[1]
     callbacks_row1 = [b.callback_data for b in row1]
     assert callbacks_row1 == ["admin:teachers"]

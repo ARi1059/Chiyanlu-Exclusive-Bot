@@ -23,7 +23,7 @@ from aiohttp import web
 
 from bot.config import config
 from bot.web.keys import APP_BOT, APP_BOT_TOKEN
-from bot.web.middleware import auth_middleware
+from bot.web.middleware import analytics_middleware, auth_middleware
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,8 @@ def create_web_app(bot: Optional[Bot], *, bot_token: Optional[str] = None) -> we
 
     bot 允许为 None（仅鉴权链路的集成测试用）；生产传入共享的 Bot 对象。
     """
-    app = web.Application(middlewares=[auth_middleware])
+    # auth 在前（注入 session），analytics 在后（读 session 打 web:active 埋点）。
+    app = web.Application(middlewares=[auth_middleware, analytics_middleware])
     app[APP_BOT] = bot
     app[APP_BOT_TOKEN] = bot_token or config.bot_token
 
