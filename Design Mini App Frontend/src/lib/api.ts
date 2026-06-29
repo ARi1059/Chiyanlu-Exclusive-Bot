@@ -581,6 +581,38 @@ export async function createAdminTeacher(form: CreateTeacherForm): Promise<Creat
   return await r.json();
 }
 
+// ── 档案发布配置（阶段2：档案频道 + 品牌）────────────────────────────────────────
+
+export interface ApiArchiveSettings {
+  channel_id: string;                  // 独立配置原始值（用户设的）
+  effective_channel_id: number | null; // 实际生效（含回退 publish_channel_id）
+  brand_name: string;
+  brand_channels: string;
+  brand_name_default: string;
+}
+
+export type ArchiveSettingsPatch = Partial<Pick<ApiArchiveSettings, "channel_id" | "brand_name" | "brand_channels">>;
+
+/** 读档案频道 + 品牌设置；失败返回空。 */
+export async function getArchiveSettings(): Promise<ApiArchiveSettings> {
+  const r = await apiFetch("/api/admin/settings/archive");
+  if (!r.ok) return { channel_id: "", effective_channel_id: null, brand_name: "", brand_channels: "", brand_name_default: "《痴颜录》" };
+  return (await r.json()) as ApiArchiveSettings;
+}
+
+/** 保存档案配置（只传要改的键）；校验失败返回 ok:false + field/message。 */
+export async function setArchiveSettings(
+  patch: ArchiveSettingsPatch,
+): Promise<{ ok: boolean; error?: string; field?: string; message?: string }> {
+  const r = await apiFetch("/api/admin/settings/archive", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
 // ── 报销审核（仅超管）──────────────────────────────────────────────────────────
 /** 待审 + queued 报销列表。 */
 export async function getReimbursements(): Promise<ApiReimbursement[]> {

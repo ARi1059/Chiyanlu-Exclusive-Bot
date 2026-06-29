@@ -14,7 +14,7 @@ import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartPa
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, Home, BarChart2, Users,
-  CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList,
+  CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList, Settings,
 } from "lucide-react";
 // recharts 重(~157KB gzip)且只在管理台/详情用 → 懒加载，普通用户首屏不下载。
 const TrendChart = lazy(() => import("./charts/TrendChart"));
@@ -25,6 +25,8 @@ const WriteReview = lazy(() => import("./WriteReview"));
 const TeacherEditProfile = lazy(() => import("./TeacherEditProfile"));
 // 管理员老师管理（阶段2）仅管理员用 → 懒加载。
 const TeacherAdmin = lazy(() => import("./TeacherAdmin"));
+// 档案发布配置（阶段2）仅管理员用 → 懒加载。
+const ArchiveSettings = lazy(() => import("./ArchiveSettings"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
@@ -1036,6 +1038,7 @@ function AdminView({ role }: { role: Role }) {
   const [edits, setEdits] = useState<ApiTeacherEdit[]>([]);          // 阶段1 待审老师资料
   const [editHandled, setEditHandled] = useState<number[]>([]);
   const [showTeacherAdmin, setShowTeacherAdmin] = useState(false);  // 阶段2 老师管理 overlay
+  const [showArchiveSettings, setShowArchiveSettings] = useState(false);  // 阶段2 档案发布配置 overlay
 
   const refresh = useCallback(async () => {
     const s = await getAdminStats();
@@ -1176,6 +1179,23 @@ function AdminView({ role }: { role: Role }) {
         <ChevronRight size={15} className="text-[#7d8d9e]" />
       </button>
 
+      {/* 阶段2：档案发布配置入口（档案频道 + 品牌；老师档案帖发布依赖） */}
+      <button
+        onClick={() => { hapticLight(); setShowArchiveSettings(true); }}
+        className="w-full bg-[#1e2c3a] rounded-2xl p-4 flex items-center justify-between text-left hover:bg-[#243447] active:bg-[#243447] transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
+            <Settings size={15} className="text-[#c4974a]" />
+          </div>
+          <div>
+            <div className="text-[#e8e8e8] text-sm">档案发布配置</div>
+            <div className="text-[#7d8d9e] text-xs">档案频道 · 品牌名 · 品牌频道</div>
+          </div>
+        </div>
+        <ChevronRight size={15} className="text-[#7d8d9e]" />
+      </button>
+
       {/* Pending reviews queue */}
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
@@ -1268,6 +1288,13 @@ function AdminView({ role }: { role: Role }) {
       {showTeacherAdmin && (
         <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
           <TeacherAdmin role={role} onClose={() => { setShowTeacherAdmin(false); void refresh(); }} />
+        </Suspense>
+      )}
+
+      {/* 阶段2：档案发布配置 overlay（懒加载，全屏） */}
+      {showArchiveSettings && (
+        <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+          <ArchiveSettings onClose={() => setShowArchiveSettings(false)} />
         </Suspense>
       )}
     </>

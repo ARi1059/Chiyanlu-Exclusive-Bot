@@ -29,6 +29,10 @@ from bot.web.api.admin_teachers import (
     post_admin_teacher_publish_sync,
     post_admin_teacher_status,
 )
+from bot.web.api.admin_settings import (
+    get_archive_settings,
+    post_archive_settings,
+)
 from bot.web.api.admin_reimbursements import (
     get_reimbursements,
     post_activate_reimbursement,
@@ -109,6 +113,9 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/admin/teachers/{id}/publish/sync", post_admin_teacher_publish_sync)
     app.router.add_post("/api/admin/teachers/{id}/publish/repost", post_admin_teacher_publish_repost)
     app.router.add_delete("/api/admin/teachers/{id}/publish", delete_admin_teacher_publish)
+    # 阶段2：档案发布配置（档案频道 + 品牌，admin+；老师档案帖发布依赖）
+    app.router.add_get("/api/admin/settings/archive", get_archive_settings)
+    app.router.add_post("/api/admin/settings/archive", post_archive_settings)
     # P1：报销审核（仅 superadmin；同意=打款走 bot 深链，此处只做拒绝/激活/列表）
     app.router.add_get("/api/admin/reimbursements", get_reimbursements)
     app.router.add_post("/api/admin/reimbursements/{id}/reject", post_reject_reimbursement)
