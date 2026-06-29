@@ -664,3 +664,84 @@ def test_publish_delete_requires_admin(monkeypatch):
             assert r.status == 403
     _run(_t())
     assert "delete" not in calls
+
+
+# ============ 新增老师（POST /api/admin/teachers）============
+# service create_teacher_from_form 在 at_mod 命名空间，monkeypatch。
+
+def test_create_requires_admin(monkeypatch):
+    called = {"n": 0}
+
+    async def fake_create(form):
+        called["n"] += 1
+        return {"ok": True, "user_id": 1}
+
+    monkeypatch.setattr(at_mod, "create_teacher_from_form", fake_create)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers", headers=_hdr(role="user"), json={"user_id": "1"})
+            assert r.status == 403
+    _run(_t())
+    assert called["n"] == 0  # 门禁拦在 service 前
+
+
+def test_create_no_token_401(monkeypatch):
+    async def fake_create(form):
+        return {"ok": True}
+
+    monkeypatch.setattr(at_mod, "create_teacher_from_form", fake_create)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            assert (await c.post("/api/admin/teachers", json={})).status == 401
+    _run(_t())
+
+
+def test_create_bad_json_400(monkeypatch):
+    async def fake_create(form):
+        return {"ok": True}
+
+    monkeypatch.setattr(at_mod, "create_teacher_from_form", fake_create)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers", headers=_hdr(), data="not json")
+            assert r.status == 400
+    _run(_t())
+
+
+def test_create_success_passthrough(monkeypatch):
+    rec = {}
+
+    async def fake_create(form):
+        rec.update(form)
+        return {"ok": True, "user_id": 12345, "message": "老师「苏乔晚」已创建（2 张照片）"}
+
+    monkeypatch.setattr(at_mod, "create_teacher_from_form", fake_create)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers", headers=_hdr(),
+                             json={"user_id": "12345", "display_name": "苏乔晚"})
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["user_id"] == 12345
+    _run(_t())
+    # body 原样传给 service
+    assert rec["user_id"] == "12345" and rec["display_name"] == "苏乔晚"
+
+
+def test_create_validation_failure_passthrough(monkeypatch):
+    async def fake_create(form):
+        return {"ok": False, "error": "duplicate", "field": "user_id", "message": "该 user_id 已存在老师"}
+
+    monkeypatch.setattr(at_mod, "create_teacher_from_form", fake_create)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers", headers=_hdr(), json={"user_id": "12345"})
+            assert r.status == 200  # 业务失败仍 200
+            d = await r.json()
+            assert d["ok"] is False and d["error"] == "duplicate" and d["field"] == "user_id"
+    _run(_t())

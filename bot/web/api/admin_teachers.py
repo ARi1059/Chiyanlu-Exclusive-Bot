@@ -1,13 +1,15 @@
 """管理台老师管理端点（阶段2）。
 
     GET  /api/admin/teachers?status=active|disabled|deleted|all   名册（ROLE_ADMIN+）
+    POST /api/admin/teachers              新增老师（ROLE_ADMIN+，一屏表单，手填 user_id）
     POST /api/admin/teachers/{id}/status  {action: enable|disable|delete|restore}
          enable/disable → ROLE_ADMIN+；delete(软删)/restore → ROLE_SUPERADMIN（破坏性）
     POST /api/admin/teachers/{id}/field   {field, value}  管理员直改字段（ROLE_ADMIN+，无审核）
     *    /api/admin/teachers/{id}/album*    老师相册 看/加/删（ROLE_ADMIN+，即时生效）
     *    /api/admin/teachers/{id}/publish*  频道档案帖 状态/发布/同步/重发/撤帖（ROLE_ADMIN+）
 
-复用 DB 名册/生命周期函数 + teacher_self_edit.admin_set_field + teacher_channel_publish（发布薄封装）。
+复用 DB 名册/生命周期函数 + teacher_self_edit.admin_set_field + teacher_onboarding（新增编排）
++ teacher_channel_publish（发布薄封装）。
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ from bot.database import (
     soft_delete_teacher,
 )
 from bot.services.teacher_self_edit import ADMIN_EDITABLE_FIELDS, admin_set_field
+from bot.services.teacher_onboarding import create_teacher_from_form
 from bot.utils.teacher_channel_publish import (
     PublishError,
     delete_teacher_post,
@@ -115,6 +118,20 @@ async def get_admin_teachers(request: web.Request) -> web.Response:
             "deleted": deleted_count,
         },
     })
+
+
+async def post_admin_teacher_create(request: web.Request) -> web.Response:
+    """管理员一屏新增老师（admin+）。body=表单 JSON；委托 teacher_onboarding service。
+
+    校验失败返回 200 + {ok:false, error, field, message}（与 field 端点惯例一致）。
+    """
+    _require_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="invalid json body")
+    result = await create_teacher_from_form(body or {})
+    return web.json_response(result)
 
 
 _STATUS_ACTIONS = {"enable", "disable", "delete", "restore"}

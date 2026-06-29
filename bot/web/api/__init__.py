@@ -22,6 +22,7 @@ from bot.web.api.admin_teachers import (
     get_admin_teacher_publish_status,
     get_admin_teachers,
     post_admin_teacher_album,
+    post_admin_teacher_create,
     post_admin_teacher_field,
     post_admin_teacher_publish,
     post_admin_teacher_publish_repost,
@@ -95,6 +96,7 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/admin/teacher-edits/{id}/reject", post_reject_teacher_edit)
     # 阶段2：老师管理（名册/启停/软删恢复/直改字段；端点内分级校验）
     app.router.add_get("/api/admin/teachers", get_admin_teachers)
+    app.router.add_post("/api/admin/teachers", post_admin_teacher_create)
     app.router.add_post("/api/admin/teachers/{id}/status", post_admin_teacher_status)
     app.router.add_post("/api/admin/teachers/{id}/field", post_admin_teacher_field)
     # 阶段2：老师相册（管理员改任意老师相册，admin+；语义同 /api/me/teacher-album）

@@ -5,8 +5,8 @@
  * + 相册管理 + 频道档案帖发布/同步/重发/撤帖（均即时生效、无审核——管理员权威）。
  * 新老师录入仍在 bot（需转发抽取 user_id，后续阶段）。
  */
-import { useState, useEffect, useCallback, useRef } from "react";
-import { ChevronLeft } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { ChevronLeft, Plus } from "lucide-react";
 import { showBackButton, hapticLight } from "../lib/tg";
 import {
   getAdminTeachers, setAdminTeacherStatus, setAdminTeacherField,
@@ -16,6 +16,9 @@ import {
   type Role, type ApiAdminTeacher, type AdminTeacherStatus, type ApiAlbumPhoto,
   type ApiPublishStatus,
 } from "../lib/api";
+
+// 新增老师表单仅管理员偶用 → 懒加载。
+const TeacherCreate = lazy(() => import("./TeacherCreate"));
 
 const TABS: { key: AdminTeacherStatus; label: string; countKey: "active" | "disabled" | "deleted" }[] = [
   { key: "active", label: "在册", countKey: "active" },
@@ -56,6 +59,7 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
   const [pubBusy, setPubBusy] = useState(false);
   const [pubMsg, setPubMsg] = useState<string | null>(null);
   const [pendingDanger, setPendingDanger] = useState<"repost" | "unpublish" | null>(null);
+  const [showCreate, setShowCreate] = useState(false);  // 新增老师 overlay
 
   useEffect(() => showBackButton(onClose), [onClose]);
 
@@ -190,6 +194,12 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
       <div className="sticky top-0 z-10 bg-[#17212b]/95 backdrop-blur px-4 py-3 flex items-center gap-2 border-b border-white/5">
         <button onClick={onClose} className="text-[#7d8d9e] active:scale-95"><ChevronLeft size={22} /></button>
         <span className="text-[#e8e8e8] font-medium">老师管理</span>
+        <button
+          onClick={() => { hapticLight(); setShowCreate(true); }}
+          className="ml-auto flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-[#c4974a] text-[#0d1117] font-medium active:scale-95"
+        >
+          <Plus size={14} /> 新增老师
+        </button>
       </div>
 
       {/* 状态筛选 */}
@@ -369,6 +379,16 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
           ))
         )}
       </div>
+
+      {/* 新增老师 overlay（懒加载，z 高于本组件；创建成功刷新当前名册） */}
+      {showCreate && (
+        <Suspense fallback={<div className="absolute inset-0 z-[70] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+          <TeacherCreate
+            onClose={() => setShowCreate(false)}
+            onCreated={() => { setShowCreate(false); void load(status); }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

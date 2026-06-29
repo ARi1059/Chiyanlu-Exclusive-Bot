@@ -544,6 +544,43 @@ export async function unpublishAdminTeacher(teacherId: number): Promise<ApiPubli
   return await r.json();
 }
 
+// ── 新增老师（阶段2：一屏录入，手填 user_id）────────────────────────────────────
+
+/** 新增老师表单。photos = 先经 uploadImage 换得的 file_id 数组。 */
+export interface CreateTeacherForm {
+  user_id: string;
+  username: string;
+  contact_telegram: string;
+  display_name: string;
+  basic_info: string;       // "年龄 身高 体重 罩杯"，如 "25 172 90 B"
+  region: string;
+  price_detail: string;     // 含「数字+P」，派生 price/description
+  service_content?: string; // 可选
+  tags: string;             // 空格/逗号分隔
+  button_url: string;
+  photos: string[];         // file_id，1-10 张
+}
+
+/** 新增结果；error 见后端 ERR.reason（duplicate/invalid_user_id/no_price/…），field 指向出错输入框。 */
+export interface CreateTeacherResult {
+  ok: boolean;
+  user_id?: number;
+  error?: string;
+  field?: string;
+  message?: string;
+}
+
+/** 管理员一屏新建老师；校验失败返回 ok:false + field/message（不抛错）。 */
+export async function createAdminTeacher(form: CreateTeacherForm): Promise<CreateTeacherResult> {
+  const r = await apiFetch("/api/admin/teachers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(form),
+  });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
 // ── 报销审核（仅超管）──────────────────────────────────────────────────────────
 /** 待审 + queued 报销列表。 */
 export async function getReimbursements(): Promise<ApiReimbursement[]> {
