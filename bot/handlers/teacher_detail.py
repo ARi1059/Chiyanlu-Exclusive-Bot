@@ -37,6 +37,7 @@ from bot.database import (
 from bot.keyboards.user_kb import (
     teacher_detail_kb,
 )
+from bot.services.verification import send_verification_to_teacher
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +289,42 @@ async def cb_teacher_toggle_fav(callback: types.CallbackQuery):
 
     # 切换后刷新当前详情页（不再 record_view 以免覆盖 viewed_at）
     await _render_detail(callback, teacher_id, record_view=False)
+
+
+# ============ teacher:verify —— 申请验证（用户向老师自证约课） ============
+
+
+@router.callback_query(F.data.startswith("teacher:verify:"))
+async def cb_teacher_verify(callback: types.CallbackQuery):
+    """申请验证：bot 把发起者最近一条已通过评价 + 约课截图发给该老师私聊（露名）。
+
+    资格（有用户名 + ≥1 条 approved 评价 + 1h 冷却）与发送/记录全在共享 service
+    send_verification_to_teacher 内权威校验，与 MiniApp 同源、冷却跨两端统一。
+    """
+    if callback.message and callback.message.chat.type != "private":
+        await callback.answer("申请验证仅在私聊中可用", show_alert=True)
+        return
+
+    try:
+        teacher_id = int(callback.data[len("teacher:verify:"):])
+    except ValueError:
+        await callback.answer("⚠️ 无效操作")
+        return
+
+    # 刷新库内 username（service 据此判定资格并露名）
+    user = callback.from_user
+    try:
+        await upsert_user(user.id, user.username, user.first_name)
+    except Exception as e:
+        logger.debug("upsert_user 失败 (user=%s): %s", user.id, e)
+
+    res = await send_verification_to_teacher(
+        callback.bot, user_id=user.id, teacher_id=teacher_id,
+    )
+    await callback.answer(
+        res.error or "✅ 已把你的约课证明发给老师，请等待回复",
+        show_alert=True,
+    )
 
 
 # ============ teacher:remind —— 开课提醒（Phase 7.1） ============

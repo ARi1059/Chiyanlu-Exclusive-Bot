@@ -304,7 +304,7 @@ def teacher_detail_kb(
         [⭐ 收藏 / ✅ 已收藏，点击取消] [🔔/🔕 提醒按钮]
         [📖 查看全部评价 (N)]                       ← review_count > 0 时显示（9.6）
         [✨ 相似推荐]
-        [📝 写评价]                                 ← 9.3 已加
+        [📝 写评价] [🔰 申请验证]                    ← 9.3 写评价 + 申请验证（自证约课）
         [🔙 返回 X]                                 ← UX-3 第二批：X 随 source 切换
 
     提醒按钮 3 态（Phase 7.3 §四）：
@@ -374,11 +374,15 @@ def teacher_detail_kb(
         ),
     ])
 
-    # 写评价 (Phase 9.3)
+    # 写评价 (Phase 9.3) + 申请验证（用户向老师自证约课，复用 send_verification_to_teacher）
     rows.append([
         InlineKeyboardButton(
             text="📝 写评价",
             callback_data=f"review:start:{teacher_id}",
+        ),
+        InlineKeyboardButton(
+            text="🔰 申请验证",
+            callback_data=f"teacher:verify:{teacher_id}",
         ),
     ])
 
