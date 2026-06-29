@@ -17,10 +17,15 @@ from bot.web.api.admin_teacher_edits import (
 )
 from bot.web.api.admin_teachers import (
     delete_admin_teacher_album,
+    delete_admin_teacher_publish,
     get_admin_teacher_album,
+    get_admin_teacher_publish_status,
     get_admin_teachers,
     post_admin_teacher_album,
     post_admin_teacher_field,
+    post_admin_teacher_publish,
+    post_admin_teacher_publish_repost,
+    post_admin_teacher_publish_sync,
     post_admin_teacher_status,
 )
 from bot.web.api.admin_reimbursements import (
@@ -96,6 +101,12 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/admin/teachers/{id}/album", get_admin_teacher_album)
     app.router.add_post("/api/admin/teachers/{id}/album", post_admin_teacher_album)
     app.router.add_delete("/api/admin/teachers/{id}/album/{index}", delete_admin_teacher_album)
+    # 阶段2：频道档案帖（管理员发布/同步/重发/撤帖，admin+；薄封装 teacher_channel_publish）
+    app.router.add_get("/api/admin/teachers/{id}/publish-status", get_admin_teacher_publish_status)
+    app.router.add_post("/api/admin/teachers/{id}/publish", post_admin_teacher_publish)
+    app.router.add_post("/api/admin/teachers/{id}/publish/sync", post_admin_teacher_publish_sync)
+    app.router.add_post("/api/admin/teachers/{id}/publish/repost", post_admin_teacher_publish_repost)
+    app.router.add_delete("/api/admin/teachers/{id}/publish", delete_admin_teacher_publish)
     # P1：报销审核（仅 superadmin；同意=打款走 bot 深链，此处只做拒绝/激活/列表）
     app.router.add_get("/api/admin/reimbursements", get_reimbursements)
     app.router.add_post("/api/admin/reimbursements/{id}/reject", post_reject_reimbursement)

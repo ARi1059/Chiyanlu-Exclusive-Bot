@@ -490,6 +490,60 @@ export async function deleteAdminTeacherAlbumPhoto(
   return await r.json();
 }
 
+// 频道档案帖（管理员发布/同步/重发/撤帖，admin+；薄封装后端 teacher_channel_publish）
+
+export interface ApiPublishStatus {
+  published: boolean;
+  channel_msg_id: number | null;
+  media_count: number;
+  updated_at: string | null;
+}
+
+/** 频道档案帖发布结果；error 见后端 PublishError.reason（incomplete/no_channel/…）。 */
+export interface ApiPublishResult {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  missing?: string[];
+  edited?: boolean;
+  media_count?: number;
+}
+
+/** 老师频道档案帖状态；失败按未发布处理。 */
+export async function getAdminTeacherPublishStatus(teacherId: number): Promise<ApiPublishStatus> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/publish-status`);
+  if (!r.ok) return { published: false, channel_msg_id: null, media_count: 0, updated_at: null };
+  return (await r.json()) as ApiPublishStatus;
+}
+
+/** 首次发布档案帖到频道。 */
+export async function publishAdminTeacher(teacherId: number): Promise<ApiPublishResult> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/publish`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
+/** 同步频道帖文案（caption，绕过 60s 防抖）。 */
+export async function syncAdminTeacherCaption(teacherId: number): Promise<ApiPublishResult> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/publish/sync`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
+/** 重发档案帖（删旧媒体组 + 重发，相册改后用）。 */
+export async function repostAdminTeacher(teacherId: number): Promise<ApiPublishResult> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/publish/repost`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
+/** 撤帖（删频道帖，不删老师本身）。 */
+export async function unpublishAdminTeacher(teacherId: number): Promise<ApiPublishResult> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/publish`, { method: "DELETE" });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
 // ── 报销审核（仅超管）──────────────────────────────────────────────────────────
 /** 待审 + queued 报销列表。 */
 export async function getReimbursements(): Promise<ApiReimbursement[]> {

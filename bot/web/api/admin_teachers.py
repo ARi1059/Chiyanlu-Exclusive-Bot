@@ -4,8 +4,10 @@
     POST /api/admin/teachers/{id}/status  {action: enable|disable|delete|restore}
          enable/disable → ROLE_ADMIN+；delete(软删)/restore → ROLE_SUPERADMIN（破坏性）
     POST /api/admin/teachers/{id}/field   {field, value}  管理员直改字段（ROLE_ADMIN+，无审核）
+    *    /api/admin/teachers/{id}/album*    老师相册 看/加/删（ROLE_ADMIN+，即时生效）
+    *    /api/admin/teachers/{id}/publish*  频道档案帖 状态/发布/同步/重发/撤帖（ROLE_ADMIN+）
 
-复用 DB 名册/生命周期函数 + teacher_self_edit.admin_set_field（直改即时生效）。
+复用 DB 名册/生命周期函数 + teacher_self_edit.admin_set_field + teacher_channel_publish（发布薄封装）。
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from bot.database import (
     enable_teacher,
     get_all_teachers,
     get_deleted_teachers,
+    get_teacher_channel_post,
     get_teacher_counts,
     get_teacher_photos,
     remove_teacher,
@@ -27,7 +30,15 @@ from bot.database import (
     soft_delete_teacher,
 )
 from bot.services.teacher_self_edit import ADMIN_EDITABLE_FIELDS, admin_set_field
+from bot.utils.teacher_channel_publish import (
+    PublishError,
+    delete_teacher_post,
+    publish_teacher_post,
+    repost_teacher_post,
+    update_teacher_post_caption,
+)
 from bot.web.api.photo import album_payload, TEACHER_ALBUM_MAX
+from bot.web.keys import APP_BOT
 from bot.web.roles import ROLE_ADMIN, ROLE_SUPERADMIN
 
 logger = logging.getLogger(__name__)
@@ -203,3 +214,79 @@ async def delete_admin_teacher_album(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "bad_index"})
     count = len(await get_teacher_photos(tid))
     return web.json_response({"ok": True, "count": count})
+
+
+# ── 频道档案帖（阶段2：管理员发布/同步/重发/撤帖；薄封装 teacher_channel_publish）──
+# 发布逻辑是 bot-agnostic 纯函数，本层只取 bot + 调函数 + 映射 PublishError → JSON。
+# 全部 admin+（档案帖运营、可逆，不涉及老师账户）。
+
+def _bot(request: web.Request):
+    bot = request.app.get(APP_BOT)
+    if bot is None:
+        raise web.HTTPServiceUnavailable(reason="bot unavailable")
+    return bot
+
+
+def _publish_fail(e: PublishError) -> dict:
+    return {"ok": False, "error": e.reason, "message": str(e), "missing": e.missing}
+
+
+async def get_admin_teacher_publish_status(request: web.Request) -> web.Response:
+    """老师频道档案帖状态（admin+）：是否已发布 + 帖子元信息。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    post = await get_teacher_channel_post(tid)
+    return web.json_response({
+        "published": post is not None,
+        "channel_msg_id": post.get("channel_msg_id") if post else None,
+        "media_count": len(post.get("media_group_msg_ids") or []) if post else 0,
+        "updated_at": post.get("updated_at") if post else None,
+    })
+
+
+async def post_admin_teacher_publish(request: web.Request) -> web.Response:
+    """首次发布老师档案帖到频道（admin+）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    bot = _bot(request)
+    try:
+        result = await publish_teacher_post(bot, tid)
+    except PublishError as e:
+        return web.json_response(_publish_fail(e))
+    return web.json_response({"ok": True, **result})
+
+
+async def post_admin_teacher_publish_sync(request: web.Request) -> web.Response:
+    """同步频道帖 caption（admin+，force 绕过 60s debounce）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    bot = _bot(request)
+    try:
+        edited = await update_teacher_post_caption(bot, tid, force=True)
+    except PublishError as e:
+        return web.json_response(_publish_fail(e))
+    return web.json_response({"ok": True, "edited": bool(edited)})
+
+
+async def post_admin_teacher_publish_repost(request: web.Request) -> web.Response:
+    """重发档案帖（admin+，相册改后用：删旧媒体组 + 重发）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    bot = _bot(request)
+    try:
+        result = await repost_teacher_post(bot, tid)
+    except PublishError as e:
+        return web.json_response(_publish_fail(e))
+    return web.json_response({"ok": True, **result})
+
+
+async def delete_admin_teacher_publish(request: web.Request) -> web.Response:
+    """撤帖：删频道媒体组 + DB row（admin+，不删老师本身）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    bot = _bot(request)
+    try:
+        ok = await delete_teacher_post(bot, tid)
+    except PublishError as e:
+        return web.json_response(_publish_fail(e))
+    return web.json_response({"ok": bool(ok)})

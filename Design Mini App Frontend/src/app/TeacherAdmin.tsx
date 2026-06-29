@@ -2,7 +2,8 @@
  * 管理员老师管理（阶段2）。全屏 overlay + 返回键，懒加载。
  *
  * 名册按状态分（在册/已停用/已删除）+ 启停 + 软删/恢复（超管）+ 直改老师文字字段
- * （即时生效、无审核——管理员权威）。相册/封面、新老师录入、频道发布仍在 bot（后续阶段）。
+ * + 相册管理 + 频道档案帖发布/同步/重发/撤帖（均即时生效、无审核——管理员权威）。
+ * 新老师录入仍在 bot（需转发抽取 user_id，后续阶段）。
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronLeft } from "lucide-react";
@@ -10,7 +11,10 @@ import { showBackButton, hapticLight } from "../lib/tg";
 import {
   getAdminTeachers, setAdminTeacherStatus, setAdminTeacherField,
   getAdminTeacherAlbum, addAdminTeacherAlbumPhoto, deleteAdminTeacherAlbumPhoto, uploadImage,
+  getAdminTeacherPublishStatus, publishAdminTeacher, syncAdminTeacherCaption,
+  repostAdminTeacher, unpublishAdminTeacher,
   type Role, type ApiAdminTeacher, type AdminTeacherStatus, type ApiAlbumPhoto,
+  type ApiPublishStatus,
 } from "../lib/api";
 
 const TABS: { key: AdminTeacherStatus; label: string; countKey: "active" | "disabled" | "deleted" }[] = [
@@ -47,6 +51,11 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoMsg, setPhotoMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 频道发布（单一 state 对应当前展开的 openId 老师）
+  const [pub, setPub] = useState<ApiPublishStatus | null>(null);
+  const [pubBusy, setPubBusy] = useState(false);
+  const [pubMsg, setPubMsg] = useState<string | null>(null);
+  const [pendingDanger, setPendingDanger] = useState<"repost" | "unpublish" | null>(null);
 
   useEffect(() => showBackButton(onClose), [onClose]);
 
@@ -70,6 +79,17 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
       .catch(() => {});
     return () => { live = false; };
   }, [openId, mode]);
+
+  // 展开某老师时拉其频道发布状态；收起自动清空（防串台，同相册口径）。
+  useEffect(() => {
+    if (openId == null) { setPub(null); setPubMsg(null); setPendingDanger(null); return; }
+    let live = true;
+    const forId = openId;
+    getAdminTeacherPublishStatus(forId)
+      .then((s) => { if (live && openId === forId) setPub(s); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [openId]);
 
   const openTeacher = (t: ApiAdminTeacher) => {
     hapticLight();
@@ -141,6 +161,22 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
     setPhotoBusy(false);
   };
 
+  // 频道发布动作统一编排：跑 fn → 重拉状态 → 失败显示 PublishError 中文 message。
+  const runPublish = async (t: ApiAdminTeacher, fn: () => Promise<{ ok: boolean; error?: string; message?: string }>) => {
+    hapticLight();
+    setPendingDanger(null);
+    setPubBusy(true); setPubMsg(null);
+    const r = await fn();
+    if (!r.ok) {
+      setPubBusy(false);
+      setPubMsg(r.message || (r.error ? `失败（${r.error}）` : "操作失败，请重试"));
+      return;
+    }
+    const s = await getAdminTeacherPublishStatus(t.id);
+    setPub(s);
+    setPubBusy(false); setPubMsg(null);
+  };
+
   const statusBadge = (t: ApiAdminTeacher) => {
     if (t.is_deleted) return <span className="text-[10px] bg-[#e05b7a]/15 text-[#e05b7a] px-2 py-0.5 rounded-full">已删除</span>;
     if (!t.is_active) return <span className="text-[10px] bg-white/8 text-[#7d8d9e] px-2 py-0.5 rounded-full">已停用</span>;
@@ -202,6 +238,56 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
                         className={`${chip} ${mode === "edit" ? "bg-[#c4974a] text-[#0d1117]" : "bg-[#243447] text-[#aebac8]"}`}>✏️ 编辑资料</button>
                     )}
                   </div>
+
+                  {/* 频道发布（admin+，即时生效；改完资料/相册可直接同步/重发频道帖） */}
+                  {!t.is_deleted && (
+                    <div className="pt-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[#7d8d9e] text-[11px]">频道档案帖</span>
+                        {pub == null
+                          ? <span className="text-[10px] text-[#5a6b7c]">…</span>
+                          : pub.published
+                            ? <span className="text-[10px] bg-[#4fc97a]/15 text-[#4fc97a] px-2 py-0.5 rounded-full">✅ 已发布{pub.media_count ? `（${pub.media_count} 张）` : ""}</span>
+                            : <span className="text-[10px] bg-white/8 text-[#7d8d9e] px-2 py-0.5 rounded-full">未发布</span>}
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        {pub != null && !pub.published && (
+                          <button disabled={pubBusy} onClick={() => runPublish(t, () => publishAdminTeacher(t.id))}
+                            className={`${chip} bg-[#c4974a] text-[#0d1117]`}>📤 发布到频道</button>
+                        )}
+                        {pub != null && pub.published && (
+                          <>
+                            <button disabled={pubBusy} onClick={() => runPublish(t, () => syncAdminTeacherCaption(t.id))}
+                              className={`${chip} bg-[#243447] text-[#6b9ee8]`}>🔄 同步文案</button>
+                            <button disabled={pubBusy} onClick={() => { hapticLight(); setPendingDanger(pendingDanger === "repost" ? null : "repost"); setPubMsg(null); }}
+                              className={`${chip} bg-[#243447] text-[#e8a857]`}>♻️ 重发</button>
+                            <button disabled={pubBusy} onClick={() => { hapticLight(); setPendingDanger(pendingDanger === "unpublish" ? null : "unpublish"); setPubMsg(null); }}
+                              className={`${chip} bg-[#243447] text-[#e05b7a]`}>🗑 撤帖</button>
+                          </>
+                        )}
+                      </div>
+                      {/* 危险操作二次确认（重发删旧媒体组后重发；撤帖删频道帖） */}
+                      {pendingDanger && (
+                        <div className="bg-[#243447] rounded-lg p-2.5 space-y-2">
+                          <div className="text-[#aebac8] text-[11px] leading-relaxed">
+                            {pendingDanger === "repost"
+                              ? "重发会先删除频道里现有媒体组再重新发布（相册改动后用）。确认？"
+                              : "撤帖会删除频道里的档案帖（不删除老师本身，之后可重新发布）。确认？"}
+                          </div>
+                          <div className="flex gap-2">
+                            <button disabled={pubBusy}
+                              onClick={() => runPublish(t, () => pendingDanger === "repost" ? repostAdminTeacher(t.id) : unpublishAdminTeacher(t.id))}
+                              className={`${chip} ${pendingDanger === "unpublish" ? "bg-[#e05b7a] text-white" : "bg-[#e8a857] text-[#0d1117]"}`}>
+                              {pubBusy ? "处理中…" : pendingDanger === "repost" ? "确认重发" : "确认撤帖"}
+                            </button>
+                            <button disabled={pubBusy} onClick={() => { hapticLight(); setPendingDanger(null); }}
+                              className={`${chip} bg-[#1e2c3a] text-[#7d8d9e]`}>取消</button>
+                          </div>
+                        </div>
+                      )}
+                      {pubMsg && <div className="text-[11px] text-[#e05b7a]">{pubMsg}</div>}
+                    </div>
+                  )}
 
                   {/* 字段编辑（即时生效，无审核） */}
                   {mode === "edit" && !t.is_deleted && (

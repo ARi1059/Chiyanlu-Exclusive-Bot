@@ -14,6 +14,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import bot.web.api.admin_teachers as at_mod
 from bot.config import config
+from bot.utils.teacher_channel_publish import PublishError
 from bot.web.auth import issue_session
 from bot.web.server import create_web_app
 
@@ -460,3 +461,206 @@ def test_album_delete_invalid_index_400(monkeypatch):
             r = await c.delete("/api/admin/teachers/55/album/abc", headers=_hdr())
             assert r.status == 400
     _run(_t())
+
+
+# ============ 频道档案帖（publish-status / publish / sync / repost / delete）============
+# service（teacher_channel_publish）被 mock，bot 用 object() 占位（不真发 Telegram）。
+
+def _patch_publish(monkeypatch, *, status_post=None):
+    """fake 发布 service 函数；记录调用参数。默认成功。"""
+    calls = {}
+
+    async def fake_publish(bot, tid):
+        calls["publish"] = tid
+        return {"chat_id": -100123, "channel_msg_id": 555, "media_count": 3}
+
+    async def fake_sync(bot, tid, *, force=False):
+        calls["sync"] = (tid, force)
+        return True
+
+    async def fake_repost(bot, tid):
+        calls["repost"] = tid
+        return {"chat_id": -100123, "channel_msg_id": 777, "media_count": 2}
+
+    async def fake_delete(bot, tid):
+        calls["delete"] = tid
+        return True
+
+    async def fake_status(tid):
+        return status_post
+
+    monkeypatch.setattr(at_mod, "publish_teacher_post", fake_publish)
+    monkeypatch.setattr(at_mod, "update_teacher_post_caption", fake_sync)
+    monkeypatch.setattr(at_mod, "repost_teacher_post", fake_repost)
+    monkeypatch.setattr(at_mod, "delete_teacher_post", fake_delete)
+    monkeypatch.setattr(at_mod, "get_teacher_channel_post", fake_status)
+    return calls
+
+
+# --- publish-status（不需 bot）---
+
+def test_publish_status_requires_admin(monkeypatch):
+    _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/admin/teachers/55/publish-status", headers=_hdr(role="user"))
+            assert r.status == 403
+    _run(_t())
+
+
+def test_publish_status_unpublished(monkeypatch):
+    _patch_publish(monkeypatch, status_post=None)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/admin/teachers/55/publish-status", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["published"] is False and d["media_count"] == 0 and d["channel_msg_id"] is None
+    _run(_t())
+
+
+def test_publish_status_published(monkeypatch):
+    _patch_publish(monkeypatch, status_post={
+        "channel_msg_id": 555, "media_group_msg_ids": [555, 556, 557],
+        "updated_at": "2026-06-29 10:00:00",
+    })
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/admin/teachers/55/publish-status", headers=_hdr())
+            d = await r.json()
+            assert d["published"] is True and d["channel_msg_id"] == 555 and d["media_count"] == 3
+    _run(_t())
+
+
+# --- publish ---
+
+def test_publish_requires_admin(monkeypatch):
+    calls = _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish", headers=_hdr(role="user"))
+            assert r.status == 403
+    _run(_t())
+    assert "publish" not in calls
+
+
+def test_publish_bot_unavailable_503(monkeypatch):
+    _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers/55/publish", headers=_hdr())
+            assert r.status == 503
+    _run(_t())
+
+
+def test_publish_ok(monkeypatch):
+    calls = _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["media_count"] == 3 and d["channel_msg_id"] == 555
+    _run(_t())
+    assert calls["publish"] == 55
+
+
+def test_publish_incomplete_maps_error(monkeypatch):
+    async def fake_publish(bot, tid):
+        raise PublishError("incomplete", "档案缺以下必填字段，请先补全：price", missing=["price"])
+
+    monkeypatch.setattr(at_mod, "publish_teacher_post", fake_publish)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish", headers=_hdr())
+            assert r.status == 200  # 业务失败仍 200
+            d = await r.json()
+            assert d["ok"] is False and d["error"] == "incomplete" and d["missing"] == ["price"]
+            assert "必填" in d["message"]
+    _run(_t())
+
+
+def test_publish_no_channel_maps_error(monkeypatch):
+    async def fake_publish(bot, tid):
+        raise PublishError("no_channel", "未配置档案频道；请先配置 chat_id。")
+
+    monkeypatch.setattr(at_mod, "publish_teacher_post", fake_publish)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish", headers=_hdr())
+            d = await r.json()
+            assert d["ok"] is False and d["error"] == "no_channel" and d["missing"] == []
+    _run(_t())
+
+
+# --- sync ---
+
+def test_publish_sync_passes_force(monkeypatch):
+    calls = _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish/sync", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["edited"] is True
+    _run(_t())
+    # 管理员显式同步必须 force=True（绕过 60s debounce）
+    assert calls["sync"] == (55, True)
+
+
+def test_publish_sync_not_published(monkeypatch):
+    async def fake_sync(bot, tid, *, force=False):
+        raise PublishError("not_published", "该老师尚未发布档案帖，无法更新 caption。")
+
+    monkeypatch.setattr(at_mod, "update_teacher_post_caption", fake_sync)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish/sync", headers=_hdr())
+            d = await r.json()
+            assert d["ok"] is False and d["error"] == "not_published"
+    _run(_t())
+
+
+# --- repost / delete ---
+
+def test_publish_repost_ok(monkeypatch):
+    calls = _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/teachers/55/publish/repost", headers=_hdr())
+            assert r.status == 200 and (await r.json())["ok"] is True
+    _run(_t())
+    assert calls["repost"] == 55
+
+
+def test_publish_delete_ok(monkeypatch):
+    calls = _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.delete("/api/admin/teachers/55/publish", headers=_hdr())
+            assert r.status == 200 and (await r.json())["ok"] is True
+    _run(_t())
+    assert calls["delete"] == 55
+
+
+def test_publish_delete_requires_admin(monkeypatch):
+    calls = _patch_publish(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.delete("/api/admin/teachers/55/publish", headers=_hdr(role="user"))
+            assert r.status == 403
+    _run(_t())
+    assert "delete" not in calls
