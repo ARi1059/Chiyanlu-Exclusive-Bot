@@ -18,7 +18,7 @@ import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, Home, BarChart2, Users,
   CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList, Settings,
-  Eye, Shield, AlertTriangle,
+  Eye, Shield, AlertTriangle, ShieldCheck,
 } from "lucide-react";
 // recharts 重(~157KB gzip)且只在管理台/详情用 → 懒加载，普通用户首屏不下载。
 const TrendChart = lazy(() => import("./charts/TrendChart"));
@@ -33,10 +33,14 @@ const TeacherAdmin = lazy(() => import("./TeacherAdmin"));
 const ArchiveSettings = lazy(() => import("./ArchiveSettings"));
 // 审计日志台（§15.7）仅超管偶用 → 懒加载。
 const AuditLog = lazy(() => import("./AuditLog"));
+// 老师端后台（P4 拆分）仅老师用 → 懒加载。
+const TeacherBackend = lazy(() => import("./TeacherBackend"));
+type TeacherTab = "t_home" | "t_reviews" | "t_checkin" | "t_verify";
+const TEACHER_TABS: TeacherTab[] = ["t_home", "t_reviews", "t_checkin", "t_verify"];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
-type NavTab = "today" | "all" | "search" | "favorites" | "me" | "admin";
+type NavTab = "today" | "all" | "search" | "favorites" | "me" | "admin" | TeacherTab;
 
 interface Dim { subject: string; A: number }
 
@@ -1813,7 +1817,15 @@ function BottomNav({
   role: Role;
 }) {
   const isAdmin = role === "admin" || role === "superadmin";
-  const items: { key: NavTab; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
+  // 老师角色专属底栏（P4 拆分）：不出现用户向的 全部/搜索/收藏/我的。
+  const teacherItems: { key: NavTab; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
+    { key: "t_home",    label: "首页",     icon: Home        },
+    { key: "t_reviews", label: "我的评价", icon: Star        },
+    { key: "t_checkin", label: "签到",     icon: CheckCircle },
+    { key: "t_verify",  label: "申请验证", icon: ShieldCheck },
+  ];
+  const items: { key: NavTab; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] =
+    role === "teacher" ? teacherItems : [
     { key: "today",     label: "首页",  icon: Home     },
     { key: "all",       label: "全部",  icon: Users    },
     { key: "search",    label: "搜索",  icon: Search   },
@@ -1879,7 +1891,11 @@ export default function App() {
     (async () => {
       try {
         const me = await bootstrapAuth();
-        if (alive && me) setRole(me.role);
+        if (alive && me) {
+          setRole(me.role);
+          // 老师角色默认进老师端首页（而非用户向「今日开课」）。
+          if (me.role === "teacher") setTab("t_home");
+        }
       } catch { /* 鉴权失败：保留 mock 角色 */ }
       if (alive) await loadData();
       // 消费一次 startapp 深链参数（t.me/<bot>?startapp=<param>），路由到对应页。
@@ -1898,6 +1914,13 @@ export default function App() {
     })();
     return () => { alive = false; };
   }, [loadData]);
+
+  // 导航守卫：老师角色只能停在老师 4 tab；非老师误入老师 tab → 回各自首页。
+  useEffect(() => {
+    const onTeacherTab = TEACHER_TABS.includes(tab as TeacherTab);
+    if (role === "teacher" && !onTeacherTab) setTab("t_home");
+    else if (role !== "teacher" && onTeacherTab) setTab("today");
+  }, [role, tab]);
 
   // 详情打开时显示 Telegram 原生返回键；关闭/卸载时移除。
   useEffect(() => {
@@ -1995,6 +2018,11 @@ export default function App() {
               {tab === "favorites" && <FavoritesView teachers={teachers} onSelect={(t) => setSelectedTeacherId(t.id)} onFavorite={toggleFavorite} />}
               {tab === "me"        && <ProfileView   role={role} onRoleChange={handleRoleChange} teachers={teachers} profile={profile} />}
               {tab === "admin"     && <AdminView     role={role} />}
+              {TEACHER_TABS.includes(tab as TeacherTab) && (
+                <Suspense fallback={<div className="text-center py-14 text-[#7d8d9e] text-sm">加载中…</div>}>
+                  <TeacherBackend tab={tab as TeacherTab} profile={profile} onProfileRefresh={loadData} />
+                </Suspense>
+              )}
             </>
           )}
         </div>
