@@ -158,6 +158,13 @@ export function teacherPhotoUrl(id: number): string {
   return `/api/teachers/${id}/photo`;
 }
 
+/** 申请验证：让 bot 把我最近一条已通过评价 + 约课截图发给该老师（露名）。 */
+export async function requestVerification(teacherId: number): Promise<ModResult> {
+  const r = await apiFetch(`/api/teachers/${teacherId}/verify`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
 // ── 收藏（P1）──────────────────────────────────────────────────────────────────
 
 /** 收藏一个老师；成功返回 true。非 Telegram（无 token）返回 false。 */

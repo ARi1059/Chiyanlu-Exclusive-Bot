@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
-  bootstrapAuth, getTeachers, getTeacherDetail,
+  bootstrapAuth, getTeachers, getTeacherDetail, requestVerification,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   approveReview, rejectReview,
   claimReview, forceClaimReview, releaseReview,
@@ -1642,16 +1642,30 @@ function PhotoCarousel({ photos, name }: { photos: string[]; name: string }) {
 }
 
 function TeacherDetail({
-  teacher, onBack, onFavorite,
+  teacher, onBack, onFavorite, profile,
 }: {
   teacher: Teacher;
   onBack: () => void;
   onFavorite: () => void;
+  profile: ApiProfile | null;
 }) {
   const [detailTab, setDetailTab] = useState<"info" | "reviews">("info");
   const [detail, setDetail] = useState<ApiTeacherDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [writing, setWriting] = useState(false);
+  // 申请验证态
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const doVerify = async () => {
+    if (verifyBusy) return;
+    setVerifyBusy(true); setVerifyMsg(null); hapticLight();
+    const r = await requestVerification(teacher.id);
+    setVerifyBusy(false);
+    setVerifyMsg(r.ok
+      ? { ok: true, text: "✅ 已把你的约课证明发给老师" }
+      : { ok: false, text: r.error || "申请失败，请稍后重试" });
+  };
 
   // 详情（雷达 6 维 + 已通过评价）按需拉取；头部先用卡片数据即时渲染。
   useEffect(() => {
@@ -1780,6 +1794,23 @@ function TeacherDetail({
               >
                 ✍️ 写评价
               </button>
+
+              {/* 申请验证：向该老师自证「真实约课用户」（需有用户名 + 已通过评价） */}
+              <button
+                onClick={doVerify}
+                disabled={verifyBusy || !profile?.username}
+                className="w-full py-3 rounded-xl border border-[#6b9ee8] text-[#6b9ee8] text-sm font-medium active:scale-[0.98] transition-transform disabled:opacity-40"
+              >
+                {verifyBusy ? "发送中…" : "🔰 申请验证"}
+              </button>
+              {!profile?.username && (
+                <p className="text-[#7d8d9e] text-[11px] text-center">设置 Telegram 用户名后可用</p>
+              )}
+              {verifyMsg && (
+                <p className={`text-xs text-center ${verifyMsg.ok ? "text-[#4fc97a]" : "text-[#e05b7a]"}`}>
+                  {verifyMsg.text}
+                </p>
+              )}
             </div>
           </div>
         ) : (
@@ -2053,6 +2084,7 @@ export default function App() {
               teacher={selectedTeacher}
               onBack={() => setSelectedTeacherId(null)}
               onFavorite={() => toggleFavorite(selectedTeacher.id)}
+              profile={profile}
             />
           )}
         </div>

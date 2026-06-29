@@ -111,6 +111,17 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_favorites_teacher ON favorites(teacher_id);
             CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
 
+            CREATE TABLE IF NOT EXISTS teacher_verification_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                teacher_id INTEGER NOT NULL,
+                review_id INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_verify_user_teacher
+                ON teacher_verification_requests(user_id, teacher_id, created_at);
+
             CREATE TABLE IF NOT EXISTS teacher_edit_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 teacher_id INTEGER NOT NULL,
@@ -5285,6 +5296,43 @@ async def count_recent_user_reviews(user_id: int, seconds: int) -> int:
             "SELECT COUNT(*) AS c FROM teacher_reviews "
             "WHERE user_id = ? AND created_at >= datetime('now', ? || ' seconds')",
             (user_id, f"-{int(seconds)}"),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+    finally:
+        await db.close()
+
+
+# ============ 申请验证（用户向老师自证约课，详见 services/verification）============
+
+async def add_verification_request(
+    user_id: int, teacher_id: int, review_id: Optional[int],
+) -> Optional[int]:
+    """记录一次「申请验证」（用于冷却判定 + 历史）。返回新行 id。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "INSERT INTO teacher_verification_requests (user_id, teacher_id, review_id) "
+            "VALUES (?, ?, ?)",
+            (int(user_id), int(teacher_id), int(review_id) if review_id else None),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def count_recent_verifications(
+    user_id: int, teacher_id: int, seconds: int,
+) -> int:
+    """近 seconds 秒内该用户对该老师的「申请验证」次数（冷却判定）。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM teacher_verification_requests "
+            "WHERE user_id = ? AND teacher_id = ? "
+            "  AND created_at >= datetime('now', ? || ' seconds')",
+            (int(user_id), int(teacher_id), f"-{int(seconds)}"),
         )
         row = await cur.fetchone()
         return int(row["c"]) if row else 0

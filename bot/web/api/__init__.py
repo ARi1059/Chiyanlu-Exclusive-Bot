@@ -69,6 +69,7 @@ from bot.web.api.profile import (
 from bot.web.api.reviews import get_review_context, post_review
 from bot.web.api.teachers import get_teacher_detail, get_teachers
 from bot.web.api.uploads import post_upload
+from bot.web.api.verify import post_verify_teacher
 
 
 def register_api_routes(app: web.Application) -> None:
@@ -93,6 +94,8 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/teachers", get_teachers)
     app.router.add_get("/api/teachers/{id}", get_teacher_detail)
     app.router.add_get("/api/teachers/{id}/photo", get_teacher_photo)
+    # 申请验证：用户在老师页一键自证约课 → bot 把约课截图+摘要发老师（任意登录用户，资格在 service 校验）
+    app.router.add_post("/api/teachers/{id}/verify", post_verify_teacher)
     # P2：写评价（in-app 表单）
     app.router.add_get("/api/teachers/{id}/review-context", get_review_context)
     app.router.add_post("/api/reviews", post_review)
