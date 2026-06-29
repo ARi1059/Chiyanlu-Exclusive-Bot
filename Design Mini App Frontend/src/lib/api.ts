@@ -404,6 +404,60 @@ export async function rejectTeacherEdit(id: number, reason?: string): Promise<Mo
   return (await r.json()) as ModResult;
 }
 
+// ── 老师管理（阶段2：名册/启停/软删恢复/直改字段）──────────────────────────────
+
+export interface ApiAdminTeacher {
+  id: number;
+  name: string;
+  region: string;
+  price: string;
+  tags: string[];
+  button_text: string;
+  button_url: string;
+  is_active: boolean;
+  is_deleted: boolean;
+  has_photo: boolean;
+}
+
+export type AdminTeacherStatus = "active" | "disabled" | "deleted" | "all";
+export interface ApiAdminTeacherList {
+  teachers: ApiAdminTeacher[];
+  counts: { active: number; disabled: number; deleted: number };
+}
+
+/** 老师名册（按状态过滤）+ 三态计数；失败返回空。 */
+export async function getAdminTeachers(status: AdminTeacherStatus): Promise<ApiAdminTeacherList> {
+  const r = await apiFetch(`/api/admin/teachers?status=${status}`);
+  if (!r.ok) return { teachers: [], counts: { active: 0, disabled: 0, deleted: 0 } };
+  return (await r.json()) as ApiAdminTeacherList;
+}
+
+/** 启停/软删/恢复。enable/disable=admin；delete/restore=超管。 */
+export async function setAdminTeacherStatus(
+  id: number, action: "enable" | "disable" | "delete" | "restore",
+): Promise<{ ok: boolean; action?: string; error?: string }> {
+  const r = await apiFetch(`/api/admin/teachers/${id}/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
+/** 管理员直改老师字段（即时生效，无审核）。 */
+export async function setAdminTeacherField(
+  id: number, field: string, value: string,
+): Promise<{ ok: boolean; field?: string; label?: string; message?: string; error?: string }> {
+  const r = await apiFetch(`/api/admin/teachers/${id}/field`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ field, value }),
+  });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
 // ── 报销审核（仅超管）──────────────────────────────────────────────────────────
 /** 待审 + queued 报销列表。 */
 export async function getReimbursements(): Promise<ApiReimbursement[]> {

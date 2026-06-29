@@ -210,3 +210,98 @@ def test_submit_photo_deferred(monkeypatch):
 def test_editable_fields_matches_db_whitelist():
     from bot.database import TEACHER_EDITABLE_FIELDS
     assert tse.EDITABLE_FIELDS == TEACHER_EDITABLE_FIELDS
+
+
+# ============ admin_set_field（阶段2：管理员直改，即时生效、无审核/无通知）============
+
+def _patch_admin(monkeypatch, *, current=None, update_ok=True):
+    """patch get_teacher / update_teacher；current=老师当前字段值（用于幂等判定）。"""
+    calls = {"update": None, "get": 0}
+
+    async def fake_get_teacher(uid):
+        calls["get"] += 1
+        return {"user_id": uid, "display_name": "老师A", **(current or {})}
+
+    async def fake_update(uid, field, value):
+        calls["update"] = (uid, field, value)
+        return update_ok
+
+    monkeypatch.setattr(tse, "get_teacher", fake_get_teacher)
+    monkeypatch.setattr(tse, "update_teacher", fake_update)
+    return calls
+
+
+def test_admin_set_unknown_field_no_db(monkeypatch):
+    # 图片不在 ADMIN_EDITABLE_FIELDS（相册另走）→ 直接拒，不查 DB
+    async def boom(*a, **k):
+        raise AssertionError("未知字段不应查 DB")
+
+    monkeypatch.setattr(tse, "get_teacher", boom)
+    res = _run(tse.admin_set_field(555, "photo_file_id", "fid"))
+    assert res["ok"] is False and res["error"] == "unknown_field"
+
+
+def test_admin_set_text_applies_immediately(monkeypatch):
+    calls = _patch_admin(monkeypatch, current={"region": "旧"})
+    res = _run(tse.admin_set_field(555, "region", "心岛"))
+    assert res["ok"] is True and res["field"] == "region"
+    assert res["message"] == "✅ 地区已更新"
+    assert calls["update"] == (555, "region", "心岛")
+
+
+def test_admin_set_not_teacher(monkeypatch):
+    async def fake_get_teacher(uid):
+        return None
+
+    monkeypatch.setattr(tse, "get_teacher", fake_get_teacher)
+    res = _run(tse.admin_set_field(555, "region", "心岛"))
+    assert res["ok"] is False and res["error"] == "not_teacher"
+
+
+def test_admin_set_validation_error_short_circuits(monkeypatch):
+    async def boom(*a, **k):
+        raise AssertionError("校验失败不应查 DB")
+
+    monkeypatch.setattr(tse, "get_teacher", boom)
+    res = _run(tse.admin_set_field(555, "display_name", "名" * 41))
+    assert res["ok"] is False and res["error"] == "too_long"
+
+
+def test_admin_set_button_url_valid(monkeypatch):
+    # button_url 是老师改不了、仅管理员可改的字段；走真实 normalize_url
+    calls = _patch_admin(monkeypatch, current={"button_url": ""})
+    res = _run(tse.admin_set_field(555, "button_url", "https://t.me/abc"))
+    assert res["ok"] is True
+    assert calls["update"] == (555, "button_url", "https://t.me/abc")
+
+
+def test_admin_set_button_url_invalid_no_db(monkeypatch):
+    # 缺 scheme → normalize_url 判非法；不查 DB
+    async def boom(*a, **k):
+        raise AssertionError("非法链接不应查 DB")
+
+    monkeypatch.setattr(tse, "get_teacher", boom)
+    res = _run(tse.admin_set_field(555, "button_url", "t.me/abc"))
+    assert res["ok"] is False and res["error"] == "bad_url"
+
+
+def test_admin_set_button_url_empty_clears(monkeypatch):
+    # 允许空串=清空链接
+    calls = _patch_admin(monkeypatch, current={"button_url": "https://t.me/old"})
+    res = _run(tse.admin_set_field(555, "button_url", ""))
+    assert res["ok"] is True
+    assert calls["update"] == (555, "button_url", "")
+
+
+def test_admin_set_idempotent_same_value_ok(monkeypatch):
+    # update 返回 False（无行改动）但现值==新值 → 仍视为成功
+    _patch_admin(monkeypatch, current={"price": "1000P"}, update_ok=False)
+    res = _run(tse.admin_set_field(555, "price", "1000P"))
+    assert res["ok"] is True
+
+
+def test_admin_set_update_failed(monkeypatch):
+    # update 返回 False 且现值≠新值 → update_failed
+    _patch_admin(monkeypatch, current={"price": "1000P"}, update_ok=False)
+    res = _run(tse.admin_set_field(555, "price", "2000P"))
+    assert res["ok"] is False and res["error"] == "update_failed"

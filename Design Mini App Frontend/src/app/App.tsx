@@ -23,6 +23,8 @@ const RadarChartBox = lazy(() => import("./charts/RadarChartBox"));
 const WriteReview = lazy(() => import("./WriteReview"));
 // 老师编辑资料仅老师用 → 懒加载。
 const TeacherEditProfile = lazy(() => import("./TeacherEditProfile"));
+// 管理员老师管理（阶段2）仅管理员用 → 懒加载。
+const TeacherAdmin = lazy(() => import("./TeacherAdmin"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
@@ -1033,6 +1035,7 @@ function AdminView({ role }: { role: Role }) {
   const [reimbHandled, setReimbHandled] = useState<number[]>([]);
   const [edits, setEdits] = useState<ApiTeacherEdit[]>([]);          // 阶段1 待审老师资料
   const [editHandled, setEditHandled] = useState<number[]>([]);
+  const [showTeacherAdmin, setShowTeacherAdmin] = useState(false);  // 阶段2 老师管理 overlay
 
   const refresh = useCallback(async () => {
     const s = await getAdminStats();
@@ -1090,6 +1093,7 @@ function AdminView({ role }: { role: Role }) {
     : 0;
 
   return (
+    <>
     <div className="px-4 pt-4 pb-6 space-y-3">
       <div className="flex items-center justify-between mb-1">
         <div>
@@ -1154,6 +1158,23 @@ function AdminView({ role }: { role: Role }) {
           ))
         )}
       </div>
+
+      {/* 阶段2：老师管理入口（名册 / 启停 / 软删恢复 / 直改字段；端点内分级校验） */}
+      <button
+        onClick={() => { hapticLight(); setShowTeacherAdmin(true); }}
+        className="w-full bg-[#1e2c3a] rounded-2xl p-4 flex items-center justify-between text-left hover:bg-[#243447] active:bg-[#243447] transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
+            <Users size={15} className="text-[#c4974a]" />
+          </div>
+          <div>
+            <div className="text-[#e8e8e8] text-sm">老师管理</div>
+            <div className="text-[#7d8d9e] text-xs">名册 · 启停 · 编辑资料{isSuper ? " · 删除 / 恢复" : ""}</div>
+          </div>
+        </div>
+        <ChevronRight size={15} className="text-[#7d8d9e]" />
+      </button>
 
       {/* Pending reviews queue */}
       <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
@@ -1242,6 +1263,14 @@ function AdminView({ role }: { role: Role }) {
         </>
       )}
     </div>
+
+      {/* 阶段2：老师管理 overlay（懒加载，全屏；z-[60] 覆盖内容与底栏） */}
+      {showTeacherAdmin && (
+        <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+          <TeacherAdmin role={role} onClose={() => { setShowTeacherAdmin(false); void refresh(); }} />
+        </Suspense>
+      )}
+    </>
   );
 }
 

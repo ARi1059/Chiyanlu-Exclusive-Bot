@@ -15,6 +15,11 @@ from bot.web.api.admin_teacher_edits import (
     post_approve_teacher_edit,
     post_reject_teacher_edit,
 )
+from bot.web.api.admin_teachers import (
+    get_admin_teachers,
+    post_admin_teacher_field,
+    post_admin_teacher_status,
+)
 from bot.web.api.admin_reimbursements import (
     get_reimbursements,
     post_activate_reimbursement,
@@ -80,6 +85,10 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/admin/teacher-edits", get_teacher_edits)
     app.router.add_post("/api/admin/teacher-edits/{id}/approve", post_approve_teacher_edit)
     app.router.add_post("/api/admin/teacher-edits/{id}/reject", post_reject_teacher_edit)
+    # 阶段2：老师管理（名册/启停/软删恢复/直改字段；端点内分级校验）
+    app.router.add_get("/api/admin/teachers", get_admin_teachers)
+    app.router.add_post("/api/admin/teachers/{id}/status", post_admin_teacher_status)
+    app.router.add_post("/api/admin/teachers/{id}/field", post_admin_teacher_field)
     # P1：报销审核（仅 superadmin；同意=打款走 bot 深链，此处只做拒绝/激活/列表）
     app.router.add_get("/api/admin/reimbursements", get_reimbursements)
     app.router.add_post("/api/admin/reimbursements/{id}/reject", post_reject_reimbursement)

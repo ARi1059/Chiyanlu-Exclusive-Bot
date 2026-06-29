@@ -46,6 +46,12 @@ FIELD_LABELS: dict[str, str] = {
     "tags": "标签",
     "photo_file_id": "图片",
     "button_text": "按钮文本",
+    "button_url": "联系链接",
+}
+
+# 管理员可直改的字段（阶段2）：含老师自己改不了的 button_url；不含图片（相册另走）。
+ADMIN_EDITABLE_FIELDS: set[str] = {
+    "display_name", "region", "price", "tags", "button_text", "button_url",
 }
 
 # 文字字段（立即生效）。photo_file_id 走延后生效分支。
@@ -256,4 +262,50 @@ async def submit_field_edit(bot, teacher_id: int, field: str, raw_value) -> dict
         "field": field, "label": label,
         "message": f"✅ {label}修改已生效，管理员审核中（不通过会自动回滚）。",
         "error": None,
+    }
+
+
+async def admin_set_field(teacher_id: int, field: str, raw_value) -> dict:
+    """管理员直改任意老师的字段（阶段2）——即时生效、**不走审核、不通知**（管理员权威）。
+
+    与 submit_field_edit（老师自助、审核+回滚）区别：本函数直接 update_teacher 落库。
+    支持 ADMIN_EDITABLE_FIELDS（含老师改不了的 button_url）；不含图片（相册另走）。
+
+    Returns {ok, field, label, message, error?}。
+    """
+    label = FIELD_LABELS.get(field, field)
+
+    def _fail(code: str, msg: str) -> dict:
+        return {"ok": False, "field": field, "label": label, "message": msg, "error": code}
+
+    if field not in ADMIN_EDITABLE_FIELDS:
+        return _fail("unknown_field", "无效字段")
+
+    if field == "button_url":
+        # 链接：normalize 校验；允许空串=清空链接。
+        text = (raw_value or "").strip() if isinstance(raw_value, str) else ""
+        if text:
+            from bot.utils.url import normalize_url
+            normalized = normalize_url(text)
+            if not normalized:
+                return _fail("bad_url", "链接格式不正确（需 http/https）")
+        else:
+            normalized = ""
+    else:
+        ok, normalized, err = validate_field(field, raw_value)
+        if not ok:
+            return _fail(err or "update_failed", error_message(err or "update_failed"))
+
+    teacher = await get_teacher(teacher_id)
+    if not teacher:
+        return _fail("not_teacher", "老师不存在")
+
+    updated = await update_teacher(teacher_id, field, normalized)
+    # update_teacher 返回是否真有行被改；同值时 total_changes 可能为 0，但视为成功。
+    if not updated and teacher.get(field) != normalized:
+        return _fail("update_failed", "修改失败，请稍后重试")
+
+    return {
+        "ok": True, "field": field, "label": label,
+        "message": f"✅ {label}已更新", "error": None,
     }
