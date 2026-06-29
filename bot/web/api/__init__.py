@@ -24,13 +24,16 @@ from bot.web.api.favorites import delete_favorite, get_favorites, post_favorite
 from bot.web.api.me import get_me
 from bot.web.api.photo import get_teacher_photo
 from bot.web.api.profile import (
+    delete_teacher_album,
     get_my_points,
     get_my_reviews,
     get_profile,
+    get_teacher_album,
     get_teacher_edit_profile,
     get_teacher_home,
     post_checkin,
     post_notify,
+    post_teacher_album,
     post_teacher_edit_profile,
 )
 from bot.web.api.reviews import get_review_context, post_review
@@ -52,6 +55,10 @@ def register_api_routes(app: web.Application) -> None:
     # §16.3：老师自助编辑资料（仅 teacher，端点内校验；同源 service，过审+回滚）
     app.router.add_get("/api/me/teacher-profile", get_teacher_edit_profile)
     app.router.add_post("/api/me/teacher-profile", post_teacher_edit_profile)
+    # 老师自助多图相册（即时生效，不走审核；仅 teacher）
+    app.router.add_get("/api/me/teacher-album", get_teacher_album)
+    app.router.add_post("/api/me/teacher-album", post_teacher_album)
+    app.router.add_delete("/api/me/teacher-album/{index}", delete_teacher_album)
     # P1：老师数据（MiniApp）
     app.router.add_get("/api/teachers", get_teachers)
     app.router.add_get("/api/teachers/{id}", get_teacher_detail)

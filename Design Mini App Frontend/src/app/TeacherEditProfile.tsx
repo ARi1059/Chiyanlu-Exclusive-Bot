@@ -1,17 +1,17 @@
 /**
  * 老师自助编辑资料一屏表单（§16.3）。全屏 overlay + Telegram 原生返回键，懒加载。
  *
- * 每个字段独立保存（对应后端「一字段一条审核单」模型）：
- *   文字字段（艺名/地区/价格/标签/按钮文本）保存后立即生效、管理员审核、不通过回滚；
- *   封面图走 uploadImage → file_id → 提交，审核通过后才切图（期间展示旧图）。
+ * 文字字段（艺名/地区/价格/标签/按钮文本）：保存后立即生效、管理员审核、不通过回滚。
+ * 照片相册：多图管理（看/加/删，最多 10 张，第一张即封面）——即时生效、不走审核。
  * button_url 锁定，仅展示。所有校验后端 service 复刻（前端校验仅体验）。
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronLeft } from "lucide-react";
 import { showBackButton, hapticLight } from "../lib/tg";
 import {
   getTeacherEditProfile, submitTeacherFieldEdit, uploadImage,
-  type TeacherEditProfile as TEP,
+  getTeacherAlbum, addTeacherAlbumPhoto, deleteTeacherAlbumPhoto,
+  type TeacherEditProfile as TEP, type ApiAlbumPhoto,
 } from "../lib/api";
 
 // 文字字段：key + 中文标签 + 是否多行。
@@ -33,9 +33,12 @@ export default function TeacherEditProfile({ onClose }: { onClose: () => void })
   // 各字段的草稿值 + 保存态。
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [save, setSave] = useState<Record<string, SaveState>>({});
+  // 相册（即时生效）
+  const [album, setAlbum] = useState<ApiAlbumPhoto[]>([]);
+  const [albumMax, setAlbumMax] = useState(10);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoMsg, setPhotoMsg] = useState<string | null>(null);
-  const [hasPhoto, setHasPhoto] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => showBackButton(onClose), [onClose]);
 
@@ -52,12 +55,20 @@ export default function TeacherEditProfile({ onClose }: { onClose: () => void })
           button_text: d.fields.button_text,
           tags: (d.fields.tags || []).join(" "),
         });
-        setHasPhoto(d.fields.has_photo);
         setLoading(false);
       })
       .catch(() => { if (live) setLoading(false); });
+    getTeacherAlbum()
+      .then((a) => { if (live) { setAlbum(a.photos); setAlbumMax(a.max || 10); } })
+      .catch(() => {});
     return () => { live = false; };
   }, []);
+
+  const reloadAlbum = async () => {
+    const a = await getTeacherAlbum();
+    setAlbum(a.photos);
+    setAlbumMax(a.max || 10);
+  };
 
   const setFieldSave = (field: string, s: SaveState) =>
     setSave((prev) => ({ ...prev, [field]: s }));
@@ -69,15 +80,29 @@ export default function TeacherEditProfile({ onClose }: { onClose: () => void })
     setFieldSave(field, { busy: false, msg: r.message, ok: r.ok });
   };
 
-  const onPickPhoto = async (file: File) => {
+  const onAddPhoto = async (file: File) => {
     hapticLight();
     setPhotoBusy(true); setPhotoMsg(null);
     const fileId = await uploadImage(file);
     if (!fileId) { setPhotoBusy(false); setPhotoMsg("图片上传失败，请重试"); return; }
-    const r = await submitTeacherFieldEdit("photo_file_id", fileId);
+    const r = await addTeacherAlbumPhoto(fileId);
+    if (!r.ok) {
+      setPhotoBusy(false);
+      setPhotoMsg(r.message || (r.error === "full" ? `相册已满（最多 ${albumMax} 张）` : "添加失败"));
+      return;
+    }
+    await reloadAlbum();
     setPhotoBusy(false);
-    setPhotoMsg(r.message);
-    if (r.ok) setHasPhoto(true);
+    setPhotoMsg(null);
+  };
+
+  const onDeletePhoto = async (index: number) => {
+    hapticLight();
+    setPhotoBusy(true); setPhotoMsg(null);
+    const r = await deleteTeacherAlbumPhoto(index);
+    if (!r.ok) { setPhotoBusy(false); setPhotoMsg("删除失败，请重试"); return; }
+    await reloadAlbum();
+    setPhotoBusy(false);
   };
 
   return (
@@ -96,8 +121,8 @@ export default function TeacherEditProfile({ onClose }: { onClose: () => void })
       ) : (
         <div className="px-4 py-4 space-y-3">
           <p className="text-[#7d8d9e] text-xs leading-relaxed">
-            修改后立即生效并提交管理员审核，<span className="text-[#e8a857]">如不通过会自动回滚</span>。
-            封面图为审核通过后才切换（期间展示旧图）。
+            文字资料保存后立即生效并提交管理员审核，<span className="text-[#e8a857]">如不通过会自动回滚</span>。
+            照片相册即时生效（第一张为封面，最多 {albumMax} 张）。
           </p>
 
           {/* 文字字段 */}
@@ -163,21 +188,56 @@ export default function TeacherEditProfile({ onClose }: { onClose: () => void })
             );
           })()}
 
-          {/* 封面图 */}
-          <div className="bg-[#1e2c3a] rounded-2xl p-4 space-y-2">
+          {/* 照片相册（即时生效，多图管理） */}
+          <div className="bg-[#1e2c3a] rounded-2xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-[#aebac8] text-sm">封面图 {hasPhoto ? "（已上传）" : "（空）"}</span>
-              <label className={`text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer ${photoBusy ? "bg-[#243447] text-[#7d8d9e] opacity-60" : "bg-[#c4974a] text-[#0d1117]"}`}>
-                {photoBusy ? "上传中…" : "上传新图"}
-                <input
-                  type="file" accept="image/*" className="hidden" disabled={photoBusy}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickPhoto(f); }}
-                />
-              </label>
+              <span className="text-[#aebac8] text-sm">照片相册</span>
+              <span className="text-[#7d8d9e] text-xs">{album.length}/{albumMax}</span>
             </div>
-            <div className="text-[#7d8d9e] text-xs">审核通过后才切换到新图，期间展示旧图。</div>
+
+            {album.length > 0 ? (
+              <div className="grid grid-cols-3 gap-2">
+                {album.map((p) => (
+                  <div key={`${p.index}-${p.url}`} className="relative aspect-square rounded-xl overflow-hidden bg-[#243447]">
+                    {p.url && (
+                      <img src={p.url} alt="" className="w-full h-full object-cover" />
+                    )}
+                    {p.index === 0 && (
+                      <span className="absolute bottom-1 left-1 text-[10px] bg-[#c4974a] text-[#0d1117] px-1.5 py-0.5 rounded-full font-medium">封面</span>
+                    )}
+                    <button
+                      onClick={() => onDeletePhoto(p.index)}
+                      disabled={photoBusy}
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/55 text-white text-sm leading-none flex items-center justify-center active:scale-90 disabled:opacity-50"
+                      aria-label="删除"
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[#7d8d9e] text-xs py-3 text-center">还没有照片，点下方添加 👇</div>
+            )}
+
+            <label className={`block text-center text-xs px-3 py-2.5 rounded-xl font-medium cursor-pointer ${
+              photoBusy || album.length >= albumMax
+                ? "bg-[#243447] text-[#7d8d9e] opacity-60 pointer-events-none"
+                : "bg-[#c4974a] text-[#0d1117]"
+            }`}>
+              {photoBusy ? "处理中…" : album.length >= albumMax ? `相册已满（${albumMax} 张）` : "➕ 添加照片"}
+              <input
+                ref={fileRef}
+                type="file" accept="image/*" className="hidden"
+                disabled={photoBusy || album.length >= albumMax}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onAddPhoto(f);
+                  if (fileRef.current) fileRef.current.value = "";  // 允许连续选同名文件
+                }}
+              />
+            </label>
+            <div className="text-[#7d8d9e] text-xs">第一张为封面，相册更改即时生效。</div>
             {photoMsg && (
-              <div className={`text-xs ${photoMsg.includes("失败") ? "text-[#e05b7a]" : "text-[#4fc97a]"}`}>{photoMsg}</div>
+              <div className="text-xs text-[#e05b7a]">{photoMsg}</div>
             )}
           </div>
 

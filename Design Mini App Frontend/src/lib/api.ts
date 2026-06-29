@@ -574,3 +574,37 @@ export async function submitTeacherFieldEdit(
   }
   return data as FieldEditResult;
 }
+
+// ── 老师自助多图相册（即时生效）────────────────────────────────────────────────
+
+export interface ApiAlbumPhoto { index: number; url: string | null }
+export interface ApiTeacherAlbum { photos: ApiAlbumPhoto[]; count: number; max: number }
+
+/** 老师当前相册（带签名 + cache-bust URL）；失败返回空相册。 */
+export async function getTeacherAlbum(): Promise<ApiTeacherAlbum> {
+  const r = await apiFetch("/api/me/teacher-album");
+  if (!r.ok) return { photos: [], count: 0, max: 10 };
+  return (await r.json()) as ApiTeacherAlbum;
+}
+
+/** 追加一张到相册（file_id 先经 uploadImage 换得）。满 10 返回 ok:false + error:"full"。 */
+export async function addTeacherAlbumPhoto(
+  fileId: string,
+): Promise<{ ok: boolean; count?: number; error?: string; message?: string }> {
+  const r = await apiFetch("/api/me/teacher-album", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
+/** 删除相册第 index 张（0-based）。 */
+export async function deleteTeacherAlbumPhoto(
+  index: number,
+): Promise<{ ok: boolean; count?: number; error?: string }> {
+  const r = await apiFetch(`/api/me/teacher-album/${index}`, { method: "DELETE" });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}

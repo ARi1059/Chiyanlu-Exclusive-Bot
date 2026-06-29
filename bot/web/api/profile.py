@@ -18,11 +18,13 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     _today_str_local,
+    add_teacher_photo,
     count_user_reviews,
     get_config,
     get_teacher,
     get_teacher_channel_post,
     get_teacher_full_profile,
+    get_teacher_photos,
     get_user,
     get_user_total_points,
     is_checked_in,
@@ -30,16 +32,20 @@ from bot.database import (
     list_user_favorites,
     list_user_point_transactions,
     list_user_reviews_paged,
+    remove_teacher_photo,
     set_user_notify_enabled,
 )
 from bot.web.keys import APP_BOT, get_bot_username
 from bot.web.roles import ROLE_TEACHER
+from bot.web.api.photo import signed_photo_url
 from bot.services.teacher_checkin import perform_checkin
 from bot.services.teacher_self_edit import (
     EDITABLE_FIELDS,
     FIELD_LABELS,
     submit_field_edit,
 )
+
+TEACHER_ALBUM_MAX = 10
 
 logger = logging.getLogger(__name__)
 
@@ -256,4 +262,74 @@ async def post_teacher_edit_profile(request: web.Request) -> web.Response:
     result = await submit_field_edit(bot, uid, field, value)
     # 业务校验失败（空/过长/同值/空标签等）返回 200 + ok:false，前端内联提示。
     return web.json_response(result)
+
+
+# ── 老师自助多图相册（即时生效，不走审核）──────────────────────────────────────
+
+def _album_payload(request: web.Request, uid: int, file_ids: list[str]) -> dict:
+    """组装相册响应：每张带签名 URL + cache-bust（按 file_id 片段）。
+
+    照片端点回 max-age=86400 且 URL 含 ?sig=&i=N；删/换图后同一 i 指向新 file_id，
+    必须用按内容变化的 &v= 破除浏览器缓存（端点忽略未知 query）。
+    """
+    photos = []
+    for i, fid in enumerate(file_ids):
+        url = signed_photo_url(request, uid, True, i)
+        if url:
+            url = f"{url}{'&' if '?' in url else '?'}v={str(fid)[:8]}"
+        photos.append({"index": i, "url": url})
+    return {"photos": photos, "count": len(file_ids), "max": TEACHER_ALBUM_MAX}
+
+
+async def get_teacher_album(request: web.Request) -> web.Response:
+    """老师自助相册：当前照片列表（仅 teacher）。"""
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    file_ids = await get_teacher_photos(uid)
+    return web.json_response(_album_payload(request, uid, file_ids))
+
+
+async def post_teacher_album(request: web.Request) -> web.Response:
+    """追加一张到相册（即时生效）。body: {file_id}（先经 /api/uploads 换得）。"""
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="invalid json body")
+    file_id = str((body or {}).get("file_id") or "").strip()
+    if not file_id:
+        raise web.HTTPBadRequest(reason="missing file_id")
+
+    before = await get_teacher_photos(uid)
+    if len(before) >= TEACHER_ALBUM_MAX:
+        return web.json_response({
+            "ok": False, "error": "full", "count": len(before),
+            "message": f"相册已满（最多 {TEACHER_ALBUM_MAX} 张），请先删除再添加。",
+        })
+    count = await add_teacher_photo(uid, file_id)
+    return web.json_response({"ok": True, "count": count})
+
+
+async def delete_teacher_album(request: web.Request) -> web.Response:
+    """删除相册第 index 张（0-based，即时生效）。"""
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    try:
+        index = int(request.match_info["index"])
+    except (KeyError, ValueError):
+        raise web.HTTPBadRequest(reason="invalid index")
+    # DB remove_teacher_photo 是 1-based；越界返回 False。
+    ok = await remove_teacher_photo(uid, index + 1)
+    if not ok:
+        return web.json_response({"ok": False, "error": "bad_index"})
+    count = len(await get_teacher_photos(uid))
+    return web.json_response({"ok": True, "count": count})
+
 
