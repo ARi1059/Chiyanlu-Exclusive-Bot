@@ -458,6 +458,38 @@ export async function setAdminTeacherField(
   return await r.json();
 }
 
+// 管理员改任意老师相册（即时生效，admin+；语义同老师自助版，仅多 teacherId）。
+// 复用 ApiTeacherAlbum / ApiAlbumPhoto 类型（下方定义；TS 类型与声明顺序无关）。
+
+/** 管理员看任意老师的相册（带签名 + cache-bust URL）；失败返回空相册。 */
+export async function getAdminTeacherAlbum(teacherId: number): Promise<ApiTeacherAlbum> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/album`);
+  if (!r.ok) return { photos: [], count: 0, max: 10 };
+  return (await r.json()) as ApiTeacherAlbum;
+}
+
+/** 管理员给任意老师相册追加一张（file_id 先经 uploadImage 换得）。满额返回 ok:false+error:"full"。 */
+export async function addAdminTeacherAlbumPhoto(
+  teacherId: number, fileId: string,
+): Promise<{ ok: boolean; count?: number; error?: string; message?: string }> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/album`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
+/** 管理员删除任意老师相册第 index 张（0-based）。 */
+export async function deleteAdminTeacherAlbumPhoto(
+  teacherId: number, index: number,
+): Promise<{ ok: boolean; count?: number; error?: string }> {
+  const r = await apiFetch(`/api/admin/teachers/${teacherId}/album/${index}`, { method: "DELETE" });
+  if (!r.ok) return { ok: false, error: `http_${r.status}` };
+  return await r.json();
+}
+
 // ── 报销审核（仅超管）──────────────────────────────────────────────────────────
 /** 待审 + queued 报销列表。 */
 export async function getReimbursements(): Promise<ApiReimbursement[]> {

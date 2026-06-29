@@ -15,15 +15,19 @@ import logging
 from aiohttp import web
 
 from bot.database import (
+    add_teacher_photo,
     enable_teacher,
     get_all_teachers,
     get_deleted_teachers,
     get_teacher_counts,
+    get_teacher_photos,
     remove_teacher,
+    remove_teacher_photo,
     restore_teacher,
     soft_delete_teacher,
 )
 from bot.services.teacher_self_edit import ADMIN_EDITABLE_FIELDS, admin_set_field
+from bot.web.api.photo import album_payload, TEACHER_ALBUM_MAX
 from bot.web.roles import ROLE_ADMIN, ROLE_SUPERADMIN
 
 logger = logging.getLogger(__name__)
@@ -149,3 +153,53 @@ async def post_admin_teacher_field(request: web.Request) -> web.Response:
 
     result = await admin_set_field(tid, field, value)
     return web.json_response(result)
+
+
+# ── 老师相册（阶段2：管理员改任意老师相册，即时生效、无审核）──────────────────
+# 语义照搬老师端 /api/me/teacher-album（profile.py），差异仅：门禁 admin+、
+# teacher_id 取自 URL（而非 session）。复用 DB 相册函数 + photo.album_payload。
+
+async def get_admin_teacher_album(request: web.Request) -> web.Response:
+    """指定老师的相册照片列表（admin+）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    file_ids = await get_teacher_photos(tid)
+    return web.json_response(album_payload(request, tid, file_ids))
+
+
+async def post_admin_teacher_album(request: web.Request) -> web.Response:
+    """给指定老师相册追加一张（admin+）。body: {file_id}（先经 /api/uploads 换得）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="invalid json body")
+    file_id = str((body or {}).get("file_id") or "").strip()
+    if not file_id:
+        raise web.HTTPBadRequest(reason="missing file_id")
+
+    before = await get_teacher_photos(tid)
+    if len(before) >= TEACHER_ALBUM_MAX:
+        return web.json_response({
+            "ok": False, "error": "full", "count": len(before),
+            "message": f"相册已满（最多 {TEACHER_ALBUM_MAX} 张），请先删除再添加。",
+        })
+    count = await add_teacher_photo(tid, file_id)
+    return web.json_response({"ok": True, "count": count})
+
+
+async def delete_admin_teacher_album(request: web.Request) -> web.Response:
+    """删除指定老师相册第 index 张（0-based，即时生效）。"""
+    _require_admin(request)
+    tid = _teacher_id(request)
+    try:
+        index = int(request.match_info["index"])
+    except (KeyError, ValueError):
+        raise web.HTTPBadRequest(reason="invalid index")
+    # DB remove_teacher_photo 是 1-based；越界返回 False。
+    ok = await remove_teacher_photo(tid, index + 1)
+    if not ok:
+        return web.json_response({"ok": False, "error": "bad_index"})
+    count = len(await get_teacher_photos(tid))
+    return web.json_response({"ok": True, "count": count})

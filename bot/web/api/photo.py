@@ -46,6 +46,25 @@ def signed_photo_url(request: web.Request, teacher_id: int, has_photo: bool, ind
     return base + (f"&i={index}" if index else "")
 
 
+TEACHER_ALBUM_MAX = 10
+
+
+def album_payload(request: web.Request, teacher_id: int, file_ids: list[str]) -> dict:
+    """组装相册响应：每张带签名 URL + cache-bust（按 file_id 片段）。
+
+    照片端点回 max-age=86400 且 URL 含 ?sig=&i=N；删/换图后同一 i 指向新 file_id，
+    必须用按内容变化的 &v= 破除浏览器缓存（端点忽略未知 query）。
+    老师自助（profile）与管理员改他人相册（admin_teachers）共用，杜绝漂移。
+    """
+    photos = []
+    for i, fid in enumerate(file_ids):
+        url = signed_photo_url(request, teacher_id, True, i)
+        if url:
+            url = f"{url}{'&' if '?' in url else '?'}v={str(fid)[:8]}"
+        photos.append({"index": i, "url": url})
+    return {"photos": photos, "count": len(file_ids), "max": TEACHER_ALBUM_MAX}
+
+
 # file_id → (content_type, bytes)。OrderedDict 当简易 LRU，超额淘汰最旧。
 _CACHE: "OrderedDict[str, tuple[str, bytes]]" = OrderedDict()
 _CACHE_MAX = 128

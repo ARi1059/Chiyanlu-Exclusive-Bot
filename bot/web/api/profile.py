@@ -37,15 +37,13 @@ from bot.database import (
 )
 from bot.web.keys import APP_BOT, get_bot_username
 from bot.web.roles import ROLE_TEACHER
-from bot.web.api.photo import signed_photo_url
+from bot.web.api.photo import album_payload, TEACHER_ALBUM_MAX
 from bot.services.teacher_checkin import perform_checkin
 from bot.services.teacher_self_edit import (
     EDITABLE_FIELDS,
     FIELD_LABELS,
     submit_field_edit,
 )
-
-TEACHER_ALBUM_MAX = 10
 
 logger = logging.getLogger(__name__)
 
@@ -266,21 +264,6 @@ async def post_teacher_edit_profile(request: web.Request) -> web.Response:
 
 # ── 老师自助多图相册（即时生效，不走审核）──────────────────────────────────────
 
-def _album_payload(request: web.Request, uid: int, file_ids: list[str]) -> dict:
-    """组装相册响应：每张带签名 URL + cache-bust（按 file_id 片段）。
-
-    照片端点回 max-age=86400 且 URL 含 ?sig=&i=N；删/换图后同一 i 指向新 file_id，
-    必须用按内容变化的 &v= 破除浏览器缓存（端点忽略未知 query）。
-    """
-    photos = []
-    for i, fid in enumerate(file_ids):
-        url = signed_photo_url(request, uid, True, i)
-        if url:
-            url = f"{url}{'&' if '?' in url else '?'}v={str(fid)[:8]}"
-        photos.append({"index": i, "url": url})
-    return {"photos": photos, "count": len(file_ids), "max": TEACHER_ALBUM_MAX}
-
-
 async def get_teacher_album(request: web.Request) -> web.Response:
     """老师自助相册：当前照片列表（仅 teacher）。"""
     session = request["session"]
@@ -288,7 +271,7 @@ async def get_teacher_album(request: web.Request) -> web.Response:
     if session["role"] != ROLE_TEACHER:
         raise web.HTTPForbidden(reason="teacher only")
     file_ids = await get_teacher_photos(uid)
-    return web.json_response(_album_payload(request, uid, file_ids))
+    return web.json_response(album_payload(request, uid, file_ids))
 
 
 async def post_teacher_album(request: web.Request) -> web.Response:

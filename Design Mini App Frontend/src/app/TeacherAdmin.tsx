@@ -4,12 +4,13 @@
  * 名册按状态分（在册/已停用/已删除）+ 启停 + 软删/恢复（超管）+ 直改老师文字字段
  * （即时生效、无审核——管理员权威）。相册/封面、新老师录入、频道发布仍在 bot（后续阶段）。
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronLeft } from "lucide-react";
 import { showBackButton, hapticLight } from "../lib/tg";
 import {
   getAdminTeachers, setAdminTeacherStatus, setAdminTeacherField,
-  type Role, type ApiAdminTeacher, type AdminTeacherStatus,
+  getAdminTeacherAlbum, addAdminTeacherAlbumPhoto, deleteAdminTeacherAlbumPhoto, uploadImage,
+  type Role, type ApiAdminTeacher, type AdminTeacherStatus, type ApiAlbumPhoto,
 } from "../lib/api";
 
 const TABS: { key: AdminTeacherStatus; label: string; countKey: "active" | "disabled" | "deleted" }[] = [
@@ -40,6 +41,12 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [fieldSave, setFieldSave] = useState<Record<string, SaveState>>({});
   const [busy, setBusy] = useState(false);
+  // 相册（即时生效；单一 state 对应当前展开的 openId 老师）
+  const [album, setAlbum] = useState<ApiAlbumPhoto[]>([]);
+  const [albumMax, setAlbumMax] = useState(10);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoMsg, setPhotoMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => showBackButton(onClose), [onClose]);
 
@@ -52,6 +59,17 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
   }, []);
 
   useEffect(() => { void load(status); }, [status, load]);
+
+  // 进入「编辑资料」时按当前 openId 拉该老师相册；切老师/退出 edit 自动清空（防串台）。
+  useEffect(() => {
+    if (openId == null || mode !== "edit") { setAlbum([]); setPhotoMsg(null); return; }
+    let live = true;
+    const forId = openId;
+    getAdminTeacherAlbum(forId)
+      .then((a) => { if (live && openId === forId) { setAlbum(a.photos); setAlbumMax(a.max || 10); } })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [openId, mode]);
 
   const openTeacher = (t: ApiAdminTeacher) => {
     hapticLight();
@@ -87,6 +105,40 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
         ...(field !== "display_name" && field !== "tags" ? { [field]: draft[field] ?? "" } : {}),
       } as ApiAdminTeacher : x));
     }
+  };
+
+  const reloadAlbum = async (tid: number) => {
+    const a = await getAdminTeacherAlbum(tid);
+    setAlbum(a.photos); setAlbumMax(a.max || 10);
+    return a;
+  };
+  const syncHasPhoto = (id: number, has: boolean) =>
+    setTeachers((prev) => prev.map((x) => x.id === id ? { ...x, has_photo: has } : x));
+
+  const onAddPhoto = async (t: ApiAdminTeacher, file: File) => {
+    hapticLight();
+    setPhotoBusy(true); setPhotoMsg(null);
+    const fileId = await uploadImage(file);
+    if (!fileId) { setPhotoBusy(false); setPhotoMsg("图片上传失败，请重试"); return; }
+    const r = await addAdminTeacherAlbumPhoto(t.id, fileId);
+    if (!r.ok) {
+      setPhotoBusy(false);
+      setPhotoMsg(r.message || (r.error === "full" ? `相册已满（最多 ${albumMax} 张）` : "添加失败"));
+      return;
+    }
+    const a = await reloadAlbum(t.id);
+    syncHasPhoto(t.id, a.count > 0);
+    setPhotoBusy(false); setPhotoMsg(null);
+  };
+
+  const onDeletePhoto = async (t: ApiAdminTeacher, index: number) => {
+    hapticLight();
+    setPhotoBusy(true); setPhotoMsg(null);
+    const r = await deleteAdminTeacherAlbumPhoto(t.id, index);
+    if (!r.ok) { setPhotoBusy(false); setPhotoMsg("删除失败，请重试"); return; }
+    const a = await reloadAlbum(t.id);
+    syncHasPhoto(t.id, a.count > 0);
+    setPhotoBusy(false);
   };
 
   const statusBadge = (t: ApiAdminTeacher) => {
@@ -177,6 +229,52 @@ export default function TeacherAdmin({ role, onClose }: { role: Role; onClose: (
                           </div>
                         );
                       })}
+
+                      {/* 照片相册（即时生效，多图管理；第一张为封面，最多 {albumMax} 张） */}
+                      <div className="pt-2 mt-1 border-t border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[#7d8d9e] text-[11px]">照片相册（第一张为封面）</span>
+                          <span className="text-[#7d8d9e] text-[11px]">{album.length}/{albumMax}</span>
+                        </div>
+                        {album.length > 0 ? (
+                          <div className="grid grid-cols-3 gap-2">
+                            {album.map((p) => (
+                              <div key={`${p.index}-${p.url}`} className="relative aspect-square rounded-lg overflow-hidden bg-[#243447]">
+                                {p.url && <img src={p.url} alt="" className="w-full h-full object-cover" />}
+                                {p.index === 0 && (
+                                  <span className="absolute bottom-1 left-1 text-[9px] bg-[#c4974a] text-[#0d1117] px-1.5 py-0.5 rounded-full font-medium">封面</span>
+                                )}
+                                <button
+                                  onClick={() => onDeletePhoto(t, p.index)}
+                                  disabled={photoBusy}
+                                  className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/55 text-white text-sm leading-none flex items-center justify-center active:scale-90 disabled:opacity-50"
+                                  aria-label="删除"
+                                >✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[#7d8d9e] text-[11px] py-2 text-center">还没有照片，点下方添加 👇</div>
+                        )}
+                        <label className={`block text-center text-[11px] px-3 py-2 rounded-lg font-medium cursor-pointer ${
+                          photoBusy || album.length >= albumMax
+                            ? "bg-[#243447] text-[#7d8d9e] opacity-60 pointer-events-none"
+                            : "bg-[#c4974a] text-[#0d1117]"
+                        }`}>
+                          {photoBusy ? "处理中…" : album.length >= albumMax ? `相册已满（${albumMax} 张）` : "➕ 添加照片"}
+                          <input
+                            ref={fileRef}
+                            type="file" accept="image/*" className="hidden"
+                            disabled={photoBusy || album.length >= albumMax}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) onAddPhoto(t, f);
+                              if (fileRef.current) fileRef.current.value = "";  // 允许连选同名文件
+                            }}
+                          />
+                        </label>
+                        {photoMsg && <div className="text-[11px] text-[#e05b7a]">{photoMsg}</div>}
+                      </div>
                     </div>
                   )}
                 </div>

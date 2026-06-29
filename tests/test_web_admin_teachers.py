@@ -291,3 +291,172 @@ def test_field_passthrough_failure(monkeypatch):
             d = await r.json()
             assert d["ok"] is False and d["error"] == "bad_url"
     _run(_t())
+
+
+# ============ 老师相册（GET/POST/DELETE /api/admin/teachers/{id}/album）============
+
+def _patch_album(monkeypatch, *, photos=None):
+    """fake 相册三函数（内存 store）；记录 add/remove 调用参数（验 teacher_id 来源 + index 转换）。"""
+    store = list(photos or [])
+    calls = {"added": [], "removed": []}
+
+    async def fake_get(tid):
+        return list(store)
+
+    async def fake_add(tid, fid):
+        calls["added"].append((tid, fid))
+        store.append(fid)
+        return len(store)
+
+    async def fake_remove(tid, idx):  # DB 1-based
+        calls["removed"].append((tid, idx))
+        if idx < 1 or idx > len(store):
+            return False
+        del store[idx - 1]
+        return True
+
+    monkeypatch.setattr(at_mod, "get_teacher_photos", fake_get)
+    monkeypatch.setattr(at_mod, "add_teacher_photo", fake_add)
+    monkeypatch.setattr(at_mod, "remove_teacher_photo", fake_remove)
+    return calls, store
+
+
+# --- GET ---
+
+def test_album_get_requires_admin(monkeypatch):
+    _patch_album(monkeypatch, photos=["fa"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/admin/teachers/55/album", headers=_hdr(role="user"))
+            assert r.status == 403
+    _run(_t())
+
+
+def test_album_get_no_token_401(monkeypatch):
+    _patch_album(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            assert (await c.get("/api/admin/teachers/55/album")).status == 401
+    _run(_t())
+
+
+def test_album_get_shape_signed_and_cachebust(monkeypatch):
+    _patch_album(monkeypatch, photos=["AgACfileA111", "AgACfileB222"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.get("/api/admin/teachers/55/album", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["count"] == 2 and d["max"] == 10
+            p0, p1 = d["photos"]
+            assert p0["index"] == 0 and p1["index"] == 1
+            # 该老师的签名照片 URL；封面 i=0 无 &i，第二张含 &i=1
+            assert "/api/teachers/55/photo?sig=" in p0["url"] and "&i=1" in p1["url"]
+            # cache-bust：v= 按 file_id 片段，不同图不同 URL
+            assert "v=AgACfile" in p0["url"] and p0["url"] != p1["url"]
+    _run(_t())
+
+
+# --- POST add ---
+
+def test_album_post_requires_admin(monkeypatch):
+    calls, _ = _patch_album(monkeypatch, photos=["fa"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers/55/album", headers=_hdr(role="user"),
+                             json={"file_id": "x"})
+            assert r.status == 403
+    _run(_t())
+    assert calls["added"] == []  # 门禁拦在 DB 前
+
+
+def test_album_post_add_ok(monkeypatch):
+    calls, _ = _patch_album(monkeypatch, photos=["one"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers/55/album", headers=_hdr(),
+                             json={"file_id": "newfid"})
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["count"] == 2
+    _run(_t())
+    # teacher_id 来自 URL（55，非 session uid），file_id 透传
+    assert calls["added"] == [(55, "newfid")]
+
+
+def test_album_post_full_blocked(monkeypatch):
+    calls, _ = _patch_album(monkeypatch, photos=[f"f{i}" for i in range(10)])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers/55/album", headers=_hdr(),
+                             json={"file_id": "x"})
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is False and d["error"] == "full" and d["count"] == 10
+    _run(_t())
+    assert calls["added"] == []  # 满额短路，未调 add
+
+
+def test_album_post_missing_file_id_400(monkeypatch):
+    _patch_album(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.post("/api/admin/teachers/55/album", headers=_hdr(), json={})
+            assert r.status == 400
+    _run(_t())
+
+
+# --- DELETE ---
+
+def test_album_delete_requires_admin(monkeypatch):
+    calls, _ = _patch_album(monkeypatch, photos=["a", "b"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.delete("/api/admin/teachers/55/album/0", headers=_hdr(role="user"))
+            assert r.status == 403
+    _run(_t())
+    assert calls["removed"] == []
+
+
+def test_album_delete_converts_to_1based(monkeypatch):
+    calls, _ = _patch_album(monkeypatch, photos=["a", "b", "c"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.delete("/api/admin/teachers/55/album/0", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["count"] == 2
+    _run(_t())
+    # 前端 0-based 0 → DB 1-based 1
+    assert calls["removed"] == [(55, 1)]
+
+
+def test_album_delete_bad_index(monkeypatch):
+    _patch_album(monkeypatch, photos=["a"])
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.delete("/api/admin/teachers/55/album/5", headers=_hdr())
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is False and d["error"] == "bad_index"
+    _run(_t())
+
+
+def test_album_delete_invalid_index_400(monkeypatch):
+    _patch_album(monkeypatch)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=None))) as c:
+            r = await c.delete("/api/admin/teachers/55/album/abc", headers=_hdr())
+            assert r.status == 400
+    _run(_t())
