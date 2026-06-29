@@ -150,9 +150,6 @@ async def _build_card_text(state: FSMContext) -> str:
     overall = _compute_overall_avg(data)
     overall_str = f"{overall:.1f}（6 维平均）" if overall > 0 else "（待 6 维齐全后自动计算）"
 
-    anon = int(data.get("anonymous") or 0)
-    anon_str = "😟 匿名" if anon == 1 else "😎 默认（显示用户）"
-
     # UX-8.1：进度计数（已完成 N/9 + 可提交标记）
     missing = _missing_fields(data)
     total_fields = _total_required_fields(data)
@@ -190,7 +187,7 @@ async def _build_card_text(state: FSMContext) -> str:
         "",
         f"📝 过程描述：{summary}",
         "",
-        f"提交模式：{anon_str}（点 [😟匿名] 或 [😎默认] 即提交）",
+        "提交后将以你的（半匿名）留名展示；点 [✅ 提交] 完成。",
         "━━━━━━━━━━━━━━━",
         "💡 字段标 ✓ 表示已填；全填齐后才能提交。",
     ]
@@ -775,9 +772,10 @@ async def cb_card_submit(callback: types.CallbackQuery, state: FSMContext):
             show_alert=True,
         )
         return
-    await state.update_data(anonymous=(1 if mode == "anon" else 0))
+    # 2026-06：取消匿名提交——一律实名（半匿名留名）。旧消息里的 card:submit:anon 也落 0。
+    await state.update_data(anonymous=0)
     await _enter_reimburse_or_submit(callback.message, state, via_edit=True)
-    await callback.answer("已记录提交模式")
+    await callback.answer("已提交")
 
 
 async def _enter_reimburse_or_submit(
@@ -943,7 +941,7 @@ async def _finalize_submit(
         "overall_score": overall,
         "summary": data.get("summary"),
         "request_reimbursement": int(data.get("request_reimbursement") or 0),
-        "anonymous": int(data.get("anonymous") or 0),
+        "anonymous": 0,  # 2026-06：取消匿名提交，一律实名落库
     }
     review_id = await create_teacher_review(review_data)
     if review_id is None:
@@ -990,11 +988,9 @@ async def _finalize_submit(
                 logger.warning("format ineligibility hint 失败: %s", e)
 
     await state.clear()
-    anon = int(review_data.get("anonymous") or 0)
-    anon_note = "（已选匿名提交，最终发布时将隐藏你的用户名）" if anon else ""
     text_parts = [
         f"✅ 评价 #{review_id} 已提交，等待管理员审核。",
-        f"通常 24 小时内有结果，审核结果会私聊通知你。{anon_note}",
+        "通常 24 小时内有结果，审核结果会私聊通知你。",
     ]
     if ineligibility_hint:
         text_parts.append("")

@@ -197,12 +197,10 @@ export default function WriteReview({
 
           {err && <div className="text-[#e05b7a] text-xs">{err}</div>}
 
-          {/* 提交：匿名 / 实名 */}
-          <div className="flex gap-2 pt-1">
-            <button onClick={() => doSubmit(1)} disabled={!canSubmit}
-              className="flex-1 py-3 rounded-xl bg-[#243447] text-[#aebac8] text-sm disabled:opacity-40">匿名提交</button>
+          {/* 提交：统一实名（2026-06 取消匿名提交） */}
+          <div className="pt-1">
             <button onClick={() => doSubmit(0)} disabled={!canSubmit}
-              className="flex-1 py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium disabled:opacity-40">{submitting ? "提交中…" : "实名提交"}</button>
+              className="w-full py-3 rounded-xl bg-[#c4974a] text-[#0d1117] text-sm font-medium disabled:opacity-40">{submitting ? "提交中…" : "提交"}</button>
           </div>
         </div>
       )}

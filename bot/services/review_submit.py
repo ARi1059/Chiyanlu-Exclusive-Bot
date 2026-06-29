@@ -177,7 +177,7 @@ async def submit_review(bot, user_id: int, payload: dict) -> SubmitResult:
         "overall_score": compute_overall(scores),
         "summary": (payload.get("summary") or "").strip() or None,
         "request_reimbursement": req_reimburse,
-        "anonymous": int(payload.get("anonymous") or 0),
+        "anonymous": 0,  # 2026-06：取消匿名提交，一律实名落库（忽略 payload.anonymous）
     }
     for k in _DIM_KEYS:
         review_data[_DIM_COLUMN[k]] = float(scores[k])

@@ -45,62 +45,56 @@ def _flat_buttons(kb) -> list:
     return out
 
 
-def _submit_button_texts(kb) -> tuple[str, str]:
-    """提取"匿名提交 / 默认提交"按钮文案。"""
+def _submit_button_text(kb) -> str:
+    """提取单个提交按钮文案（2026-06 取消匿名后只剩 card:submit:default）。"""
     btns = _flat_buttons(kb)
-    anon = next((b.text for b in btns if b.callback_data == "card:submit:anon"), "")
-    default = next((b.text for b in btns if b.callback_data == "card:submit:default"), "")
-    return anon, default
+    return next((b.text for b in btns if b.callback_data == "card:submit:default"), "")
 
 
 # ============================================================
-# 1. review_card_kb missing_count 行为
+# 1. review_card_kb missing_count 行为（2026-06：单一实名提交按钮）
 # ============================================================
 
 
-def test_kb_default_keeps_legacy_labels():
-    """missing_count=None（默认）→ 旧文案"😟匿名提交 / 😎默认提交"，向后兼容。"""
+def test_kb_default_submit_label():
+    """missing_count=None（默认）→ 单一"✅ 提交"按钮。"""
     from bot.keyboards.user_kb import review_card_kb
     kb = review_card_kb(state_data={})
-    anon, default = _submit_button_texts(kb)
-    assert anon == "😟 匿名提交"
-    assert default == "😎 默认提交"
+    assert _submit_button_text(kb) == "✅ 提交"
 
 
 def test_kb_complete_shows_success_label():
-    """missing_count=0 → "✅ 提交（匿名/默认）" 明确"已可提交"。"""
+    """missing_count=0 → "✅ 提交"。"""
     from bot.keyboards.user_kb import review_card_kb
     kb = review_card_kb(state_data={}, missing_count=0)
-    anon, default = _submit_button_texts(kb)
-    assert anon == "✅ 提交（匿名）"
-    assert default == "✅ 提交（默认）"
+    assert _submit_button_text(kb) == "✅ 提交"
 
 
 def test_kb_incomplete_shows_remaining_count():
-    """missing_count>0 → "还差 N 项（匿名/默认）"。"""
+    """missing_count>0 → "还差 N 项"。"""
     from bot.keyboards.user_kb import review_card_kb
     kb = review_card_kb(state_data={}, missing_count=3)
-    anon, default = _submit_button_texts(kb)
-    assert "还差 3 项" in anon
-    assert "还差 3 项" in default
+    assert "还差 3 项" in _submit_button_text(kb)
 
 
 def test_kb_missing_one_field():
-    """边界：missing_count=1 仍正确渲染单数文案。"""
+    """边界：missing_count=1 仍正确渲染。"""
     from bot.keyboards.user_kb import review_card_kb
     kb = review_card_kb(state_data={}, missing_count=1)
-    anon, _ = _submit_button_texts(kb)
-    assert "还差 1 项" in anon
+    assert "还差 1 项" in _submit_button_text(kb)
 
 
-def test_kb_submit_callbacks_unchanged():
-    """callback_data 完全保留（旧 inline button 仍可用）。"""
+def test_kb_no_anonymous_submit_button():
+    """2026-06：取消匿名提交——只保留 card:submit:default，不再有 card:submit:anon。"""
     from bot.keyboards.user_kb import review_card_kb
     for mc in (None, 0, 5):
         kb = review_card_kb(state_data={}, missing_count=mc)
         cbs = [b.callback_data for b in _flat_buttons(kb)]
-        assert "card:submit:anon" in cbs
         assert "card:submit:default" in cbs
+        assert "card:submit:anon" not in cbs
+        # 不再出现"匿名"字样
+        texts = " ".join(b.text for b in _flat_buttons(kb))
+        assert "匿名" not in texts
 
 
 def test_kb_other_buttons_preserved():
