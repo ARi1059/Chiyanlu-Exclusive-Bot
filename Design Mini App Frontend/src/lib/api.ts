@@ -714,6 +714,60 @@ export async function activateReimbursement(id: number): Promise<ModResult> {
   return (await r.json()) as ModResult;
 }
 
+// ── 报销打款详情 + 口令流（§15.5）──────────────────────────────────────────────
+
+/** 配额徽标四态：可批 / 需消耗 voucher / 周配额满需重置 / 超月池。 */
+export type PayoutBadgeState = "ok" | "need_voucher" | "week_blocked" | "over_pool";
+
+export interface ApiReimbursementDetail {
+  id: number;
+  amount: number;
+  status: string;
+  teacher: string;
+  teacher_price: string | null;
+  user: string;
+  review_id: number | null;
+  week_key: string;
+  month_key: string;
+  time: string;
+  badge: {
+    state: PayoutBadgeState;
+    label: string;
+    week_used: number;
+    weekly_limit: number;
+    month_used: number;
+    pool: number;
+    pool_remaining: number | null;
+    has_reset: boolean;
+  };
+}
+
+/** 报销详情 + 配额徽标（仅超管）。 */
+export async function getReimbursementDetail(id: number): Promise<ApiReimbursementDetail | null> {
+  const r = await apiFetch(`/api/admin/reimbursements/${id}`);
+  if (!r.ok) return null;
+  const d = (await r.json()) as { ok: boolean; detail?: ApiReimbursementDetail };
+  return d.ok && d.detail ? d.detail : null;
+}
+
+/** 打款：把支付宝口令经 bot DM 发用户，发送成功才 approve。token 不持久化。 */
+export async function payoutReimbursement(id: number, token: string): Promise<ModResult & { amount?: number }> {
+  const r = await apiFetch(`/api/admin/reimbursements/${id}/payout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult & { amount?: number };
+}
+
+/** 发放本周 reset voucher（周配额满时解锁打款）。 */
+export async function resetWeekReimbursement(id: number): Promise<ModResult & { voucher_id?: number }> {
+  const r = await apiFetch(`/api/admin/reimbursements/${id}/reset-week`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult & { voucher_id?: number };
+}
+
 /**
  * 启动鉴权：Telegram 内则换 session 并取角色；非 Telegram（本地）返回 null，
  * 调用方降级到 mock 角色。

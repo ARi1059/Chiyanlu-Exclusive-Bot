@@ -42,9 +42,12 @@ from bot.web.api.admin_settings import (
     post_archive_settings,
 )
 from bot.web.api.admin_reimbursements import (
+    get_reimbursement_detail,
     get_reimbursements,
     post_activate_reimbursement,
+    post_payout_reimbursement,
     post_reject_reimbursement,
+    post_reset_week_reimbursement,
 )
 from bot.web.api.favorites import delete_favorite, get_favorites, post_favorite
 from bot.web.api.me import get_me
@@ -130,7 +133,10 @@ def register_api_routes(app: web.Application) -> None:
     # 阶段2：档案发布配置（档案频道 + 品牌，admin+；老师档案帖发布依赖）
     app.router.add_get("/api/admin/settings/archive", get_archive_settings)
     app.router.add_post("/api/admin/settings/archive", post_archive_settings)
-    # P1：报销审核（仅 superadmin；同意=打款走 bot 深链，此处只做拒绝/激活/列表）
+    # P1/§15.5：报销审核（仅 superadmin）。打款=支付宝口令经 bot DM 发用户，core 编排
     app.router.add_get("/api/admin/reimbursements", get_reimbursements)
+    app.router.add_get("/api/admin/reimbursements/{id}", get_reimbursement_detail)
     app.router.add_post("/api/admin/reimbursements/{id}/reject", post_reject_reimbursement)
     app.router.add_post("/api/admin/reimbursements/{id}/activate", post_activate_reimbursement)
+    app.router.add_post("/api/admin/reimbursements/{id}/payout", post_payout_reimbursement)
+    app.router.add_post("/api/admin/reimbursements/{id}/reset-week", post_reset_week_reimbursement)

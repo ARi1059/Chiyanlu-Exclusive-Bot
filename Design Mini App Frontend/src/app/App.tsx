@@ -6,11 +6,12 @@ import {
   claimReview, forceClaimReview, releaseReview,
   getMyPoints, getMyReviews, setNotify, checkinTeacher, getTeacherHome,
   getReimbursements, rejectReimbursement, activateReimbursement,
+  getReimbursementDetail, payoutReimbursement, resetWeekReimbursement,
   getTeacherEdits, approveTeacherEdit, rejectTeacherEdit,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
   type ApiReimbursement, type ApiTeacherHome, type ApiSurfaceSplit, type ApiTeacherEdit,
-  type ApiReviewDetail, type ApiReviewClaim,
+  type ApiReviewDetail, type ApiReviewClaim, type ApiReimbursementDetail,
 } from "../lib/api";
 import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartParam } from "../lib/tg";
 import {
@@ -956,24 +957,39 @@ function PendingReviewItem({
   );
 }
 
-// 待审报销队列项：超管「同意=打款」深链回 bot 口令 FSM；拒绝(选原因)/激活 直接落库。
+// 待审报销队列项（§15.5）：超管「同意=打款」收进 MiniApp —— 输支付宝口令→确认发送，
+// 服务端先发后批 + 配额复核；queued 激活 / pending 驳回(选原因) 不变。
 const REIMB_REJECT_REASONS = ["金额与截图不符", "证据不清晰", "不符合报销规则", "重复申请"];
 
+// 配额徽标 → 颜色（四态）
+const PAYOUT_BADGE_CLS: Record<string, string> = {
+  ok: "bg-[#4fc97a]/15 text-[#4fc97a]",
+  need_voucher: "bg-[#e8a857]/15 text-[#e8a857]",
+  week_blocked: "bg-[#e05b7a]/15 text-[#e05b7a]",
+  over_pool: "bg-[#e05b7a]/15 text-[#e05b7a]",
+};
+
 function PendingReimbursementItem({
-  item, botUsername, onResolved,
+  item, onResolved,
 }: {
   item: ApiReimbursement;
-  botUsername: string;
   onResolved: (id: number) => void;
 }) {
-  const [mode, setMode] = useState<"idle" | "reject">("idle");
+  const [mode, setMode] = useState<"idle" | "reject" | "payout">("idle");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // §15.5 打款面板
+  const [detail, setDetail] = useState<ApiReimbursementDetail | null>(null);
+  const [token, setToken] = useState("");
   const isQueued = item.status === "queued";
 
-  const approve = () => {
-    hapticLight();
-    if (botUsername) openTelegramLink(`https://t.me/${botUsername}?start=reimb_${item.id}`);
+  // 打开打款面板：拉详情拿配额徽标
+  const openPayout = async () => {
+    setBusy(true); setErr(null); hapticLight();
+    const d = await getReimbursementDetail(item.id);
+    setBusy(false);
+    if (!d) { setErr("加载详情失败"); return; }
+    setDetail(d); setMode("payout");
   };
   const doReject = async (reason: string) => {
     setBusy(true); setErr(null); hapticLight();
@@ -987,8 +1003,27 @@ function PendingReimbursementItem({
     if (r.ok) { onResolved(item.id); return; }
     setBusy(false); setErr(r.error || "激活失败");
   };
+  const doPayout = async () => {
+    if (token.trim().length < 4) { setErr("口令至少 4 个字符"); return; }
+    setBusy(true); setErr(null); hapticLight();
+    const r = await payoutReimbursement(item.id, token.trim());
+    setToken("");  // 提交后立即清，绝不持久化
+    if (r.ok) { onResolved(item.id); return; }
+    setBusy(false); setErr(r.error || "打款失败");
+  };
+  const doResetWeek = async () => {
+    setBusy(true); setErr(null); hapticLight();
+    const r = await resetWeekReimbursement(item.id);
+    if (!r.ok) { setBusy(false); setErr(r.error || "重置失败"); return; }
+    const d = await getReimbursementDetail(item.id);  // 重置后转 need_voucher
+    setBusy(false);
+    if (d) setDetail(d);
+  };
+  const closePayout = () => { setToken(""); setDetail(null); setMode("idle"); setErr(null); };
 
   const chip = "text-xs px-2.5 py-1 rounded-full disabled:opacity-40 transition-colors";
+  const badge = detail?.badge;
+  const canInputToken = badge?.state === "ok" || badge?.state === "need_voucher";
 
   return (
     <div className="px-4 py-3 border-b border-white/5 last:border-b-0">
@@ -1010,8 +1045,8 @@ function PendingReimbursementItem({
               </button>
             ) : (
               <>
-                <button onClick={approve}
-                  className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors">
+                <button disabled={busy} onClick={openPayout}
+                  className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors disabled:opacity-40">
                   <Wallet size={16} />
                 </button>
                 <button onClick={() => setMode("reject")}
@@ -1024,8 +1059,63 @@ function PendingReimbursementItem({
         )}
       </div>
 
-      {!isQueued && mode === "idle" && (
-        <div className="text-[#7d8d9e] text-[10px] mt-1">💰 = 同意打款(跳回 bot 输支付宝口令)</div>
+      {/* 打款面板（§15.5）：配额徽标四态 + 口令输入 / 重置 */}
+      {mode === "payout" && detail && badge && (
+        <div className="mt-2.5 rounded-xl bg-[#17212b] border border-white/5 p-3 space-y-2.5">
+          {/* 配额徽标 */}
+          <div className={`text-[11px] px-2.5 py-1.5 rounded-lg ${PAYOUT_BADGE_CLS[badge.state] || ""}`}>
+            {badge.label}
+          </div>
+          {/* 配额摘要 */}
+          <div className="text-[#7d8d9e] text-[11px] flex flex-wrap gap-x-3 gap-y-0.5">
+            <span>本周 {badge.week_used}/{badge.weekly_limit}</span>
+            <span>月已批 ￥{badge.month_used}{badge.pool > 0 ? `/${badge.pool}` : "（不限）"}</span>
+            {badge.has_reset && <span className="text-[#e8a857]">有 1 张 voucher</span>}
+          </div>
+
+          {/* 口令输入（可批 / 需 voucher 时） */}
+          {canInputToken && (
+            <>
+              {badge.state === "need_voucher" && (
+                <div className="text-[#e8a857] text-[10px]">⚠️ 通过将消耗 1 张 reset voucher</div>
+              )}
+              <input
+                type="text" inputMode="text" autoComplete="off" autoCorrect="off" spellCheck={false}
+                value={token} onChange={(e) => setToken(e.target.value)}
+                placeholder="粘贴支付宝口令…"
+                className="w-full bg-[#243447] text-[#e8e8e8] text-sm rounded-lg px-3 py-2 outline-none placeholder:text-[#5a6b7d] border border-transparent focus:border-[#c4974a]/40"
+              />
+              <div className="flex gap-1.5">
+                <button disabled={busy || token.trim().length < 4} onClick={doPayout}
+                  className={`${chip} bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 flex items-center gap-1`}>
+                  <Wallet size={12} /> 确认发送 ￥{detail.amount}
+                </button>
+                <button disabled={busy} onClick={closePayout}
+                  className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+              </div>
+            </>
+          )}
+
+          {/* 周配额满：重置本周 */}
+          {badge.state === "week_blocked" && (
+            <div className="flex gap-1.5">
+              <button disabled={busy} onClick={doResetWeek}
+                className={`${chip} bg-[#e8a857]/15 text-[#e8a857] hover:bg-[#e8a857]/25`}>🔄 重置本周</button>
+              <button disabled={busy} onClick={closePayout}
+                className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+            </div>
+          )}
+
+          {/* 超月池：只能驳回 */}
+          {badge.state === "over_pool" && (
+            <div className="flex gap-1.5">
+              <button disabled={busy} onClick={() => { closePayout(); setMode("reject"); }}
+                className={`${chip} bg-[#e05b7a]/15 text-[#e05b7a] hover:bg-[#3a2230]`}>去驳回</button>
+              <button disabled={busy} onClick={closePayout}
+                className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+            </div>
+          )}
+        </div>
       )}
 
       {mode === "reject" && (
@@ -1228,7 +1318,6 @@ function AdminView({ role }: { role: Role }) {
   const editQueue = edits.filter((e) => !editHandled.includes(e.id));
   const pool = stats?.reimburse_pool ?? null;
   const packages = stats?.point_packages ?? [];
-  const botUsername = stats?.bot_username ?? "";
   const surface = stats?.surface_split ?? null;
 
   const cards = [
@@ -1386,7 +1475,6 @@ function AdminView({ role }: { role: Role }) {
               <PendingReimbursementItem
                 key={item.id}
                 item={item}
-                botUsername={botUsername}
                 onResolved={onReimbResolved}
               />
             ))
