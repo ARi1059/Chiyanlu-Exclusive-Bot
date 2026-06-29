@@ -822,6 +822,7 @@ function PendingReviewItem({
   const [mode, setMode] = useState<"idle" | "approve" | "reject">("idle");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [rejectText, setRejectText] = useState("");  // 自定义驳回原因
   // §15.4 审核详情 + 占用锁
   const [detail, setDetail] = useState<ApiReviewDetail | null>(null);
   const [conflict, setConflict] = useState<ApiReviewClaim | null>(null);
@@ -942,16 +943,27 @@ function PendingReviewItem({
       )}
 
       {mode === "reject" && (
-        <div className="mt-2.5">
-          <div className="text-[#7d8d9e] text-[10px] mb-1.5">选驳回原因</div>
+        <div className="mt-2.5 space-y-2">
+          <div className="text-[#7d8d9e] text-[10px]">点预设快速填入，或自定义驳回原因</div>
           <div className="flex gap-1.5 flex-wrap">
             {REJECT_REASONS.map((r) => (
-              <button key={r} disabled={busy} onClick={() => doReject(r)}
+              <button key={r} disabled={busy} onClick={() => setRejectText(r)}
                 className={`${chip} bg-[#243447] text-[#e05b7a] hover:bg-[#3a2230]`}>{r}</button>
             ))}
-            <button disabled={busy} onClick={() => doReject(undefined)}
-              className={`${chip} bg-[#243447] text-[#aebac8]`}>跳过原因</button>
-            <button disabled={busy} onClick={() => setMode("idle")}
+          </div>
+          <textarea
+            value={rejectText}
+            onChange={(e) => setRejectText(e.target.value)}
+            placeholder="自定义驳回原因（选填，会私聊告知用户）…"
+            rows={2}
+            className="w-full bg-[#243447] text-[#e8e8e8] text-sm rounded-lg px-3 py-2 outline-none placeholder:text-[#5a6b7d] border border-transparent focus:border-[#e05b7a]/40 resize-none"
+          />
+          <div className="flex gap-1.5">
+            <button disabled={busy} onClick={() => doReject(rejectText.trim() || undefined)}
+              className={`${chip} bg-[#e05b7a]/15 text-[#e05b7a] hover:bg-[#e05b7a]/25`}>
+              确认驳回{rejectText.trim() ? "" : "（不填原因）"}
+            </button>
+            <button disabled={busy} onClick={() => { setMode("idle"); setRejectText(""); }}
               className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
           </div>
         </div>
