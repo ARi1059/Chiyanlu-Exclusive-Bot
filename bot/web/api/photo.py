@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import OrderedDict
 
 from aiohttp import web
 
 from bot.database import get_teacher
+from bot.web.api._media_proxy import CACHE_HEADERS, proxy_telegram_file
 from bot.web.auth import sign_photo, verify_photo
 from bot.web.keys import APP_BOT, APP_BOT_TOKEN
 
@@ -65,22 +65,6 @@ def album_payload(request: web.Request, teacher_id: int, file_ids: list[str]) ->
     return {"photos": photos, "count": len(file_ids), "max": TEACHER_ALBUM_MAX}
 
 
-# file_id → (content_type, bytes)。OrderedDict 当简易 LRU，超额淘汰最旧。
-_CACHE: "OrderedDict[str, tuple[str, bytes]]" = OrderedDict()
-_CACHE_MAX = 128
-# 单日强缓存：照片更新极少，浏览器/反代各自缓存一天。
-_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
-
-
-def _content_type(file_path: str | None) -> str:
-    p = (file_path or "").lower()
-    if p.endswith(".png"):
-        return "image/png"
-    if p.endswith(".webp"):
-        return "image/webp"
-    return "image/jpeg"
-
-
 async def get_teacher_photo(request: web.Request) -> web.Response:
     try:
         tid = int(request.match_info["id"])
@@ -104,29 +88,10 @@ async def get_teacher_photo(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(reason="no photo")
     file_id = album[i]
 
-    # 命中缓存
-    cached = _CACHE.get(file_id)
-    if cached:
-        _CACHE.move_to_end(file_id)
-        ctype, body = cached
-        return web.Response(body=body, content_type=ctype, headers=_CACHE_HEADERS)
-
-    bot = request.app.get(APP_BOT)
-    if bot is None:
-        raise web.HTTPServiceUnavailable(reason="bot unavailable")
-
     try:
-        tg_file = await bot.get_file(file_id)
-        buf = await bot.download_file(tg_file.file_path)
-        body = buf.getvalue() if hasattr(buf, "getvalue") else buf.read()
-        ctype = _content_type(tg_file.file_path)
+        ctype, body = await proxy_telegram_file(request.app.get(APP_BOT), file_id)
     except Exception:
         logger.warning("拉取老师照片失败 teacher=%s", tid, exc_info=True)
         raise web.HTTPNotFound(reason="photo fetch failed")
 
-    _CACHE[file_id] = (ctype, body)
-    _CACHE.move_to_end(file_id)
-    while len(_CACHE) > _CACHE_MAX:
-        _CACHE.popitem(last=False)
-
-    return web.Response(body=body, content_type=ctype, headers=_CACHE_HEADERS)
+    return web.Response(body=body, content_type=ctype, headers=CACHE_HEADERS)

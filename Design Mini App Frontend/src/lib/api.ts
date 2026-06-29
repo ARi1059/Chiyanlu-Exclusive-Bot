@@ -365,6 +365,80 @@ export async function rejectReview(id: number, reason?: string): Promise<ModResu
   return (await r.json()) as ModResult;
 }
 
+// ── 评价审核详情 + claim 占用锁（§15.4）─────────────────────────────────────────
+
+/** 锁持有信息（被他人占用时返回）。acquired_at 为 epoch 秒。 */
+export interface ApiReviewClaim {
+  held_by: number | null;
+  held_by_name: string | null;
+  acquired_at: number | null;
+  by_me?: boolean;
+}
+
+export interface ApiReviewDetail {
+  id: number;
+  teacher_id: number;
+  teacher_name: string;
+  user_masked: string;
+  anonymous: boolean;
+  created_at: string;
+  rating: { key: string; emoji: string; label: string };
+  scores: {
+    humanphoto: number; appearance: number; body: number;
+    service: number; attitude: number; environment: number; overall: number;
+  };
+  summary: string;
+  media: { booking_url: string | null; gesture_url: string | null };
+  reimbursement: {
+    requested: number;        // 0 不申请 / 1 用户勾选 / 2 静默录入
+    amount: number;           // 按老师价位算出的报销金额（元）
+    teacher_price: string | null;
+    user_total_points: number;
+    min_points: number;       // 0 表示不设门槛
+    eligible: boolean;        // amount>0 且积分达门槛
+  };
+  claim: ApiReviewClaim;
+}
+
+/** claim / force-claim 响应：成功带 detail；冲突带 claim（仅普通 claim）。 */
+export interface ApiReviewClaimResult {
+  ok: boolean;
+  detail?: ApiReviewDetail;
+  claim?: ApiReviewClaim;
+  error?: string;
+}
+
+/** 审核详情（仅超管，只读，不占锁）。 */
+export async function getReviewDetail(id: number): Promise<ApiReviewDetail | null> {
+  const r = await apiFetch(`/api/admin/reviews/${id}`);
+  if (!r.ok) return null;
+  const d = (await r.json()) as { ok: boolean; detail?: ApiReviewDetail };
+  return d.ok && d.detail ? d.detail : null;
+}
+
+/** 声明占用并取详情；被他人持有 → ok:false + claim。 */
+export async function claimReview(id: number): Promise<ApiReviewClaimResult> {
+  const r = await apiFetch(`/api/admin/reviews/${id}/claim`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ApiReviewClaimResult;
+}
+
+/** 强制接管（写 audit）并取详情。 */
+export async function forceClaimReview(id: number): Promise<ApiReviewClaimResult> {
+  const r = await apiFetch(`/api/admin/reviews/${id}/force-claim`, { method: "POST" });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ApiReviewClaimResult;
+}
+
+/** 释放占用（关闭详情时调；幂等）。 */
+export async function releaseReview(id: number): Promise<void> {
+  try {
+    await apiFetch(`/api/admin/reviews/${id}/release`, { method: "POST" });
+  } catch {
+    /* 释放失败无害：锁 TTL 300s 自动过期 */
+  }
+}
+
 // ── 老师资料审核（阶段1）──────────────────────────────────────────────────────
 
 export interface ApiTeacherEdit {

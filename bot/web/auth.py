@@ -198,3 +198,36 @@ def verify_photo(teacher_id: int, token: str, secret: str, *, now: Optional[floa
         return False
     cur = int(now if now is not None else time.time())
     return exp >= cur
+
+
+# ============ 通用媒体访问签名（任意 file_id 资源，<img> 无 Bearer）============
+# sign_photo 只签 teacher_id（老师相册）。评价审核媒体（约课截图 / 手势照）是 review
+# 行上的任意 file_id，不属于某个老师相册，故用不透明 key（如 "rev<id>:booking"）签名。
+# 同 sign_photo 的按天对齐 exp，兼顾访问控制与缓存。secret 复用 bot_token。
+
+
+def sign_media(key: str, secret: str, *, now: Optional[float] = None) -> str:
+    """签发媒体访问令牌 "<exp>.<sig>"。key 为不透明资源标识，exp 对齐到整天边界。"""
+    cur = int(now if now is not None else time.time())
+    exp = (cur // _PHOTO_BUCKET_SECONDS + 2) * _PHOTO_BUCKET_SECONDS
+    msg = f"{key}.{exp}".encode()
+    sig = _b64url_encode(hmac.new(secret.encode(), msg, hashlib.sha256).digest())
+    return f"{exp}.{sig}"
+
+
+def verify_media(key: str, token: str, secret: str, *, now: Optional[float] = None) -> bool:
+    """校验媒体令牌：格式 → 签名（防伪造）→ 过期。任一失败返回 False。"""
+    if not token or "." not in token:
+        return False
+    exp_str, _, sig = token.partition(".")
+    try:
+        exp = int(exp_str)
+    except ValueError:
+        return False
+    expected = _b64url_encode(
+        hmac.new(secret.encode(), f"{key}.{exp}".encode(), hashlib.sha256).digest()
+    )
+    if not hmac.compare_digest(expected, sig):
+        return False
+    cur = int(now if now is not None else time.time())
+    return exp >= cur

@@ -3,18 +3,21 @@ import {
   bootstrapAuth, getTeachers, getTeacherDetail,
   addFavorite, removeFavorite, getProfile, getAdminStats,
   approveReview, rejectReview,
+  claimReview, forceClaimReview, releaseReview,
   getMyPoints, getMyReviews, setNotify, checkinTeacher, getTeacherHome,
   getReimbursements, rejectReimbursement, activateReimbursement,
   getTeacherEdits, approveTeacherEdit, rejectTeacherEdit,
   type ApiTeacher, type ApiTeacherDetail, type ApiProfile, type ApiAdminStats,
   type ApiPointPackage, type ApiPendingReview, type ApiPointTx, type ApiMyReview,
   type ApiReimbursement, type ApiTeacherHome, type ApiSurfaceSplit, type ApiTeacherEdit,
+  type ApiReviewDetail, type ApiReviewClaim,
 } from "../lib/api";
 import { isInTelegram, showBackButton, hapticLight, openTelegramLink, getStartParam } from "../lib/tg";
 import {
   Search, Heart, User, ChevronLeft, ChevronRight,
   Star, MapPin, Bell, Home, BarChart2, Users,
   CheckCircle, XCircle, Wallet, Clock, Award, ClipboardList, Settings,
+  Eye, Shield, AlertTriangle,
 } from "lucide-react";
 // recharts 重(~157KB gzip)且只在管理台/详情用 → 懒加载，普通用户首屏不下载。
 const TrendChart = lazy(() => import("./charts/TrendChart"));
@@ -716,6 +719,91 @@ function ProfileView({
 // 待审评价队列项：超管可 ✓ 选加分套餐 / ✗ 选原因，直接落库。
 const REJECT_REASONS = ["证据不充分", "内容违规", "重复提交", "评分明显不合理"];
 
+// 占用锁起始时间 → 相对展示（claim 仅 300s TTL，秒/分钟粒度足够）。
+function claimAgo(epochSec: number): string {
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - epochSec);
+  if (diff < 60) return `${diff}s 前`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m 前`;
+  return `${Math.floor(diff / 3600)}h 前`;
+}
+
+const SCORE_LABELS: [keyof ApiReviewDetail["scores"], string][] = [
+  ["humanphoto", "人照"], ["appearance", "颜值"], ["body", "身材"],
+  ["service", "服务"], ["attitude", "态度"], ["environment", "环境"],
+];
+
+// 审核详情面板（§15.4）：约课截图 / 手势照 + 6 维分 + 报销资格预判。
+function ReviewDetailPanel({ detail, onClose }: { detail: ApiReviewDetail; onClose: () => void }) {
+  const m = detail.media;
+  const reimb = detail.reimbursement;
+  return (
+    <div className="mt-2.5 rounded-xl bg-[#17212b] border border-white/5 p-3 space-y-3">
+      {/* 媒体 */}
+      <div className="flex gap-2">
+        {m.booking_url && (
+          <figure className="flex-1 min-w-0">
+            <img src={m.booking_url} alt="约课截图" loading="lazy"
+              className="w-full h-28 object-cover rounded-lg bg-[#243447]"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0"; }} />
+            <figcaption className="text-[#7d8d9e] text-[10px] mt-1 text-center">📸 约课截图</figcaption>
+          </figure>
+        )}
+        {m.gesture_url && (
+          <figure className="flex-1 min-w-0">
+            <img src={m.gesture_url} alt="现场手势" loading="lazy"
+              className="w-full h-28 object-cover rounded-lg bg-[#243447]"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0"; }} />
+            <figcaption className="text-[#7d8d9e] text-[10px] mt-1 text-center">✋ 现场手势</figcaption>
+          </figure>
+        )}
+      </div>
+
+      {/* 评级 + 综合分 */}
+      <div className="flex items-center justify-between">
+        <span className="text-[#e8e8e8] text-sm">{detail.rating.emoji} {detail.rating.label}</span>
+        <span className="text-[#c4974a] text-sm font-mono">综合 {detail.scores.overall}</span>
+      </div>
+
+      {/* 6 维分网格 */}
+      <div className="grid grid-cols-3 gap-1.5">
+        {SCORE_LABELS.map(([k, label]) => (
+          <div key={k} className="bg-[#1e2c3a] rounded-lg px-2 py-1.5 text-center">
+            <div className="text-[#7d8d9e] text-[10px]">{label}</div>
+            <div className="text-[#e8e8e8] text-sm font-mono">{detail.scores[k]}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 摘要 */}
+      {detail.summary && (
+        <div className="text-[#aebac8] text-xs leading-relaxed whitespace-pre-wrap break-words">
+          {detail.summary}
+        </div>
+      )}
+
+      {/* 报销资格预判 */}
+      {reimb.requested > 0 ? (
+        <div className="flex items-center justify-between rounded-lg bg-[#1e2c3a] px-2.5 py-2">
+          <div className="text-xs">
+            <span className="text-[#c4974a]">报销 ￥{reimb.amount}</span>
+            <span className="text-[#7d8d9e]"> · 积分 {reimb.user_total_points}{reimb.min_points > 0 ? `/${reimb.min_points}` : ""}</span>
+          </div>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full ${reimb.eligible ? "bg-[#4fc97a]/15 text-[#4fc97a]" : "bg-[#e05b7a]/15 text-[#e05b7a]"}`}>
+            {reimb.eligible ? "达门槛" : "未达门槛"}
+          </span>
+        </div>
+      ) : (
+        <div className="text-[#7d8d9e] text-[11px]">未申请报销</div>
+      )}
+
+      <button onClick={onClose}
+        className="w-full text-center text-[#7d8d9e] text-xs py-1.5 rounded-lg bg-[#243447] hover:bg-[#2c4156] transition-colors">
+        收起详情
+      </button>
+    </div>
+  );
+}
+
 function PendingReviewItem({
   item, packages, isSuper, onResolved,
 }: {
@@ -727,6 +815,10 @@ function PendingReviewItem({
   const [mode, setMode] = useState<"idle" | "approve" | "reject">("idle");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // §15.4 审核详情 + 占用锁
+  const [detail, setDetail] = useState<ApiReviewDetail | null>(null);
+  const [conflict, setConflict] = useState<ApiReviewClaim | null>(null);
+  const [detailBusy, setDetailBusy] = useState(false);
 
   const doApprove = async (packageKey: string) => {
     setBusy(true); setErr(null); hapticLight();
@@ -739,6 +831,28 @@ function PendingReviewItem({
     const r = await rejectReview(item.id, reason);
     if (r.ok) { onResolved(item.id); return; }
     setBusy(false); setErr(r.error || "驳回失败");
+  };
+
+  // 打开详情：先 claim 占用锁。成功带回详情；被他人持有 → 展示冲突 + 强制接管。
+  const openDetail = async () => {
+    setDetailBusy(true); setErr(null); setConflict(null); hapticLight();
+    const r = await claimReview(item.id);
+    setDetailBusy(false);
+    if (r.ok && r.detail) { setDetail(r.detail); return; }
+    if (r.claim) { setConflict(r.claim); return; }
+    setErr(r.error || "打开详情失败");
+  };
+  const doForceClaim = async () => {
+    setDetailBusy(true); hapticLight();
+    const r = await forceClaimReview(item.id);
+    setDetailBusy(false);
+    if (r.ok && r.detail) { setConflict(null); setDetail(r.detail); return; }
+    setErr(r.error || "接管失败");
+  };
+  // 关闭详情：释放锁（approve/reject 服务端已释放，此处仅处理"看完未操作"）。
+  const closeDetail = () => {
+    void releaseReview(item.id);
+    setDetail(null); setConflict(null);
   };
 
   const chip = "text-xs px-2.5 py-1 rounded-full disabled:opacity-40 transition-colors";
@@ -755,6 +869,15 @@ function PendingReviewItem({
         </div>
         {isSuper && mode === "idle" && (
           <div className="flex gap-1.5">
+            {!detail && (
+              <button
+                onClick={openDetail}
+                disabled={detailBusy}
+                className="p-1.5 rounded-lg bg-[#6b9ee8]/15 text-[#6b9ee8] hover:bg-[#6b9ee8]/25 transition-colors disabled:opacity-40"
+              >
+                <Eye size={16} />
+              </button>
+            )}
             <button
               onClick={() => setMode("approve")}
               className="p-1.5 rounded-lg bg-[#4fc97a]/15 text-[#4fc97a] hover:bg-[#4fc97a]/25 transition-colors"
@@ -770,6 +893,30 @@ function PendingReviewItem({
           </div>
         )}
       </div>
+
+      {/* 占用冲突：另一管理员审核中 + 强制接管 */}
+      {conflict && (
+        <div className="mt-2.5 rounded-lg bg-[#e8a857]/10 border border-[#e8a857]/20 p-2.5">
+          <div className="flex items-center gap-1.5 text-[#e8a857] text-xs mb-2">
+            <AlertTriangle size={13} />
+            <span>
+              {conflict.held_by_name || "另一管理员"} 审核中
+              {conflict.acquired_at ? ` · ${claimAgo(conflict.acquired_at)}` : ""}
+            </span>
+          </div>
+          <div className="flex gap-1.5">
+            <button disabled={detailBusy} onClick={doForceClaim}
+              className={`${chip} bg-[#e8a857]/15 text-[#e8a857] hover:bg-[#e8a857]/25 flex items-center gap-1`}>
+              <Shield size={12} /> 强制接管
+            </button>
+            <button disabled={detailBusy} onClick={() => setConflict(null)}
+              className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {/* 审核详情面板（媒体 / 6 维分 / 资格预判） */}
+      {detail && <ReviewDetailPanel detail={detail} onClose={closeDetail} />}
 
       {mode === "approve" && (
         <div className="mt-2.5">
@@ -803,7 +950,7 @@ function PendingReviewItem({
         </div>
       )}
 
-      {busy && <div className="text-[#7d8d9e] text-xs mt-2">处理中…</div>}
+      {(busy || detailBusy) && <div className="text-[#7d8d9e] text-xs mt-2">处理中…</div>}
       {err && <div className="text-[#e05b7a] text-xs mt-2">{err}（可刷新管理台重试）</div>}
     </div>
   );
