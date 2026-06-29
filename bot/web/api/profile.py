@@ -29,6 +29,7 @@ from bot.database import (
     get_user_total_points,
     is_checked_in,
     is_teacher_profile_complete,
+    list_teacher_verifications,
     list_user_favorites,
     list_user_point_transactions,
     list_user_reviews_paged,
@@ -189,6 +190,33 @@ async def get_my_reviews(request: web.Request) -> web.Response:
             "created_at": r.get("created_at"),
         })
     return web.json_response({"reviews": items})
+
+
+async def get_my_verifications(request: web.Request) -> web.Response:
+    """老师收到的「申请验证」记录（仅 teacher 角色）。
+
+    申请人露名（@username，验证本就实名）；附当时那条评价的评级/摘要/综合分。
+    """
+    session = request["session"]
+    uid = session["uid"]
+    if session["role"] != ROLE_TEACHER:
+        raise web.HTTPForbidden(reason="teacher only")
+    rows = await list_teacher_verifications(uid, limit=50)
+    items = []
+    for r in rows:
+        uname = (r.get("username") or "").strip()
+        suid = str(r.get("user_id") or "")
+        created = str(r.get("created_at") or "")
+        items.append({
+            "id": r["id"],
+            "user": f"@{uname}" if uname else (("用户 " + suid[-4:]) if len(suid) >= 4 else "用户"),
+            "username": uname,  # 前端可拼 t.me 链接；空则不可点
+            "time": created[5:16] if len(created) >= 16 else created,
+            "rating": r.get("review_rating") or "",
+            "overall": round(float(r.get("review_overall") or 0), 1),
+            "summary": r.get("review_summary") or "",
+        })
+    return web.json_response({"verifications": items})
 
 
 async def post_notify(request: web.Request) -> web.Response:

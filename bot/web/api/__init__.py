@@ -57,6 +57,7 @@ from bot.web.api.profile import (
     delete_teacher_album,
     get_my_points,
     get_my_reviews,
+    get_my_verifications,
     get_profile,
     get_teacher_album,
     get_teacher_edit_profile,
@@ -83,6 +84,8 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/me/notify", post_notify)
     app.router.add_post("/api/me/checkin", post_checkin)
     app.router.add_get("/api/me/teacher-home", get_teacher_home)
+    # 老师端：收到的申请验证记录（仅 teacher）
+    app.router.add_get("/api/me/verifications", get_my_verifications)
     # §16.3：老师自助编辑资料（仅 teacher，端点内校验；同源 service，过审+回滚）
     app.router.add_get("/api/me/teacher-profile", get_teacher_edit_profile)
     app.router.add_post("/api/me/teacher-profile", post_teacher_edit_profile)

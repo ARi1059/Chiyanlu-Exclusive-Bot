@@ -5340,6 +5340,34 @@ async def count_recent_verifications(
         await db.close()
 
 
+async def list_teacher_verifications(teacher_id: int, limit: int = 30) -> list[dict]:
+    """某老师收到的「申请验证」记录（老师端验证记录 tab 用）。
+
+    JOIN users 取申请人 username（验证须有用户名，故露名），JOIN teacher_reviews 取当时
+    那条评价的评级/摘要/综合分。按 id DESC（最新在前）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """SELECT v.id, v.user_id, v.created_at,
+                      COALESCE(u.username, '') AS username,
+                      r.rating AS review_rating,
+                      r.summary AS review_summary,
+                      r.overall_score AS review_overall
+               FROM teacher_verification_requests v
+               LEFT JOIN users u ON v.user_id = u.user_id
+               LEFT JOIN teacher_reviews r ON v.review_id = r.id
+               WHERE v.teacher_id = ?
+               ORDER BY v.id DESC
+               LIMIT ?""",
+            (int(teacher_id), int(limit)),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
 async def count_recent_user_teacher_reviews(
     user_id: int, teacher_id: int, seconds: int,
 ) -> int:

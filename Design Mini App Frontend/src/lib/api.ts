@@ -232,6 +232,25 @@ export async function getTeacherHome(): Promise<ApiTeacherHome | null> {
   return (await r.json()) as ApiTeacherHome;
 }
 
+/** 老师收到的一条申请验证记录（申请人露名 + 当时评价摘要）。 */
+export interface ApiVerification {
+  id: number;
+  user: string;       // @username 或 用户尾号
+  username: string;   // 纯用户名（空则不可拼链接）
+  time: string;
+  rating: string;     // positive/neutral/negative，可能为空
+  overall: number;
+  summary: string;
+}
+
+/** 老师收到的申请验证记录（仅 teacher 角色）；失败返回 []。 */
+export async function getMyVerifications(): Promise<ApiVerification[]> {
+  const r = await apiFetch("/api/me/verifications");
+  if (!r.ok) return [];
+  const d = (await r.json()) as { verifications?: ApiVerification[] };
+  return d.verifications ?? [];
+}
+
 // ── 个人页子项（P1 Tier1）────────────────────────────────────────────────────
 
 export interface ApiPointTx {

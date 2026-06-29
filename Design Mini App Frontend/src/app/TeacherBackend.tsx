@@ -7,10 +7,10 @@
  */
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { MapPin, CheckCircle, ShieldCheck, Pencil } from "lucide-react";
-import { hapticLight } from "../lib/tg";
+import { hapticLight, openTelegramLink } from "../lib/tg";
 import {
-  getTeacherHome, getTeacherDetail, checkinTeacher,
-  type ApiTeacherHome, type ApiTeacherDetail, type ApiProfile,
+  getTeacherHome, getTeacherDetail, checkinTeacher, getMyVerifications,
+  type ApiTeacherHome, type ApiTeacherDetail, type ApiProfile, type ApiVerification,
 } from "../lib/api";
 
 const TeacherEditProfile = lazy(() => import("./TeacherEditProfile"));
@@ -50,6 +50,8 @@ export default function TeacherBackend({ tab, profile, onProfileRefresh }: {
   const [checkedIn, setCheckedIn] = useState(false);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinMsg, setCheckinMsg] = useState<string | null>(null);
+  // 收到的申请验证记录（仅在该 tab 拉取）
+  const [verifs, setVerifs] = useState<ApiVerification[] | null>(null);
 
   const loadHome = useCallback(async () => {
     const h = await getTeacherHome();
@@ -69,6 +71,14 @@ export default function TeacherBackend({ tab, profile, onProfileRefresh }: {
     }).catch(() => {}).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [uid]);
+
+  // 申请验证记录按需拉取（首次进该 tab）。
+  useEffect(() => {
+    if (tab !== "t_verify" || verifs !== null) return;
+    let alive = true;
+    getMyVerifications().then((v) => { if (alive) setVerifs(v); }).catch(() => { if (alive) setVerifs([]); });
+    return () => { alive = false; };
+  }, [tab, verifs]);
 
   const doCheckin = async () => {
     if (checkinBusy || checkedIn) return;
@@ -242,14 +252,43 @@ export default function TeacherBackend({ tab, profile, onProfileRefresh }: {
         </div>
       )}
 
-      {/* ============ 申请验证（占位） ============ */}
+      {/* ============ 申请验证：收到的记录 ============ */}
       {tab === "t_verify" && (
-        <div className="bg-[#1e2c3a] rounded-2xl p-8 flex flex-col items-center text-center gap-3">
-          <div className="w-14 h-14 rounded-full bg-[#243447] flex items-center justify-center">
-            <ShieldCheck size={26} className="text-[#7d8d9e]" />
+        <div className="bg-[#1e2c3a] rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+            <ShieldCheck size={15} className="text-[#6b9ee8]" />
+            <span className="text-[#e8e8e8] text-sm font-medium">收到的验证申请</span>
+            {verifs && verifs.length > 0 && (
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-[#6b9ee8]/15 text-[#6b9ee8] font-mono">{verifs.length}</span>
+            )}
           </div>
-          <div className="text-[#e8e8e8] text-sm font-medium">申请验证</div>
-          <div className="text-[#7d8d9e] text-xs">功能开发中，敬请期待</div>
+          {verifs === null ? (
+            <div className="text-center py-12 text-[#7d8d9e] text-sm">加载中…</div>
+          ) : verifs.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[#7d8d9e] text-xs">
+              还没有用户向你申请验证。<br />用户在你的资料页点「申请验证」后，约课证明会发到你的 bot 私聊，并在此留存记录。
+            </div>
+          ) : (
+            verifs.map((v) => (
+              <div key={v.id} className="px-4 py-3 border-b border-white/5 last:border-b-0">
+                <div className="flex items-center justify-between mb-1">
+                  {v.username ? (
+                    <button onClick={() => { hapticLight(); openTelegramLink(`https://t.me/${v.username}`); }}
+                      className="text-[#6b9ee8] text-sm active:opacity-70">{v.user}</button>
+                  ) : (
+                    <span className="text-[#aebac8] text-sm">{v.user}</span>
+                  )}
+                  <span className="text-[#7d8d9e] text-xs">{v.time}</span>
+                </div>
+                {(v.rating || v.summary) && (
+                  <div className="text-[#7d8d9e] text-xs flex items-start gap-2">
+                    {v.rating && <span className="shrink-0">{RATING_META[v.rating]?.emoji || ""} 综合 {v.overall}</span>}
+                    {v.summary && <span className="text-[#aebac8] line-clamp-2">{v.summary}</span>}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
       )}
 
