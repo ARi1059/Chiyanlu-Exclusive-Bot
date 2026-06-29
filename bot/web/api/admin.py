@@ -171,4 +171,12 @@ async def get_admin_stats(request: web.Request) -> web.Response:
             logger.warning("报销池统计失败", exc_info=True)
             resp["reimburse_pool"] = None
 
+        # 迁移健康（§15.7）：失败迁移列表，前端顶部红徽标。容错不阻塞总览。
+        try:
+            from bot.database import list_failed_migrations
+            resp["migration_health"] = {"failed": await list_failed_migrations()}
+        except Exception:
+            logger.warning("migration_health 查询失败", exc_info=True)
+            resp["migration_health"] = {"failed": []}
+
     return web.json_response(resp)

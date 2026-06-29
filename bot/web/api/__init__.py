@@ -9,6 +9,7 @@ from aiohttp import web
 
 from bot.web.api.auth import post_session
 from bot.web.api.admin import get_admin_stats
+from bot.web.api.admin_audit import get_audit_logs
 from bot.web.api.admin_reviews import (
     get_review_detail,
     post_approve_review,
@@ -140,3 +141,5 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/admin/reimbursements/{id}/activate", post_activate_reimbursement)
     app.router.add_post("/api/admin/reimbursements/{id}/payout", post_payout_reimbursement)
     app.router.add_post("/api/admin/reimbursements/{id}/reset-week", post_reset_week_reimbursement)
+    # §15.7：审计日志台（仅 superadmin；分页 + action 过滤，复用现成查询 helper）
+    app.router.add_get("/api/admin/audit-logs", get_audit_logs)

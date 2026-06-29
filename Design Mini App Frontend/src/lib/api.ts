@@ -321,7 +321,10 @@ export interface ApiAdminStats {
   reimburse_pool?: ApiReimbursePool | null;
   surface_split?: ApiSurfaceSplit | null;
   bot_username?: string;
+  migration_health?: { failed: ApiFailedMigration[] } | null;
 }
+
+export interface ApiFailedMigration { version: string; name: string; kind: string; error: string | null }
 
 export interface ApiReimbursement {
   id: number;
@@ -337,6 +340,40 @@ export async function getAdminStats(): Promise<ApiAdminStats | null> {
   const r = await apiFetch("/api/admin/stats");
   if (!r.ok) return null;
   return (await r.json()) as ApiAdminStats;
+}
+
+// ── 审计日志台（§15.7，仅超管）──────────────────────────────────────────────────
+
+export interface ApiAuditLog {
+  id: number;
+  time: string;
+  admin: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  detail: string;
+}
+
+export interface ApiAuditLogPage {
+  logs: ApiAuditLog[];
+  total: number;
+  offset: number;
+  limit: number;
+  actions: string[];
+}
+
+/** 审计日志分页 + action 过滤（仅超管）。失败返回 null。 */
+export async function getAuditLogs(
+  opts: { action?: string; offset?: number; limit?: number } = {},
+): Promise<ApiAuditLogPage | null> {
+  const q = new URLSearchParams();
+  if (opts.action) q.set("action", opts.action);
+  if (opts.offset != null) q.set("offset", String(opts.offset));
+  if (opts.limit != null) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  const r = await apiFetch(`/api/admin/audit-logs${qs ? `?${qs}` : ""}`);
+  if (!r.ok) return null;
+  return (await r.json()) as ApiAuditLogPage;
 }
 
 export interface ModResult { ok: boolean; error?: string; new_total?: number; delta?: number }

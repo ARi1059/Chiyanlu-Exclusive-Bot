@@ -31,6 +31,8 @@ const TeacherEditProfile = lazy(() => import("./TeacherEditProfile"));
 const TeacherAdmin = lazy(() => import("./TeacherAdmin"));
 // 档案发布配置（阶段2）仅管理员用 → 懒加载。
 const ArchiveSettings = lazy(() => import("./ArchiveSettings"));
+// 审计日志台（§15.7）仅超管偶用 → 懒加载。
+const AuditLog = lazy(() => import("./AuditLog"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Role = "user" | "teacher" | "admin" | "superadmin";
@@ -1276,6 +1278,7 @@ function AdminView({ role }: { role: Role }) {
   const [editHandled, setEditHandled] = useState<number[]>([]);
   const [showTeacherAdmin, setShowTeacherAdmin] = useState(false);  // 阶段2 老师管理 overlay
   const [showArchiveSettings, setShowArchiveSettings] = useState(false);  // 阶段2 档案发布配置 overlay
+  const [showAuditLog, setShowAuditLog] = useState(false);  // §15.7 审计日志 overlay（超管）
 
   const refresh = useCallback(async () => {
     const s = await getAdminStats();
@@ -1319,6 +1322,7 @@ function AdminView({ role }: { role: Role }) {
   const pool = stats?.reimburse_pool ?? null;
   const packages = stats?.point_packages ?? [];
   const surface = stats?.surface_split ?? null;
+  const failedMigrations = stats?.migration_health?.failed ?? [];
 
   const cards = [
     { label: "今日签到", val: String(stats?.today_checkins ?? 0), sub: `今日新增 ${stats?.today_new_users ?? 0} 用户`, icon: CheckCircle, color: "#4fc97a" },
@@ -1348,6 +1352,19 @@ function AdminView({ role }: { role: Role }) {
 
       {!loading && (
         <>
+      {/* 迁移健康徽标（§15.7）：仅有失败迁移时显示，常驻顶部 */}
+      {failedMigrations.length > 0 && (
+        <div className="bg-[#e05b7a]/10 border border-[#e05b7a]/25 rounded-2xl px-4 py-3 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-[#e05b7a] shrink-0" />
+          <div className="text-xs">
+            <div className="text-[#e05b7a]">{failedMigrations.length} 个数据库迁移失败</div>
+            <div className="text-[#7d8d9e] mt-0.5 font-mono break-all">
+              {failedMigrations.map((m) => m.version).join(" · ")}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-3">
         {cards.map(({ label, val, sub, icon: Icon, color }) => (
@@ -1515,6 +1532,25 @@ function AdminView({ role }: { role: Role }) {
           </div>
         </div>
       )}
+
+      {/* §15.7：审计日志台入口（仅超管；含打款/接管等敏感动作） */}
+      {role === "superadmin" && (
+        <button
+          onClick={() => { hapticLight(); setShowAuditLog(true); }}
+          className="w-full bg-[#1e2c3a] rounded-2xl p-4 flex items-center justify-between text-left hover:bg-[#243447] active:bg-[#243447] transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#243447] flex items-center justify-center">
+              <ClipboardList size={15} className="text-[#c4974a]" />
+            </div>
+            <div>
+              <div className="text-[#e8e8e8] text-sm">审计日志</div>
+              <div className="text-[#7d8d9e] text-xs">管理员操作记录 · 分页 / 按动作过滤</div>
+            </div>
+          </div>
+          <ChevronRight size={15} className="text-[#7d8d9e]" />
+        </button>
+      )}
         </>
       )}
     </div>
@@ -1530,6 +1566,13 @@ function AdminView({ role }: { role: Role }) {
       {showArchiveSettings && (
         <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
           <ArchiveSettings onClose={() => setShowArchiveSettings(false)} />
+        </Suspense>
+      )}
+
+      {/* §15.7：审计日志 overlay（懒加载，全屏；仅超管入口可达） */}
+      {showAuditLog && (
+        <Suspense fallback={<div className="absolute inset-0 z-[60] flex items-center justify-center bg-[#17212b] text-[#7d8d9e] text-sm">加载中…</div>}>
+          <AuditLog onClose={() => setShowAuditLog(false)} />
         </Suspense>
       )}
     </>

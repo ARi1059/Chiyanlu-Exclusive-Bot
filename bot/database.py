@@ -3218,6 +3218,47 @@ async def count_admin_audits(
         await db.close()
 
 
+async def list_admin_audit_actions() -> list[str]:
+    """所有出现过的 action 去重列表（给审计日志台过滤下拉填充，§15.7）。
+
+    容错：查询失败 → 返回 []（前端下拉退化为仅「全部」）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT DISTINCT action FROM admin_audit_logs "
+            "WHERE action IS NOT NULL AND action != '' ORDER BY action"
+        )
+        rows = await cur.fetchall()
+        return [str(r["action"]) for r in rows]
+    except Exception:
+        logger.warning("list_admin_audit_actions 查询失败", exc_info=True)
+        return []
+    finally:
+        await db.close()
+
+
+async def list_failed_migrations() -> list[dict]:
+    """失败迁移列表（success=0），给管理台顶部健康徽标（§15.7）。
+
+    返回 [{version, name, kind, error}]，按 version 排序。容错：表不存在 /
+    查询失败 → 返回 []（徽标退化为不显示，正常运行零噪声）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT version, name, kind, error FROM schema_migrations "
+            "WHERE success = 0 ORDER BY version"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        logger.warning("list_failed_migrations 查询失败", exc_info=True)
+        return []
+    finally:
+        await db.close()
+
+
 # ============ 最近浏览 / 热门老师（Phase 2） ============
 
 
