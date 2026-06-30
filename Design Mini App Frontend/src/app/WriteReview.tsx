@@ -63,7 +63,6 @@ export default function WriteReview({
 }) {
   const [ctx, setCtx] = useState<ReviewContext | null>(null);
   const [loading, setLoading] = useState(true);
-  const [rating, setRating] = useState<"positive" | "neutral" | "negative">("positive");
   const [scores, setScores] = useState<ReviewScores>({
     humanphoto: 8, appearance: 8, body: 8, service: 8, attitude: 8, environment: 8,
   });
@@ -94,6 +93,15 @@ export default function WriteReview({
     if (id) setId(id); else setErr("图片上传失败，请重试");
   };
 
+  // 2026-06-30：评级由 6 维综合分自动判定（与后端 derive_rating 同边界），前端仅作即时展示。
+  const overall = (scores.humanphoto + scores.appearance + scores.body
+    + scores.service + scores.attitude + scores.environment) / 6;
+  const derived = overall < 6
+    ? { emoji: "👎", label: "差评", color: "#e05b7a" }
+    : overall <= 7.5
+      ? { emoji: "😐", label: "中评", color: "#e8a857" }
+      : { emoji: "👍", label: "好评", color: "#4fc97a" };
+
   const summaryLen = summary.trim().length;
   const summaryOk = summaryLen >= SUMMARY_MIN && summaryLen <= SUMMARY_MAX;
   const canSubmit = !submitting && !!booking && summaryOk && (!reimburse || !!gesture)
@@ -104,7 +112,6 @@ export default function WriteReview({
     setSubmitting(true); setErr(null); hapticLight();
     const res = await submitReview({
       teacher_id: teacherId,
-      rating,
       booking_screenshot_file_id: booking,
       gesture_photo_file_id: reimburse ? gesture : null,
       scores,
@@ -148,21 +155,19 @@ export default function WriteReview({
             </div>
           )}
 
-          {/* 评级 */}
-          <div className="flex gap-2">
-            {([["positive", "👍 好评"], ["neutral", "😐 中评"], ["negative", "👎 差评"]] as const).map(([k, lbl]) => (
-              <button key={k} onClick={() => setRating(k)}
-                className={`flex-1 py-2 rounded-xl text-sm ${rating === k ? "bg-[#c4974a] text-[#0d1117] font-medium" : "bg-[#243447] text-[#7d8d9e]"}`}>{lbl}</button>
-            ))}
-          </div>
-
-          {/* 6 维评分 */}
+          {/* 6 维评分（评级由综合分自动判定，无需手选） */}
           <div className="bg-[#1e2c3a] rounded-xl px-4 py-2">
             <div className="text-[#7d8d9e] text-[10px] mb-1 uppercase tracking-widest">评分（0–10）</div>
             {DIMS.map((d) => (
               <Stepper key={d.key} label={d.label} value={scores[d.key]}
                 onChange={(v) => setScores((s) => ({ ...s, [d.key]: v }))} />
             ))}
+            <div className="flex items-center justify-between border-t border-white/5 mt-1 pt-2">
+              <span className="text-[#7d8d9e] text-xs">综合 {overall.toFixed(1)} · 自动评级</span>
+              <span className="text-sm font-medium" style={{ color: derived.color }}>
+                {derived.emoji} {derived.label}
+              </span>
+            </div>
           </div>
 
           {/* 过程描述 */}

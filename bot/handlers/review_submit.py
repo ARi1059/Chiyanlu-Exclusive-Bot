@@ -52,7 +52,6 @@ async def start_review_flow(
     state: FSMContext,
     *,
     edit_msg: Optional[types.Message] = None,
-    pre_rating: Optional[str] = None,
 ) -> tuple[str, Optional[dict]]:
     """[📝 写评价] 入口（2026-05-18 起重定向到卡片驱动 FSM）
 
@@ -64,9 +63,7 @@ async def start_review_flow(
         - not_found / inactive：extra=None
     """
     from bot.handlers.review_card import start_card_review
-    return await start_card_review(
-        bot, user_id, teacher_id, state, pre_rating=pre_rating,
-    )
+    return await start_card_review(bot, user_id, teacher_id, state)
 
 
 # ============ 主菜单 [📝 写评价]：个人评价主页（2026-05-18） ============
@@ -99,7 +96,6 @@ async def _render_reviews_home(
     status_filter = data.get("status_filter") or None
     rating_filter = data.get("rating_filter") or None
     page = int(data.get("page") or 0)
-    pre_rating = data.get("pre_rating") or None  # 兼容旧字段
 
     # 取 stats
     stats = await get_user_review_stats(user_id)
@@ -173,14 +169,8 @@ async def _render_reviews_home(
         lines.append("（暂无记录，点击下方 [🤖 写车评] 提交首条评价）")
 
     lines.append("")
-    if pre_rating:
-        pr_meta = _RATING_BY_KEY.get(pre_rating, {})
-        lines.append(
-            f"💡 已预选评级：{pr_meta.get('emoji', '')}{pr_meta.get('label', '?')}"
-            "（点 [🤖 写车评] 跳过评级直接打分；再点同一评级可清除）"
-        )
-    else:
-        lines.append("💡 点 👍/😐/👎 选中评级 → [🤖 写车评] 可跳过 Step 2 评级。")
+    # 2026-06-30：评级由 6 维综合分自动判定，取消「预选评级」。下方筛选键仍可按评级筛历史。
+    lines.append("💡 点 [🤖 写车评] 提交新评价；评级将按 6 维综合分自动判定。")
 
     text = "\n".join(lines)
     kb = user_reviews_home_kb(
@@ -210,7 +200,6 @@ async def cb_user_write_review_entry(callback: types.CallbackQuery, state: FSMCo
         "status_filter": None,
         "rating_filter": None,
         "page": 0,
-        "pre_rating": None,
     })
     await _render_reviews_home(
         callback.message, state,
@@ -245,10 +234,10 @@ async def cb_reviews_filter_status(callback: types.CallbackQuery, state: FSMCont
 async def cb_reviews_filter_rating(callback: types.CallbackQuery, state: FSMContext):
     key = callback.data.split(":")[-1]
     if key == "clear":
-        await state.update_data(rating_filter=None, pre_rating=None, page=0)
+        await state.update_data(rating_filter=None, page=0)
     elif key in {"positive", "neutral", "negative"}:
-        # rating 兼作预选评级
-        await state.update_data(rating_filter=key, pre_rating=key, page=0)
+        # 2026-06-30：仅作历史评价筛选，不再兼作写新评价的预选评级
+        await state.update_data(rating_filter=key, page=0)
     else:
         await callback.answer("参数错误", show_alert=True)
         return
@@ -281,26 +270,16 @@ async def cb_reviews_page(callback: types.CallbackQuery, state: FSMContext):
     UserReviewsHomeStates.viewing,
 )
 async def cb_reviews_write(callback: types.CallbackQuery, state: FSMContext):
-    """[🤖 写车评] → 转入艺名输入；保留 pre_rating（如有）作为评级预选"""
-    data = await state.get_data()
-    pre_rating = data.get("pre_rating") or None
+    """[🤖 写车评] → 转入艺名输入。2026-06-30：评级由综合分自动判定，无预选评级。"""
     await state.set_state(WriteReviewLookupStates.waiting_teacher_name)
-    await state.set_data({"pre_rating": pre_rating} if pre_rating else {})
+    await state.set_data({})
 
-    hint = ""
-    if pre_rating:
-        r_meta = _RATING_BY_KEY.get(pre_rating, {})
-        hint = (
-            f"\n\n💡 已预选评级：{r_meta.get('emoji', '')}{r_meta.get('label', '?')}"
-            "（Step 2 评级会自动跳过）"
-        )
     text = (
         "📝 写评价 - 输入老师艺名\n\n"
         "请直接输入要评价的老师**艺名**（精确匹配，不区分大小写）。\n\n"
         "📌 如「丁小夏」、「乔儿」等\n"
         "🔍 如果你不记得艺名，可以先到 [📚 今天能约谁] / [⭐ 我的收藏]\n"
-        "    找到老师 → 详情页底部 [📝 写评价] 也能进入此流程。"
-        f"{hint}\n\n"
+        "    找到老师 → 详情页底部 [📝 写评价] 也能进入此流程。\n\n"
         "任意时刻发 /cancel 退出。"
     )
     try:
@@ -343,10 +322,8 @@ async def on_write_review_teacher_name(message: types.Message, state: FSMContext
         return
     user_id = message.from_user.id if message.from_user else 0
     teacher_id = int(teacher["user_id"])
-    pre_rating = (await state.get_data()).get("pre_rating")
     status, extra = await start_review_flow(
         message.bot, message.chat.id, user_id, teacher_id, state,
-        pre_rating=pre_rating,
     )
     if status == "not_found":
         await state.clear()

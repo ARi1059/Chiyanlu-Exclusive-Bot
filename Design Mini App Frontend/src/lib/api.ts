@@ -884,7 +884,8 @@ export interface ReviewScores {
 
 export interface ReviewSubmitPayload {
   teacher_id: number;
-  rating: "positive" | "neutral" | "negative";
+  // 2026-06-30：评级由后端按 6 维综合分自动判定，前端不再传（保留可选仅为兼容）。
+  rating?: "positive" | "neutral" | "negative";
   booking_screenshot_file_id: string;
   gesture_photo_file_id?: string | null;
   scores: ReviewScores;

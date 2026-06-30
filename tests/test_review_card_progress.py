@@ -102,9 +102,9 @@ def test_kb_other_buttons_preserved():
     from bot.keyboards.user_kb import review_card_kb
     kb = review_card_kb(state_data={}, missing_count=0)
     cbs = [b.callback_data for b in _flat_buttons(kb)]
-    # 9 个字段编辑入口 + 取消
+    # 8 个字段编辑入口 + 取消（2026-06-30：评级改自动判定，已移除 card:edit:rating）
     assert "card:edit:evidence" in cbs
-    assert "card:edit:rating" in cbs
+    assert "card:edit:rating" not in cbs
     assert "card:edit:summary" in cbs
     assert "card:cancel" in cbs
 
@@ -130,8 +130,8 @@ def test_build_card_text_shows_progress_when_incomplete(monkeypatch):
     monkeypatch.setattr(review_card, "get_teacher", _fake_get_teacher)
 
     text = _run(review_card._build_card_text(fake_state))
-    assert "已完成 0/9" in text
-    assert "还差 9 项" in text
+    assert "已完成 0/8" in text
+    assert "还差 8 项" in text
 
 
 def test_build_card_text_shows_ready_when_complete(monkeypatch):
@@ -142,7 +142,7 @@ def test_build_card_text_shows_ready_when_complete(monkeypatch):
         "teacher_id": 1,
         "booking_screenshot_file_id": "a",
         "gesture_photo_file_id": "b",
-        "rating": "positive",
+        # 2026-06-30：评级不再是卡片字段，由综合分自动判定
         "score_humanphoto": 9,
         "score_appearance": 9,
         "score_body": 9,
@@ -157,7 +157,7 @@ def test_build_card_text_shows_ready_when_complete(monkeypatch):
     monkeypatch.setattr(review_card, "get_teacher", _fake_get_teacher)
 
     text = _run(review_card._build_card_text(fake_state))
-    assert "已完成 9/9" in text
+    assert "已完成 8/8" in text
     assert "✅ 可提交" in text
 
 
@@ -242,8 +242,8 @@ def test_cb_submit_keeps_block_logic():
 def test_missing_fields_all_empty():
     from bot.handlers.review_card import _missing_fields
     miss = _missing_fields({})
-    # 9 项全缺
-    assert len(miss) == 9
+    # 8 项全缺（2026-06-30：评级改自动判定，从必填项移除）
+    assert len(miss) == 8
 
 
 def test_missing_fields_complete():

@@ -19,12 +19,12 @@ from bot.database import (
     REVIEW_RATE_LIMIT_PER_TEACHER_24H,
     REVIEW_RATE_LIMIT_PER_USER_60S,
     REVIEW_RATE_LIMIT_PER_USER_DAY,
-    REVIEW_RATINGS,
     REVIEW_SUMMARY_MAX_LEN,
     REVIEW_SUMMARY_MIN_LEN,
     count_recent_user_reviews,
     count_recent_user_teacher_reviews,
     create_teacher_review,
+    derive_rating,
     get_teacher,
     parse_review_score,
 )
@@ -35,7 +35,6 @@ from bot.utils.required_channels import check_user_subscribed
 
 logger = logging.getLogger(__name__)
 
-_RATING_KEYS = {r["key"] for r in REVIEW_RATINGS}
 _DIM_KEYS = [d["key"] for d in REVIEW_DIMENSIONS]  # humanphoto/appearance/...
 _DIM_COLUMN = {d["key"]: d["column"] for d in REVIEW_DIMENSIONS}
 
@@ -73,9 +72,7 @@ def compute_overall(scores: dict) -> float:
 def validate_payload(payload: dict) -> list:
     """字段校验，返回错误列表（空=通过）。复刻 _missing_fields + 字段范围。"""
     errs: list = []
-    # rating
-    if payload.get("rating") not in _RATING_KEYS:
-        errs.append("rating 非法")
+    # rating 不再由用户传入：2026-06-30 起按 6 维综合分自动判定（derive_rating），此处不校验。
     # 6 维分（parse_review_score：0–10，≤1 位小数）
     scores = payload.get("scores") or {}
     for k in _DIM_KEYS:
@@ -168,13 +165,14 @@ async def submit_review(bot, user_id: int, payload: dict) -> SubmitResult:
 
     # 6. 落库
     scores = payload["scores"]
+    overall = compute_overall(scores)
     review_data = {
         "teacher_id": teacher_id,
         "user_id": int(user_id),
         "booking_screenshot_file_id": payload["booking_screenshot_file_id"],
         "gesture_photo_file_id": payload.get("gesture_photo_file_id"),
-        "rating": payload["rating"],
-        "overall_score": compute_overall(scores),
+        "rating": derive_rating(overall),  # 2026-06-30：按综合分自动判定，不再用 payload.rating
+        "overall_score": overall,
         "summary": (payload.get("summary") or "").strip() or None,
         "request_reimbursement": req_reimburse,
         "anonymous": 0,  # 2026-06：取消匿名提交，一律实名落库（忽略 payload.anonymous）

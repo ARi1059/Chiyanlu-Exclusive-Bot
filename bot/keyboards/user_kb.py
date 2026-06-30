@@ -736,7 +736,7 @@ def user_reviews_home_kb(
 _CARD_FIELDS: list[dict] = [
     {"key": "evidence",    "label": "🖼 出击证明",
      "data_keys": ["booking_screenshot_file_id", "gesture_photo_file_id"]},
-    {"key": "rating",      "label": "⭐ 评级",       "data_keys": ["rating"]},
+    # 2026-06-30：评级改由 6 维综合分自动判定，移除手填「评级」字段。
     {"key": "humanphoto",  "label": "🎨 人照",       "data_keys": ["score_humanphoto"]},
     {"key": "appearance",  "label": "💅 颜值",       "data_keys": ["score_appearance"]},
     {"key": "body",        "label": "💃 身材",       "data_keys": ["score_body"]},
@@ -793,13 +793,13 @@ def review_card_kb(
     card:submit:default；旧消息里的 card:submit:anon 由 handler 兜底为实名。
     """
     rows: list[list[InlineKeyboardButton]] = []
-    # 2 列布局：evidence+rating / 6 维 / summary 独占
+    # 2 列布局（2026-06-30 去评级后 8 项）：evidence 独占 / 6 维 3 行 / summary 独占
     pairs: list[list[dict]] = [
-        [_CARD_FIELDS[0], _CARD_FIELDS[1]],   # evidence + rating
-        [_CARD_FIELDS[2], _CARD_FIELDS[3]],   # humanphoto + appearance
-        [_CARD_FIELDS[4], _CARD_FIELDS[5]],   # body + service
-        [_CARD_FIELDS[6], _CARD_FIELDS[7]],   # attitude + environment
-        [_CARD_FIELDS[8]],                    # summary
+        [_CARD_FIELDS[0]],                    # evidence
+        [_CARD_FIELDS[1], _CARD_FIELDS[2]],   # humanphoto + appearance
+        [_CARD_FIELDS[3], _CARD_FIELDS[4]],   # body + service
+        [_CARD_FIELDS[5], _CARD_FIELDS[6]],   # attitude + environment
+        [_CARD_FIELDS[7]],                    # summary
     ]
     for pair in pairs:
         row: list[InlineKeyboardButton] = []

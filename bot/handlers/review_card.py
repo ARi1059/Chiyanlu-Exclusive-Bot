@@ -31,6 +31,7 @@ from bot.database import (
     count_recent_user_reviews,
     count_recent_user_teacher_reviews,
     create_teacher_review,
+    derive_rating,
     get_teacher,
     parse_review_score,
     REVIEW_RATINGS,
@@ -43,7 +44,6 @@ from bot.database import (
 from bot.keyboards.user_kb import (
     review_card_edit_cancel_kb,
     review_card_kb,
-    review_card_rating_kb,
     review_cancelled_kb,
     review_intent_kb,
     review_intent_subreq_fail_kb,
@@ -102,10 +102,10 @@ def _evidence_required_count(data: dict) -> int:
 
 
 def _total_required_fields(data: dict) -> int:
-    """评价卡片总必填项数：evidence(1) + rating(1) + 6 维 + summary(1) = 9
-    （和旧版一致；evidence 这一行不论 1 张还是 2 张都计 1 项，按"完成度"算）。
+    """评价卡片总必填项数：evidence(1) + 6 维 + summary(1) = 8
+    （2026-06-30：评级改由综合分自动判定，不再是手填项，从 9 减为 8）。
     """
-    return 9
+    return 8
 
 
 async def _build_card_text(state: FSMContext) -> str:
@@ -131,13 +131,6 @@ async def _build_card_text(state: FSMContext) -> str:
             + ("（约课截图）" if evidence_count < 1 else " ✅")
         )
 
-    rating_key = data.get("rating")
-    if rating_key and rating_key in rating_meta:
-        r_meta = rating_meta[rating_key]
-        rating_str = f"{r_meta['emoji']} {r_meta['label']}"
-    else:
-        rating_str = "（未填）"
-
     def _dim(key: str) -> str:
         col = _DIM_META[key]["column"]
         v = data.get(col)
@@ -149,6 +142,13 @@ async def _build_card_text(state: FSMContext) -> str:
 
     overall = _compute_overall_avg(data)
     overall_str = f"{overall:.1f}（6 维平均）" if overall > 0 else "（待 6 维齐全后自动计算）"
+
+    # 2026-06-30：评级不再手填，按 6 维综合分自动判定（6 维齐全后显示）。
+    if overall > 0:
+        r_meta = rating_meta[derive_rating(overall)]
+        rating_str = f"{r_meta['emoji']} {r_meta['label']}（按综合分自动）"
+    else:
+        rating_str = "（6 维齐全后按综合分自动判定）"
 
     # UX-8.1：进度计数（已完成 N/9 + 可提交标记）
     missing = _missing_fields(data)
@@ -237,8 +237,6 @@ async def start_card_review(
     user_id: int,
     teacher_id: int,
     state: FSMContext,
-    *,
-    pre_rating: Optional[str] = None,
 ) -> tuple[str, Optional[dict]]:
     """卡片入口校验 + state 初始化 + 报销资格预判（2026-05-21）。
 
@@ -277,8 +275,7 @@ async def start_card_review(
         "anonymous": 0,
         "_reimburse_eligibility_info": info,
     }
-    if pre_rating and pre_rating in {r["key"] for r in REVIEW_RATINGS}:
-        init["rating"] = pre_rating
+    # 2026-06-30：评级由综合分自动判定，取消 pre_rating 预选（不再写入 init["rating"]）。
 
     if eligible:
         # 资格通过 → 进 intent 状态，由用户决定是否参与；request_reimbursement
@@ -465,7 +462,6 @@ async def _cancel(state: FSMContext) -> tuple[str, "types.InlineKeyboardMarkup |
     CardReviewStates.choosing_reimburse_intent,
     CardReviewStates.card,
     CardReviewStates.editing_evidence,
-    CardReviewStates.editing_rating,
     CardReviewStates.editing_humanphoto,
     CardReviewStates.editing_appearance,
     CardReviewStates.editing_body,
@@ -488,7 +484,6 @@ async def cb_card_cancel(callback: types.CallbackQuery, state: FSMContext):
     CardReviewStates.choosing_reimburse_intent,
     CardReviewStates.card,
     CardReviewStates.editing_evidence,
-    CardReviewStates.editing_rating,
     CardReviewStates.editing_humanphoto,
     CardReviewStates.editing_appearance,
     CardReviewStates.editing_body,
@@ -534,14 +529,7 @@ async def cb_card_edit(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    if field == "rating":
-        await state.set_state(CardReviewStates.editing_rating)
-        await callback.message.edit_text(
-            "⭐ 选择对老师的整体印象：",
-            reply_markup=review_card_rating_kb(),
-        )
-        await callback.answer()
-        return
+    # 2026-06-30：评级不再手选（由综合分自动判定），card:field:rating 入口已移除。
 
     if field in _DIM_META:
         meta = _DIM_META[field]
@@ -570,7 +558,6 @@ async def cb_card_edit(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "card:back", StateFilter(
     CardReviewStates.editing_evidence,
-    CardReviewStates.editing_rating,
     CardReviewStates.editing_humanphoto,
     CardReviewStates.editing_appearance,
     CardReviewStates.editing_body,
@@ -666,22 +653,8 @@ async def msg_card_evidence_invalid(message: types.Message, state: FSMContext):
         await message.reply("❌ 请发送约课截图（1 张）。")
 
 
-# ============ Rating 子状态 ============
-
-
-@router.callback_query(
-    F.data.startswith("card:rating:"), CardReviewStates.editing_rating,
-)
-async def cb_card_rating(callback: types.CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":")
-    key = parts[-1] if len(parts) == 3 else ""
-    if key not in {r["key"] for r in REVIEW_RATINGS}:
-        await callback.answer("参数错误", show_alert=True)
-        return
-    await state.update_data(rating=key)
-    await render_card(callback.message, state, via_edit=True)
-    label = next(r["label"] for r in REVIEW_RATINGS if r["key"] == key)
-    await callback.answer(f"已设置：{label}")
+# 2026-06-30：评级子状态（editing_rating + card:rating: 选择）已移除——
+# 评级由 6 维综合分自动判定（derive_rating），无需手选步骤。
 
 
 # ============ 6 维评分子状态：文本输入 ============
@@ -744,8 +717,7 @@ def _missing_fields(data: dict) -> list[str]:
     else:
         if not data.get("booking_screenshot_file_id"):
             missing.append("🖼 约课记录")
-    if not data.get("rating"):
-        missing.append("⭐ 评级")
+    # 2026-06-30：评级不再手填，由 6 维综合分自动判定（derive_rating），从必填项移除。
     for key, meta in _DIM_META.items():
         if data.get(meta["column"]) is None:
             missing.append(meta["label"])
@@ -931,7 +903,7 @@ async def _finalize_submit(
         "booking_screenshot_file_id": data["booking_screenshot_file_id"],
         # 2026-05-21：req=0 路径下 gesture_photo 为 None，DB 列已可空
         "gesture_photo_file_id": data.get("gesture_photo_file_id"),
-        "rating": data["rating"],
+        "rating": derive_rating(overall),  # 2026-06-30：按综合分自动判定，不再手填
         "score_humanphoto": data["score_humanphoto"],
         "score_appearance": data["score_appearance"],
         "score_body": data["score_body"],

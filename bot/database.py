@@ -871,6 +871,43 @@ async def _migrate_005_remove_quick_entry_keywords(db: aiosqlite.Connection) -> 
     await db.commit()
 
 
+async def _migrate_006_rating_from_overall(db: aiosqlite.Connection) -> None:
+    """评级改由六维综合得分自动判定（取消手选）后，回填存量评价 rating。
+
+    口径与 derive_rating 一致：<6 差评 / [6,7.5] 中评 / >7.5 好评。全量回填（含
+    pending/approved/rejected），再按 approved 重算 teacher_channel_posts 缓存的三级
+    评级计数（与 recalculate_teacher_review_stats 同口径）。avg_* 与 rating 无关，不动。
+    幂等：按 overall_score 确定性重推，可重跑。
+    """
+    await db.execute(
+        """
+        UPDATE teacher_reviews SET rating = CASE
+            WHEN overall_score < 6 THEN 'negative'
+            WHEN overall_score <= 7.5 THEN 'neutral'
+            ELSE 'positive'
+        END
+        """
+    )
+    await db.execute(
+        """
+        UPDATE teacher_channel_posts SET
+            positive_count = (
+                SELECT COUNT(*) FROM teacher_reviews r
+                WHERE r.teacher_id = teacher_channel_posts.teacher_id
+                  AND r.status = 'approved' AND r.rating = 'positive'),
+            neutral_count = (
+                SELECT COUNT(*) FROM teacher_reviews r
+                WHERE r.teacher_id = teacher_channel_posts.teacher_id
+                  AND r.status = 'approved' AND r.rating = 'neutral'),
+            negative_count = (
+                SELECT COUNT(*) FROM teacher_reviews r
+                WHERE r.teacher_id = teacher_channel_posts.teacher_id
+                  AND r.status = 'approved' AND r.rating = 'negative')
+        """
+    )
+    await db.commit()
+
+
 # 未来新增迁移在此追加。
 MIGRATIONS: list[Migration] = [
     Migration(
@@ -906,6 +943,12 @@ MIGRATIONS: list[Migration] = [
         name="下线群组快捷词 菜单/热门/推荐/筛选，仅保留今日",
         kind="soft",  # 删 seed 行失败不应阻断启动；与 002 同档
         func=_migrate_005_remove_quick_entry_keywords,
+    ),
+    Migration(
+        version="20260630_001_rating_from_overall",
+        name="评级改由综合分自动判定 + 回填存量 rating/评级分布",
+        kind="soft",  # 数据回填失败不阻断启动；按 overall 幂等可重跑，失败进健康徽标
+        func=_migrate_006_rating_from_overall,
     ),
 ]
 
@@ -5085,6 +5128,23 @@ REVIEW_RATINGS: list[dict] = [
     {"key": "neutral",  "emoji": "😐", "label": "中评"},
     {"key": "negative", "emoji": "👎", "label": "差评"},
 ]
+
+
+def derive_rating(overall_score) -> str:
+    """按六维综合得分自动归类评级（2026-06-30 起取消手选，单一真源）。
+
+    边界：<6 差评(negative) / [6, 7.5] 中评(neutral) / >7.5 好评(positive)。
+    异常/缺失 → neutral（容错，不抛）。bot/MiniApp/回填迁移共用，确保口径一致。
+    """
+    try:
+        s = float(overall_score)
+    except (TypeError, ValueError):
+        return "neutral"
+    if s < 6:
+        return "negative"
+    if s <= 7.5:
+        return "neutral"
+    return "positive"
 
 REVIEW_SCORE_MIN: float = 0.0
 REVIEW_SCORE_MAX: float = 10.0
