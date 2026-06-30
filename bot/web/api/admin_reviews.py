@@ -26,7 +26,7 @@ from bot.database import (
     get_user_total_points,
     log_admin_audit,
 )
-from bot.services.review_moderation import approve_review, reject_review
+from bot.services.review_moderation import approve_review, reject_review, set_review_visibility_core
 from bot.utils.review_claim import force_claim, get_claim, release_claim, try_claim
 from bot.web.api.review_media import signed_review_media_url
 from bot.web.keys import APP_BOT
@@ -146,6 +146,8 @@ async def _build_detail(request: web.Request, review: dict, viewer_id: int) -> d
         "teacher_id": teacher_id,
         "teacher_name": teacher_name,
         "user_masked": _mask_uid(user_id),
+        "user_label": await _user_label(user_id),  # 超管露名：@username 优先，无则尾号
+        "hidden": int(review.get("hidden") or 0) == 1,
         "anonymous": int(review.get("anonymous") or 0) == 1,
         "created_at": str(review.get("created_at") or ""),
         "rating": {"key": review.get("rating"), "emoji": rating_meta["emoji"], "label": rating_meta["label"]},
@@ -253,7 +255,9 @@ async def post_release_review(request: web.Request) -> web.Response:
 async def post_approve_review(request: web.Request) -> web.Response:
     reviewer_id = _require_super(request)
     review_id = _review_id(request)
-    delta, package_label = _resolve_delta(await _json_body(request))
+    body = await _json_body(request)
+    delta, package_label = _resolve_delta(body)
+    hidden = bool(body.get("hidden"))
 
     bot = request.app.get(APP_BOT)
     if bot is None:
@@ -261,7 +265,7 @@ async def post_approve_review(request: web.Request) -> web.Response:
 
     result = await approve_review(
         bot, review_id=review_id, reviewer_id=reviewer_id,
-        delta=delta, package_label=package_label,
+        delta=delta, package_label=package_label, hidden=hidden,
     )
     if not result.ok:
         # 业务失败（不存在/已审）→ 200 + ok:false，前端统一读 body
@@ -273,7 +277,27 @@ async def post_approve_review(request: web.Request) -> web.Response:
         "new_total": result.new_total,
         "reimb_amount": result.reimb_amount,
         "reimb_status": result.reimb_status,
+        "hidden": result.hidden,
     })
+
+
+async def post_set_review_visibility(request: web.Request) -> web.Response:
+    """POST /api/admin/reviews/{id}/visibility —— 事后隐藏/取消隐藏（仅超管）。"""
+    reviewer_id = _require_super(request)
+    review_id = _review_id(request)
+    body = await _json_body(request)
+    hidden = bool(body.get("hidden"))
+
+    bot = request.app.get(APP_BOT)
+    if bot is None:
+        raise web.HTTPServiceUnavailable(reason="bot unavailable")
+
+    res = await set_review_visibility_core(
+        bot, review_id=review_id, reviewer_id=reviewer_id, hidden=hidden,
+    )
+    if not res.ok:
+        return web.json_response({"ok": False, "error": res.error})
+    return web.json_response({"ok": True, "review_id": res.review_id, "hidden": res.hidden})
 
 
 async def post_reject_review(request: web.Request) -> web.Response:

@@ -1576,20 +1576,24 @@ def admin_points_grant_confirm_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def rreview_approve_points_kb(review_id: int) -> InlineKeyboardMarkup:
+def rreview_approve_points_kb(review_id: int, hidden: bool = False) -> InlineKeyboardMarkup:
     """Phase P.1：审核通过加分子页（spec §3.1）
 
     点 [✅ 通过] 后展示，超管根据材料选积分：
+        [🙈 隐藏发布开关]
         [+1 P / PP]   [+3 包时]
         [+5 包夜]     [+8 包天]
         [+0 不加分]   [💬 自定义]
         [🔙 取消]
 
-    callback：rreview:approve_p:<rid>:<key> 其中 key ∈ {p,hour,night,day,zero}
-              rreview:approve_custom:<rid>
-              rreview:show:<rid> 取消回审核详情页
+    hidden=True 时顶部开关显示「当前：隐藏发布」，选套餐即「通过并隐藏」（加分/数据/通知
+    用户照常，仅不发评论区 + 告知老师已隐藏）。callback：
+      rreview:approve_p:<rid>:<key>（key ∈ p,hour,night,day,zero）/ approve_custom:<rid>
+      rreview:approve_hide:<rid>（切换隐藏意向，存 FSM state）/ rreview:show:<rid> 取消
     """
+    toggle_text = "🙈 当前：隐藏发布（点此切回正常）" if hidden else "👁 正常发布（点此改为隐藏）"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"rreview:approve_hide:{review_id}")],
         [
             InlineKeyboardButton(text="+1 P / PP", callback_data=f"rreview:approve_p:{review_id}:p"),
             InlineKeyboardButton(text="+3 包时",    callback_data=f"rreview:approve_p:{review_id}:hour"),

@@ -404,14 +404,25 @@ export async function getAuditLogs(
 
 export interface ModResult { ok: boolean; error?: string; new_total?: number; delta?: number }
 
-/** 审核通过（仅超管）：package_key 选预设套餐，或 delta 自定义。 */
+/** 审核通过（仅超管）：package_key 选预设套餐，或 delta 自定义。hidden=通过并隐藏。 */
 export async function approveReview(
-  id: number, body: { package_key?: string; delta?: number },
+  id: number, body: { package_key?: string; delta?: number; hidden?: boolean },
 ): Promise<ModResult> {
   const r = await apiFetch(`/api/admin/reviews/${id}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+  return (await r.json()) as ModResult;
+}
+
+/** 事后切换评价可见性（仅超管）：hidden=true 隐藏 / false 取消隐藏。 */
+export async function setReviewVisibility(id: number, hidden: boolean): Promise<ModResult> {
+  const r = await apiFetch(`/api/admin/reviews/${id}/visibility`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hidden }),
   });
   if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
   return (await r.json()) as ModResult;
@@ -443,6 +454,8 @@ export interface ApiReviewDetail {
   teacher_id: number;
   teacher_name: string;
   user_masked: string;
+  user_label: string;   // 超管露名：@username 优先，无则尾号
+  hidden: boolean;      // 是否已被隐藏（不在公开评论区/MiniApp 展示）
   anonymous: boolean;
   created_at: string;
   rating: { key: string; emoji: string; label: string };

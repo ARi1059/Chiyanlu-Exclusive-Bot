@@ -17,6 +17,7 @@ from bot.web.api.admin_reviews import (
     post_force_claim_review,
     post_reject_review,
     post_release_review,
+    post_set_review_visibility,
 )
 from bot.web.api.review_media import get_review_media
 from bot.web.api.admin_teacher_edits import (
@@ -112,6 +113,7 @@ def register_api_routes(app: web.Application) -> None:
     # P1：评价审核落库（仅 superadmin，端点内校验）
     app.router.add_post("/api/admin/reviews/{id}/approve", post_approve_review)
     app.router.add_post("/api/admin/reviews/{id}/reject", post_reject_review)
+    app.router.add_post("/api/admin/reviews/{id}/visibility", post_set_review_visibility)
     # §15.4：评价审核详情 + claim 占用锁（仅 superadmin；媒体端点 URL 签名放行 session）
     app.router.add_get("/api/admin/reviews/{id}", get_review_detail)
     app.router.add_post("/api/admin/reviews/{id}/claim", post_claim_review)

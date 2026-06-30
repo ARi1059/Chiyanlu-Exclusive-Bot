@@ -17,7 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import bot.web.api.admin_reviews as mod
 from bot.config import config
-from bot.services.review_moderation import ApproveResult, RejectResult
+from bot.services.review_moderation import ApproveResult, RejectResult, VisibilityResult
 from bot.web.auth import issue_session
 from bot.web.server import create_web_app
 
@@ -73,8 +73,8 @@ def test_approve_no_token_401(monkeypatch):
 def test_approve_preset_resolves_delta(monkeypatch):
     rec: dict = {}
 
-    async def fake_approve(bot, *, review_id, reviewer_id, delta, package_label):
-        rec.update(review_id=review_id, delta=delta, package_label=package_label)
+    async def fake_approve(bot, *, review_id, reviewer_id, delta, package_label, hidden=False):
+        rec.update(review_id=review_id, delta=delta, package_label=package_label, hidden=hidden)
         return ApproveResult(ok=True, review_id=review_id, delta=delta, new_total=42)
 
     monkeypatch.setattr(mod, "approve_review", fake_approve)
@@ -91,6 +91,7 @@ def test_approve_preset_resolves_delta(monkeypatch):
     assert rec["review_id"] == 5
     assert rec["delta"] == 5            # 包夜 = +5（后端权威解析）
     assert rec["package_label"] == "包夜"
+    assert rec["hidden"] is False       # 未传 hidden → 默认正常发布
 
 
 def test_approve_unknown_package_400(monkeypatch):
@@ -130,7 +131,7 @@ def test_approve_custom_delta_out_of_range_400(monkeypatch):
 def test_approve_custom_delta_ok(monkeypatch):
     rec: dict = {}
 
-    async def fake_approve(bot, *, review_id, reviewer_id, delta, package_label):
+    async def fake_approve(bot, *, review_id, reviewer_id, delta, package_label, hidden=False):
         rec.update(delta=delta)
         return ApproveResult(ok=True, review_id=review_id, delta=delta)
 
@@ -202,3 +203,67 @@ def test_reject_delegates_with_reason(monkeypatch):
     _run(_t())
     assert rec["review_id"] == 7
     assert rec["reason"] == "证据不充分"
+
+
+# ============ 评价隐藏（通过并隐藏 + 可见性切换）============
+
+def test_approve_passes_hidden_true(monkeypatch):
+    rec: dict = {}
+
+    async def fake_approve(bot, *, review_id, reviewer_id, delta, package_label, hidden=False):
+        rec.update(hidden=hidden, delta=delta)
+        return ApproveResult(ok=True, review_id=review_id, delta=delta, hidden=hidden)
+
+    monkeypatch.setattr(mod, "approve_review", fake_approve)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/reviews/5/approve",
+                             headers=_hdr(_super()),
+                             json={"package_key": "night", "hidden": True})
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["hidden"] is True
+
+    _run(_t())
+    assert rec["hidden"] is True
+
+
+def test_visibility_requires_super(monkeypatch):
+    called = {"n": 0}
+
+    async def fake_vis(*a, **k):
+        called["n"] += 1
+        return VisibilityResult(ok=True)
+
+    monkeypatch.setattr(mod, "set_review_visibility_core", fake_vis)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/reviews/5/visibility",
+                             headers=_hdr(_user()), json={"hidden": True})
+            assert r.status == 403
+
+    _run(_t())
+    assert called["n"] == 0  # 鉴权拦在 core 之前
+
+
+def test_visibility_delegates(monkeypatch):
+    rec: dict = {}
+
+    async def fake_vis(bot, *, review_id, reviewer_id, hidden):
+        rec.update(review_id=review_id, hidden=hidden)
+        return VisibilityResult(ok=True, review_id=review_id, hidden=hidden)
+
+    monkeypatch.setattr(mod, "set_review_visibility_core", fake_vis)
+
+    async def _t():
+        async with TestClient(TestServer(create_web_app(bot=object()))) as c:
+            r = await c.post("/api/admin/reviews/9/visibility",
+                             headers=_hdr(_super()), json={"hidden": False})
+            assert r.status == 200
+            d = await r.json()
+            assert d["ok"] is True and d["hidden"] is False
+
+    _run(_t())
+    assert rec == {"review_id": 9, "hidden": False}

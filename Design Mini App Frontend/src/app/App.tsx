@@ -771,6 +771,12 @@ function ReviewDetailPanel({ detail, onClose }: { detail: ApiReviewDetail; onClo
         <span className="text-[#c4974a] text-sm font-mono">综合 {detail.scores.overall}</span>
       </div>
 
+      {/* 评价者（超管露名：@username 或尾号）+ 隐藏态 */}
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="text-[#7d8d9e]">评价者 {detail.user_label}</span>
+        {detail.hidden && <span className="text-[#e8a857]">🙈 已隐藏</span>}
+      </div>
+
       {/* 6 维分网格 */}
       <div className="grid grid-cols-3 gap-1.5">
         {SCORE_LABELS.map(([k, label]) => (
@@ -823,6 +829,7 @@ function PendingReviewItem({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [rejectText, setRejectText] = useState("");  // 自定义驳回原因
+  const [hideOnApprove, setHideOnApprove] = useState(false);  // 通过并隐藏意向
   // §15.4 审核详情 + 占用锁
   const [detail, setDetail] = useState<ApiReviewDetail | null>(null);
   const [conflict, setConflict] = useState<ApiReviewClaim | null>(null);
@@ -830,7 +837,7 @@ function PendingReviewItem({
 
   const doApprove = async (packageKey: string) => {
     setBusy(true); setErr(null); hapticLight();
-    const r = await approveReview(item.id, { package_key: packageKey });
+    const r = await approveReview(item.id, { package_key: packageKey, hidden: hideOnApprove });
     if (r.ok) { onResolved(item.id); return; }
     setBusy(false); setErr(r.error || "通过失败");
   };
@@ -939,6 +946,14 @@ function PendingReviewItem({
             <button disabled={busy} onClick={() => setMode("idle")}
               className={`${chip} bg-[#243447] text-[#7d8d9e]`}>取消</button>
           </div>
+          {/* 通过并隐藏开关：加分/数据/通知用户照常，仅不进评论区/MiniApp + 告知老师 */}
+          <button disabled={busy} onClick={() => setHideOnApprove((v) => !v)}
+            className={`${chip} mt-2 ${hideOnApprove ? "bg-[#e8a857]/15 text-[#e8a857]" : "bg-[#243447] text-[#7d8d9e]"}`}>
+            {hideOnApprove ? "🙈 通过并隐藏（已开）" : "👁 通过并隐藏（关）"}
+          </button>
+          {hideOnApprove && (
+            <div className="text-[#e8a857] text-[10px] mt-1">将不在评论区/小程序展示，仅告知老师；加分与统计照常</div>
+          )}
         </div>
       )}
 

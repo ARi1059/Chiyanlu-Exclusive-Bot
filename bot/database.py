@@ -292,6 +292,7 @@ async def init_db():
                 discussion_msg_id           INTEGER,
                 request_reimbursement       INTEGER NOT NULL DEFAULT 0,
                 anonymous                   INTEGER NOT NULL DEFAULT 0,
+                hidden                      INTEGER NOT NULL DEFAULT 0,
                 created_at                  TEXT DEFAULT CURRENT_TIMESTAMP,
                 reviewed_at                 TEXT,
                 published_at                TEXT,
@@ -908,6 +909,22 @@ async def _migrate_006_rating_from_overall(db: aiosqlite.Connection) -> None:
     await db.commit()
 
 
+async def _migrate_007_review_hidden(db: aiosqlite.Connection) -> None:
+    """teacher_reviews 加 hidden 列（超管「通过并隐藏」用，默认 0 不隐藏）。
+
+    PRAGMA 检测后再 ADD，幂等可重入。老评价默认 0，行为不变。
+    """
+    cur = await db.execute("PRAGMA table_info(teacher_reviews)")
+    rows = await cur.fetchall()
+    existing = {row["name"] for row in rows}
+    if "hidden" in existing:
+        return
+    await db.execute(
+        "ALTER TABLE teacher_reviews ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0"
+    )
+    await db.commit()
+
+
 # 未来新增迁移在此追加。
 MIGRATIONS: list[Migration] = [
     Migration(
@@ -949,6 +966,12 @@ MIGRATIONS: list[Migration] = [
         name="评级改由综合分自动判定 + 回填存量 rating/评级分布",
         kind="soft",  # 数据回填失败不阻断启动；按 overall 幂等可重跑，失败进健康徽标
         func=_migrate_006_rating_from_overall,
+    ),
+    Migration(
+        version="20260630_002_review_hidden",
+        name="评价隐藏：teacher_reviews 加 hidden 列",
+        kind="soft",  # ADD COLUMN 失败不阻断启动；幂等检测列存在可重跑
+        func=_migrate_007_review_hidden,
     ),
 ]
 
@@ -5490,6 +5513,24 @@ async def approve_teacher_review(review_id: int, reviewer_id: int) -> bool:
         await db.close()
 
 
+async def set_review_hidden(review_id: int, hidden: bool) -> bool:
+    """设置评价隐藏标记（超管「通过并隐藏」/ 取消隐藏）。返回是否改动。
+
+    隐藏的评价不在公开列表展示（list_approved_reviews 已过滤 hidden=0），但仍计入
+    评分统计（recalculate_teacher_review_stats 不看 hidden）。
+    """
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_reviews SET hidden = ? WHERE id = ?",
+            (1 if hidden else 0, review_id),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
 async def reject_teacher_review(
     review_id: int, reviewer_id: int, reason: Optional[str] = None,
 ) -> bool:
@@ -5662,6 +5703,20 @@ async def update_review_discussion_msg(
         await db.close()
 
 
+async def clear_review_discussion_msg(review_id: int) -> bool:
+    """清空评价的讨论群消息引用（事后隐藏删掉评论后调，使取消隐藏可重新补发）。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE teacher_reviews SET discussion_msg_id = NULL WHERE id = ?",
+            (review_id,),
+        )
+        await db.commit()
+        return db.total_changes > 0
+    finally:
+        await db.close()
+
+
 async def find_teacher_post_by_channel_msg(
     channel_chat_id: int,
     channel_msg_id: int,
@@ -5688,13 +5743,14 @@ async def list_approved_reviews(
 ) -> list[dict]:
     """列出某老师已通过的评价（用于详情页 / 分页列表）
 
-    按 created_at DESC（最新在前）。
+    按 created_at DESC（最新在前）。隐藏（hidden=1）的评价被超管「通过并隐藏」，
+    不在任何公开列表展示（讨论群/详情页/老师端我的评价），但仍计入评分统计。
     """
     db = await get_db()
     try:
         cur = await db.execute(
             "SELECT * FROM teacher_reviews "
-            "WHERE teacher_id = ? AND status = 'approved' "
+            "WHERE teacher_id = ? AND status = 'approved' AND hidden = 0 "
             "ORDER BY created_at DESC, id DESC "
             "LIMIT ? OFFSET ?",
             (teacher_id, int(limit), int(offset)),

@@ -18,6 +18,7 @@ from typing import Optional
 from bot.database import (
     add_point_transaction,
     approve_teacher_review,
+    clear_review_discussion_msg,
     compute_reimbursement_amount,
     create_reimbursement,
     current_month_key,
@@ -28,6 +29,7 @@ from bot.database import (
     get_user_total_points,
     log_admin_audit,
     reject_teacher_review,
+    set_review_hidden,
 )
 from bot.utils.rreview_notify import notify_review_approved, notify_review_rejected
 
@@ -47,6 +49,15 @@ class ApproveResult:
     reimb_amount: int = 0
     reimb_status: str = ""
     reimb_created_id: Optional[int] = None
+    hidden: bool = False
+
+
+@dataclass
+class VisibilityResult:
+    ok: bool
+    error: Optional[str] = None
+    review_id: int = 0
+    hidden: bool = False
 
 
 @dataclass
@@ -66,9 +77,12 @@ async def approve_review(
     reviewer_id: int,
     delta: int,
     package_label: Optional[str],
+    hidden: bool = False,
 ) -> ApproveResult:
     """通过一条评价 + 加分 + 全部副作用（移自 _do_approve_inner 396–588）。
 
+    hidden=True（超管「通过并隐藏」）：加分/重算数据/通知用户「已通过」/报销联动**全部照旧**，
+    唯独**不发评论区**（跳过 publish_review_comment），并告知老师该评价已被隐藏。
     返回 ApproveResult；ok=False 时 error 为原因（不存在 / 非 pending / 落库失败）。
     """
     review = await get_teacher_review(review_id)
@@ -81,6 +95,13 @@ async def approve_review(
     ok = await approve_teacher_review(review_id, reviewer_id=reviewer_id)
     if not ok:
         return ApproveResult(ok=False, error="通过失败", review_id=review_id)
+
+    # 1b. 隐藏标记（超管「通过并隐藏」）—— 在后续展示/发布判定前落库
+    if hidden:
+        try:
+            await set_review_hidden(review_id, True)
+        except Exception as e:
+            logger.warning("set_review_hidden 失败 review=%s: %s", review_id, e)
 
     teacher_id = review["teacher_id"]
     user_id = review["user_id"]
@@ -114,6 +135,7 @@ async def approve_review(
             "delta": delta,
             "package": package_label,
             "new_total": new_total,
+            "hidden": bool(hidden),
         },
     )
     # 释放 claim 锁
@@ -218,21 +240,23 @@ async def approve_review(
         await update_teacher_post_caption(bot, teacher_id, force=True)
     except Exception as e:
         logger.warning("update_teacher_post_caption 失败 teacher=%s: %s", teacher_id, e)
-    try:
-        from bot.utils.review_comment import publish_review_comment, CommentError
-        await publish_review_comment(bot, review_id)
-    except CommentError as e:
-        logger.warning(
-            "publish_review_comment failed review=%s reason=%s: %s",
-            review_id, getattr(e, "reason", "?"), e,
-        )
-    except Exception as e:
-        logger.warning("publish_review_comment 异常 review=%s: %s", review_id, e)
+    # 隐藏的评价不发评论区（其余副作用照旧）
+    if not hidden:
+        try:
+            from bot.utils.review_comment import publish_review_comment, CommentError
+            await publish_review_comment(bot, review_id)
+        except CommentError as e:
+            logger.warning(
+                "publish_review_comment failed review=%s reason=%s: %s",
+                review_id, getattr(e, "reason", "?"), e,
+            )
+        except Exception as e:
+            logger.warning("publish_review_comment 异常 review=%s: %s", review_id, e)
 
-    # 4b. 推送评价到老师私聊；失败仅 warning
+    # 4b. 推送评价到老师私聊；失败仅 warning。hidden 时附「已隐藏」提示。
     try:
         from bot.utils.rreview_notify import notify_teacher_review_approved
-        await notify_teacher_review_approved(bot, review_id)
+        await notify_teacher_review_approved(bot, review_id, hidden=hidden)
     except Exception as e:
         logger.warning(
             "notify_teacher_review_approved 异常 review=%s: %s", review_id, e,
@@ -269,6 +293,7 @@ async def approve_review(
         reimb_amount=reimb_amount,
         reimb_status=reimb_status,
         reimb_created_id=reimb_created_id,
+        hidden=bool(hidden),
     )
 
 
@@ -330,3 +355,66 @@ async def reject_review(
         user_id=user_id,
         teacher_name=teacher_name,
     )
+
+
+async def set_review_visibility_core(
+    bot, *, review_id: int, reviewer_id: int, hidden: bool,
+) -> VisibilityResult:
+    """事后切换评价可见性（隐藏 / 取消隐藏），仅对已通过评价有意义。
+
+    - hidden=True（事后隐藏）：标记隐藏 → 尽力删讨论群已发评论 + 清引用（容错）。
+    - hidden=False（取消隐藏）：标记取消 → 若无讨论群消息则补发评论区。
+    两路都写 audit + best-effort 通知老师。可见列表 list_approved_reviews 即时反映。
+    """
+    review = await get_teacher_review(review_id)
+    if not review:
+        return VisibilityResult(ok=False, error="评价不存在", review_id=review_id)
+    if review["status"] != "approved":
+        return VisibilityResult(
+            ok=False, error="仅已通过的评价可切换可见性", review_id=review_id,
+        )
+
+    await set_review_hidden(review_id, hidden)
+    await log_admin_audit(
+        admin_id=reviewer_id,
+        action="rreview_hide" if hidden else "rreview_unhide",
+        target_type="teacher_review",
+        target_id=str(review_id),
+        detail={"teacher_id": review.get("teacher_id"), "user_id": review.get("user_id")},
+    )
+
+    if hidden:
+        # 事后隐藏：删掉讨论群已发评论（若有），清引用以便日后取消隐藏可重发
+        chat_id = review.get("discussion_chat_id")
+        msg_id = review.get("discussion_msg_id")
+        if chat_id and msg_id:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception as e:
+                logger.warning("隐藏删评论失败 review=%s: %s", review_id, e)
+            try:
+                await clear_review_discussion_msg(review_id)
+            except Exception as e:
+                logger.warning("clear_review_discussion_msg 失败 review=%s: %s", review_id, e)
+    else:
+        # 取消隐藏：无讨论群消息则补发评论区
+        if not review.get("discussion_msg_id"):
+            try:
+                from bot.utils.review_comment import publish_review_comment, CommentError
+                await publish_review_comment(bot, review_id)
+            except CommentError as e:
+                logger.warning(
+                    "取消隐藏补发评论 failed review=%s reason=%s: %s",
+                    review_id, getattr(e, "reason", "?"), e,
+                )
+            except Exception as e:
+                logger.warning("取消隐藏补发评论异常 review=%s: %s", review_id, e)
+
+    # best-effort 通知老师可见性变更
+    try:
+        from bot.utils.rreview_notify import notify_teacher_review_visibility
+        await notify_teacher_review_visibility(bot, review_id, hidden=hidden)
+    except Exception as e:
+        logger.warning("notify_teacher_review_visibility 失败 review=%s: %s", review_id, e)
+
+    return VisibilityResult(ok=True, review_id=review_id, hidden=hidden)

@@ -190,11 +190,13 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
     current_pts = await get_user_total_points(review["user_id"])
 
     anon_tag = " · 🕵 匿名提交" if int(review.get("anonymous") or 0) == 1 else ""
+    reviewer = await _reviewer_label(review["user_id"])
+    await state.update_data(approve_hidden=False)  # 进入加分子页默认正常发布
     text = (
         f"💰 审核通过加分（评价 #{review_id}）\n"
         "━━━━━━━━━━━━━━━\n"
         f"老师：{teacher_name}\n"
-        f"评价者：{_anonymize_user_id(review['user_id'])} "
+        f"评价者：{reviewer} "
         f"(uid: {_anonymize_user_id(review['user_id'])}){anon_tag}\n"
         f"当前用户总积分：{current_pts}\n"
         "━━━━━━━━━━━━━━━\n\n"
@@ -202,13 +204,34 @@ async def cb_rreview_approve(callback: types.CallbackQuery, state: FSMContext):
     )
     try:
         await callback.message.edit_text(
-            text, reply_markup=rreview_approve_points_kb(review_id),
+            text, reply_markup=rreview_approve_points_kb(review_id, hidden=False),
         )
     except Exception:
         await callback.message.answer(
-            text, reply_markup=rreview_approve_points_kb(review_id),
+            text, reply_markup=rreview_approve_points_kb(review_id, hidden=False),
         )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rreview:approve_hide:"))
+@_super_admin_required
+async def cb_rreview_approve_hide_toggle(callback: types.CallbackQuery, state: FSMContext):
+    """加分子页「隐藏发布」开关：翻转 FSM 里的 approve_hidden 意向，重渲染键盘。"""
+    try:
+        review_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("参数错误", show_alert=True)
+        return
+    data = await state.get_data()
+    new_hidden = not bool(data.get("approve_hidden"))
+    await state.update_data(approve_hidden=new_hidden)
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=rreview_approve_points_kb(review_id, hidden=new_hidden),
+        )
+    except Exception:
+        pass
+    await callback.answer("已切到：隐藏发布" if new_hidden else "已切到：正常发布")
 
 
 @router.callback_query(F.data.startswith("rreview:approve_p:"))
@@ -229,11 +252,14 @@ async def cb_rreview_approve_preset(callback: types.CallbackQuery, state: FSMCon
     if not pkg:
         await callback.answer("未知套餐", show_alert=True)
         return
+    data = await state.get_data()
+    hidden = bool(data.get("approve_hidden"))
     await _do_approve(
         callback, state,
         review_id=review_id,
         delta=int(pkg["delta"]),
         package_label=pkg["label"],
+        hidden=hidden,
     )
 
 
@@ -301,6 +327,7 @@ async def on_custom_delta(message: types.Message, state: FSMContext):
         return
     data = await state.get_data()
     review_id = data.get("approve_review_id")
+    hidden = bool(data.get("approve_hidden"))
     if not review_id:
         await state.clear()
         await message.reply("⚠️ 状态丢失，请重新进入审核。")
@@ -312,6 +339,7 @@ async def on_custom_delta(message: types.Message, state: FSMContext):
         review_id=int(review_id),
         delta=delta,
         package_label="自定义",
+        hidden=hidden,
     )
 
 
@@ -322,6 +350,7 @@ async def _do_approve(
     review_id: int,
     delta: int,
     package_label: Optional[str],
+    hidden: bool = False,
 ):
     """callback 驱动的审核通过 + 加分统一执行链"""
     await _do_approve_inner(
@@ -333,6 +362,7 @@ async def _do_approve(
         delta=delta,
         package_label=package_label,
         callback=callback,
+        hidden=hidden,
     )
 
 
@@ -342,6 +372,7 @@ async def _do_approve_from_message(
     review_id: int,
     delta: int,
     package_label: Optional[str],
+    hidden: bool = False,
 ):
     """message 驱动（自定义 FSM 输入完成后）的审核通过 + 加分执行链
 
@@ -358,6 +389,7 @@ async def _do_approve_from_message(
         package_label=package_label,
         callback=None,
         message=message,
+        hidden=hidden,
     )
 
 
@@ -372,12 +404,14 @@ async def _do_approve_inner(
     package_label: Optional[str],
     callback: Optional[types.CallbackQuery] = None,
     message: Optional[types.Message] = None,
+    hidden: bool = False,
 ):
     """审核通过 + 加分（callback/FSM 驱动）。
 
     业务副作用链（approve → 加分 → 审计 → 锁 → 报销联动 → recalc → 频道/讨论群/
     私聊通知）已抽到 bot.services.review_moderation.approve_review（bot/web 共用）；
     本函数只负责 Telegram UI：失败 alert，成功后清旧审核消息 + 推下一条 / 队列空。
+    hidden=True 时为「通过并隐藏」（service 跳过评论区 + 告知老师）。
     """
     from bot.services.review_moderation import approve_review
     result = await approve_review(
@@ -386,6 +420,7 @@ async def _do_approve_inner(
         reviewer_id=reviewer_id,
         delta=delta,
         package_label=package_label,
+        hidden=hidden,
     )
     if not result.ok:
         await _alert(callback, result.error or "通过失败")
@@ -394,8 +429,9 @@ async def _do_approve_inner(
     # 6. 清旧 + 推下一条
     if state is not None:
         await _cleanup_messages(bot, chat_id, state)
+    _hide_ack = "（🙈 已隐藏）" if hidden else ""
     if callback is not None:
-        await callback.answer(f"✅ 已通过评价 #{review_id}（+{delta} 积分）")
+        await callback.answer(f"✅ 已通过评价 #{review_id}（+{delta} 积分）{_hide_ack}")
 
     pending = await list_pending_reviews(limit=50)
     if not pending:
@@ -567,7 +603,11 @@ async def _send_review_at_index(
         logger.warning("[UX-7.4] viewer hint 查询失败 review=%s: %s", review["id"], e)
 
     # 文字 + 操作按钮
-    text = _render_review_text(review, teacher, idx, total, viewers_hint=viewers_hint)
+    user_label = await _reviewer_label(review["user_id"])
+    text = _render_review_text(
+        review, teacher, idx, total,
+        viewers_hint=viewers_hint, user_label=user_label,
+    )
     text_msg_id: Optional[int] = None
     try:
         msg = await bot.send_message(
@@ -670,11 +710,29 @@ def _anonymize_user_id(uid: int) -> str:
     return "*" * (len(s) - 4) + s[-4:]
 
 
+async def _reviewer_label(user_id: int) -> str:
+    """超管审核视图露名：@username 优先（便于辨认谁写的），无用户名才回退半匿名尾号。
+
+    仅用于超管可见的审核详情；评论区 / 公开展示仍由 render_review_comment 半匿名。
+    """
+    try:
+        from bot.database import get_user
+        u = await get_user(int(user_id))
+    except Exception:
+        u = None
+    if u and u.get("username"):
+        return f"@{u['username']}"
+    return _anonymize_user_id(user_id)
+
+
 def _render_review_text(
     review: dict, teacher: Optional[dict], idx: int, total: int,
-    *, viewers_hint: Optional[str] = None,
+    *, viewers_hint: Optional[str] = None, user_label: Optional[str] = None,
 ) -> str:
-    """按 spec §4.2 渲染审核详情文字（UX-7.4：可选附"近期查看者"提示行）。"""
+    """按 spec §4.2 渲染审核详情文字（UX-7.4：可选附"近期查看者"提示行）。
+
+    user_label：超管露名（@username 或尾号），由异步调用方算好传入；None 回退半匿名。
+    """
     teacher_name = teacher["display_name"] if teacher else f"#{review['teacher_id']}"
     rating_meta = {r["key"]: r for r in REVIEW_RATINGS}.get(
         review.get("rating"), {"emoji": "❓", "label": review.get("rating", "?")},
@@ -682,13 +740,15 @@ def _render_review_text(
     rating_str = f"{rating_meta['emoji']} {rating_meta['label']}"
     summary = review.get("summary") or "（未填写）"
     anon_tag = " · 🕵 匿名提交" if int(review.get("anonymous") or 0) == 1 else ""
-    lines: list[str] = [f"[报告审核 {idx + 1}/{total}]"]
+    hidden_tag = " · 🙈 已隐藏" if int(review.get("hidden") or 0) == 1 else ""
+    reviewer = user_label or _anonymize_user_id(review["user_id"])
+    lines: list[str] = [f"[报告审核 {idx + 1}/{total}]{hidden_tag}"]
     # UX-7.4：第一行紧跟近期查看者提示（避免被其它字段挤下去）
     if viewers_hint:
         lines.append(viewers_hint)
     lines.extend([
         f"老师：{teacher_name}",
-        f"评价者：{_anonymize_user_id(review['user_id'])} (uid: {_anonymize_user_id(review['user_id'])}){anon_tag}",
+        f"评价者：{reviewer} (uid: {_anonymize_user_id(review['user_id'])}){anon_tag}",
         f"提交：{review.get('created_at', '?')}",
         "",
         "📸 审核材料：已在上方 2 张图",

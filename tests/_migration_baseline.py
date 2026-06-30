@@ -16,4 +16,5 @@ EXPECTED_MIGRATION_VERSIONS = frozenset({
     "20260613_001_teacher_is_deleted",
     "20260613_002_remove_quick_entry_keywords",
     "20260630_001_rating_from_overall",
+    "20260630_002_review_hidden",
 })

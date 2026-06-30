@@ -156,6 +156,8 @@ async def notify_review_approved(
 async def notify_teacher_review_approved(
     bot: Bot,
     review_id: int,
+    *,
+    hidden: bool = False,
 ) -> bool:
     """评价审核通过后将评价 + 3 按钮一并推送到老师私聊（2026-05 新增）。
 
@@ -210,6 +212,11 @@ async def notify_teacher_review_approved(
         promo_text=promo_text,
         promo_url=promo_url,
     )
+    if hidden:
+        text += (
+            "\n\n⚠️ 此评价已被管理员隐藏，不在评论区公开展示"
+            "（积分与评分统计照常计入）。"
+        )
 
     return await _safe_send_text(
         bot, teacher_id, text,
@@ -217,6 +224,23 @@ async def notify_teacher_review_approved(
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
+
+
+async def notify_teacher_review_visibility(
+    bot: Bot, review_id: int, *, hidden: bool,
+) -> bool:
+    """事后切换评价可见性时通知老师（best-effort 简讯，不重发整条评价）。"""
+    review = await get_teacher_review(review_id)
+    if not review:
+        return False
+    teacher_id = review.get("teacher_id")
+    if not teacher_id:
+        return False
+    if hidden:
+        text = "⚠️ 你的一条评价已被管理员隐藏，不在评论区公开展示（积分与评分统计照常）。"
+    else:
+        text = "✅ 你此前被隐藏的一条评价已恢复展示，现已重新发布到评论区。"
+    return await _safe_send_text(bot, teacher_id, text)
 
 
 async def notify_review_rejected(
